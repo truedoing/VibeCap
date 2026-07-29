@@ -6,9 +6,10 @@ const pvSid = sessionStorage.getItem('pvSid') || (() => { const s = Math.random(
 import { Search, ChevronDown, ChevronRight, Play, Download, X, Film, User, PanelLeftClose, PanelLeft } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { cn } from '../lib/utils'
+import ChatPanel from '../components/ChatPanel'
 
 // ── 常量 ──
-const CHARS = ["蒙总", "蒙太", "明玉", "老蒙", "沈浩"]
+const CHARS = ["苏大强", "苏明哲", "苏明成", "苏明玉", "明玉", "朱丽", "吴非", "石天冬", "蒙总", "老蒙", "蒙太", "沈浩", "柳青", "赵美兰", "小咪"]
 
 // ── 辅助：人物高亮 HTML ──
 function highlightHtml(text) {
@@ -29,11 +30,7 @@ export default function MatchingDesk() {
   const [openSeg, setOpenSeg] = useState(null)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
 
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
-  const [searchStatus, setSearchStatus] = useState('')
-  const [searching, setSearching] = useState(false)
-  const [epFilter, setEpFilter] = useState(null)  // null=全部, 27/28/29=按集筛选
+  const [results, setResults] = useState([])  // AI 搜索结果
 
   const [curSid, setCurSid] = useState(null)
   const [curSeq, setCurSeq] = useState(null)
@@ -46,27 +43,9 @@ export default function MatchingDesk() {
   const [playerStatus, setPlayerStatus] = useState('选择一个搜索结果以预览视频')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [playbackRate, setPlaybackRate] = useState(1.25)
-
-  // 分镜描述持久化
-  const [storyboard, setStoryboard] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('vibecap-storyboard') || '{}') } catch { return {} }
-  })
-  const saveStoryboard = useCallback((sid, seq, text) => {
-    setStoryboard(prev => {
-      const next = { ...prev }
-      const key = `${sid}_${seq}`
-      if (text.trim()) next[key] = text.trim()
-      else delete next[key]
-      try { localStorage.setItem('vibecap-storyboard', JSON.stringify(next)) } catch {}
-      return next
-    })
-  }, [])
   const [narrationRef, setNarrationRef] = useState('')
-  const [shots, setShots] = useState([])
-  const [activeShot, setActiveShot] = useState(null)
-  const [shotsLoading, setShotsLoading] = useState(false)
 
-  const { project, addPick: ctxAddPick, removePick: ctxRemovePick } = useProject()
+  const { project, taskId, addPick: ctxAddPick, removePick: ctxRemovePick } = useProject()
   const picks = project.picks
   const [actionStatus, setActionStatus] = useState('')
 
@@ -74,7 +53,7 @@ export default function MatchingDesk() {
 
   // ── Effects ──
   useEffect(() => {
-    fetch(`/segments.json?t=${Date.now()}`)
+    fetch(`/segments.json?task=${taskId}&t=${Date.now()}`)
       .then(r => r.json())
       .then(data => {
         const segs = data.segments || []
@@ -89,47 +68,20 @@ export default function MatchingDesk() {
   }, [playbackRate, playerSrc])
 
   // ── Handlers ──
-  const doSearch = useCallback(async (q, mode) => {
-    if (!q || !q.trim()) return
-    setSearching(true)
-    setSearchStatus('搜索中...')
-    setResults([])
-    setSelectedIdx(null)
-    setCurMark(null)
-    try {
-      const r = await fetch(`/search?q=${encodeURIComponent(q)}&mode=${mode}`)
-      const data = await r.json()
-      data.sort((a, b) => b.score - a.score)
-      setResults(data)
-      setSearchStatus(`${data.length} 个结果`)
-      setEpFilter(null)  // 新搜索重置筛选
-    } catch (e) {
-      setSearchStatus('⚠ 搜索失败')
-    } finally {
-      setSearching(false)
-    }
-  }, [])
-
   const pickSentence = useCallback((sid, seq) => {
     setCurSid(sid)
     setCurSeq(seq)
     setCurMark(null)
     setSelectedIdx(null)
-    // 停止当前视频
-    if (playerRef.current) {
-      playerRef.current.pause()
-      playerRef.current.currentTime = 0
-    }
+    if (playerRef.current) { playerRef.current.pause(); playerRef.current.currentTime = 0 }
     setPlayerSrc('')
     setPlayerStatus('选择结果以预览')
     setResults([])
-    setSearchStatus('')
     setActionStatus('')
 
     const seg = segments.find(s => s.seg_id === sid)
     if (!seg) return
 
-    // 填充文案参考
     let refText = ''
     if (seq === 'D') {
       refText = (seg.highlight_text || '').substring(0, 200)
@@ -138,28 +90,7 @@ export default function MatchingDesk() {
       if (sentences[seq]) refText = sentences[seq].trim()
     }
     setNarrationRef(refText)
-    // 异步获取 AI 分镜方案
-    setShots([])
-    setActiveShot(null)
-    setShotsLoading(true)
-    setQuery('')  // 切换句子时清空，等 AI 返回后填入
-    fetch('/storyboard_suggest', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ narration: refText })
-    }).then(r => r.json()).then(d => {
-      const list = d.suggestions || []
-      setShots(list)
-      if (list.length > 0) {
-        setQuery(list[0])
-        setActiveShot(0)
-      }
-    }).catch(() => {}).finally(() => setShotsLoading(false))
-  }, [segments, storyboard])
-
-  const search = useCallback(() => {
-    doSearch(query, 'semantic')
-  }, [query, doSearch])
+  }, [segments])
 
   const markResult = useCallback((idx, ep, start, end) => {
     setCurMark({ ep, start, end, pvFile: null })
@@ -168,10 +99,10 @@ export default function MatchingDesk() {
     setPlayerSrc('')
     setPreviewLoading(true)
     setPlayerStatus('加载预览中...')
-    fetch(`/preview_video?ep=${ep}&t=${start}&sid=${pvSid}`)
+    fetch(`/preview_video?ep=${ep}&t=${start}&sid=${pvSid}&task=${taskId}`)
       .then(r => r.json()).then(d => {
         if (d.url) {
-          setPlayerSrc(d.url + '?t=' + Date.now())
+          setPlayerSrc(d.url + (d.url.includes('?') ? '&t=' : '?t=') + Date.now())
           setCurMark(prev => prev ? { ...prev, pvFile: d.file } : null)
           // 用后端返回的实际 clip 起止时间，而非猜测值
           if (d.start != null) setAdjStart(d.start)
@@ -188,10 +119,10 @@ export default function MatchingDesk() {
     if (!curMark) return
     setPreviewLoading(true)
     setPlayerStatus(`跳转至 ${adjStart.toFixed(1)}s...`)
-    fetch(`/preview_video?ep=${curMark.ep}&t=${adjStart}&sid=${pvSid}`)
+    fetch(`/preview_video?ep=${curMark.ep}&t=${adjStart}&sid=${pvSid}&task=${taskId}`)
       .then(r => r.json()).then(d => {
         if (d.url) {
-          setPlayerSrc(d.url + '?t=' + Date.now())
+          setPlayerSrc(d.url + (d.url.includes('?') ? '&t=' : '?t=') + Date.now())
           setCurMark(prev => prev ? { ...prev, pvFile: d.file } : null)
           // 用后端返回的实际 clip 起止时间
           if (d.start != null) setAdjStart(d.start)
@@ -221,7 +152,7 @@ export default function MatchingDesk() {
     // 异步复制预览文件为永久 clip
     if (pvFile) {
       try {
-        const r = await fetch('/copy', {
+        const r = await fetch(`/copy?task=${taskId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -300,9 +231,14 @@ export default function MatchingDesk() {
                         {seg.highlight_text && (
                           <button
                             onClick={() => pickSentence(seg.seg_id, 'D')}
-                            className="w-full text-left px-2.5 py-1.5 mb-1 rounded-r-lg bg-destructive/10 border-l-[3px] border-warning hover:bg-destructive/15 transition-colors"
+                            className={cn(
+                              'w-full text-left px-2.5 py-1.5 mb-1 rounded-r-lg border-l-[3px] transition-colors',
+                              curSid === seg.seg_id && curSeq === 'D'
+                                ? 'bg-warning/20 border-warning shadow-sm'
+                                : 'bg-destructive/10 border-warning hover:bg-destructive/15'
+                            )}
                           >
-                            <span className="text-[10px] text-warning/70">{storyboard[`${seg.seg_id}_D`] ? "◆" : "◇"} S{seg.seg_id}-D</span>
+                            <span className="text-[10px] text-warning/70">S{seg.seg_id}-D</span>
                             {' '}<span className="text-[11px] text-warning leading-snug">
                               <Highlighted text={seg.highlight_text.substring(0, 80)} />
                               {seg.highlight_text.length > 80 && '...'}
@@ -314,8 +250,13 @@ export default function MatchingDesk() {
                         {sentences.map((s, i) => {
                           const summary = getPickSummary(seg.seg_id, i)
                           return (
-                            <div key={i} className="flex items-start gap-1.5 py-1.5 px-1 border-b border-border/30 hover:bg-accent/50 rounded transition-colors group">
-                              <span className="text-[10px] text-info font-mono min-w-[38px] pt-0.5 select-none">{storyboard[`${seg.seg_id}_${i}`] ? "◆" : "◇"} S{seg.seg_id}-{i}</span>
+                            <div key={i} className={cn(
+                              'flex items-start gap-1.5 py-1.5 px-1 border-b border-border/30 rounded transition-colors group',
+                              curSid === seg.seg_id && curSeq === i
+                                ? 'bg-purple/10 border-l-[3px] border-l-purple shadow-sm'
+                                : 'hover:bg-accent/50'
+                            )}>
+                              <span className="text-[10px] text-info font-mono min-w-[38px] pt-0.5 select-none">S{seg.seg_id}-{i}</span>
                               <button
                                 onClick={() => pickSentence(seg.seg_id, i)}
                                 className="flex-1 text-left text-xs text-foreground/85 leading-relaxed cursor-pointer hover:text-foreground"
@@ -346,179 +287,14 @@ export default function MatchingDesk() {
           )}
         </div>
 
-        {/* ═══ 中栏：搜索 + 结果 ═══ */}
+        {/* ═══ 中栏：AI 对话 ═══ */}
         <div className="flex-1 flex flex-col min-w-0 border-r border-border">
-          {/* 分镜方案（结构化列表） */}
-          {(shots.length > 0 || shotsLoading) && (
-            <div className="p-3 border-b border-border bg-card/20 flex-shrink-0">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground/50">分镜方案</span>
-                <button
-                  onClick={() => {
-                    const newShot = ''
-                    setShots(prev => [...prev, newShot])
-                    setActiveShot(shots.length)
-                    setQuery('')
-                  }}
-                  className="text-[10px] px-2 py-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                >+ 添加镜头</button>
-              </div>
-              {shotsLoading ? (
-                <p className="text-[11px] text-muted-foreground/50 px-1">🤖 生成分镜方案中...</p>
-              ) : (
-                <div className="space-y-1">
-                  {shots.map((shot, i) => (
-                    <div
-                      key={i}
-                      className={cn(
-                        'flex items-start gap-2 px-2 py-1.5 rounded text-xs group transition-colors cursor-pointer',
-                        activeShot === i
-                          ? 'bg-info/10 border border-info/20'
-                          : 'hover:bg-accent/50 border border-transparent'
-                      )}
-                    >
-                      <button
-                        onClick={() => {
-                          setQuery(shot)
-                          setActiveShot(i)
-                          if (curSid != null) saveStoryboard(curSid, curSeq, shot)
-                        }}
-                        className="flex-1 text-left text-foreground/80 leading-relaxed"
-                      >
-                        {shot || <span className="text-muted-foreground/40 italic">空镜头，点击编辑</span>}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShots(prev => prev.filter((_, j) => j !== i))
-                          if (activeShot === i) setActiveShot(null)
-                          if (activeShot > i) setActiveShot(prev => prev - 1)
-                        }}
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all flex-shrink-0"
-                      >
-                        <X className="size-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 搜索区：文案参考 + 画面分镜描述 */}
-          <div className="p-3 border-b border-border bg-card/30 flex-shrink-0 space-y-2">
-            {/* 文案参考（只读） */}
-            {narrationRef && (
-              <div className="text-xs text-muted-foreground/70 bg-muted/30 px-3 py-2 rounded-lg border border-border/50">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mr-2">文案参考</span>
-                {narrationRef}
-              </div>
-            )}
-            {/* 画面分镜描述（可编辑） */}
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <textarea
-                  value={query}
-                  onChange={e => {
-                    const val = e.target.value
-                    setQuery(val)
-                    if (curSid != null) saveStoryboard(curSid, curSeq, val)
-                    // 同步更新当前选中镜头
-                    if (activeShot !== null) {
-                      setShots(prev => prev.map((s, i) => i === activeShot ? val : s))
-                    }
-                  }}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); search() } }}
-                  placeholder={curSid != null ? "用画面语言描述这个分镜要表现什么…" : "点击左侧句子，然后在这里写画面描述…"}
-                  className="w-full h-16 px-3 py-2 text-sm bg-background border border-input rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                  rows={3}
-                />
-                {query && (
-                  <button
-                    onClick={() => { setQuery(''); if (curSid != null) saveStoryboard(curSid, curSeq, ''); setResults([]); setSearchStatus('') }}
-                    className="absolute top-1.5 right-1.5 p-0.5 rounded text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="size-3" />
-                  </button>
-                )}
-              </div>
-              <Button onClick={search} disabled={searching || !query.trim()} className="h-16 px-4">
-                <Search className="size-4" />
-                <span className="text-xs">{searching ? '检索中' : '检索匹配素材'}</span>
-              </Button>
-            </div>
-            {searchStatus && (
-              <p className="text-xs text-muted-foreground">{searchStatus}</p>
-            )}
-          </div>
-
-          {/* 按集筛选页签 — 动态检测结果中的集数 */}
-          {results.length > 0 && (
-            <div className="flex gap-1 px-3 pt-2">
-              {(() => {
-                const eps = [...new Set(results.map(r => r.ep))].sort((a,b) => a-b)
-                return [null, ...eps].map(ep => {
-                  const count = ep === null ? results.length : results.filter(r => r.ep === ep).length
-                  if (count === 0 && ep !== null) return null
-                  return (
-                    <button
-                      key={ep ?? 'all'}
-                      onClick={() => setEpFilter(ep)}
-                      className={cn(
-                        'px-3 py-1 text-xs rounded-full border transition-all',
-                        epFilter === ep
-                          ? 'bg-info/15 border-info text-info font-medium'
-                          : 'border-border text-muted-foreground hover:bg-accent'
-                      )}
-                    >
-                      {ep === null ? `全部 (${count})` : `EP${ep} (${count})`}
-                    </button>
-                  )
-                })
-              })()}
-            </div>
-          )}
-
-          {/* 结果列表 */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
-            {results.length === 0 && !searching && (
-              <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
-                <Search className="size-8 opacity-30" />
-                <p className="text-sm">填写画面描述后点击「检索匹配画面」</p>
-                <p className="text-xs opacity-60">用视觉语言描述你想找的画面</p>
-              </div>
-            )}
-            {results
-              .filter(s => epFilter === null || s.ep === epFilter)
-              .map((s, i) => (
-                <button
-                  key={`${s.ep}_${s.start.toFixed(0)}`}
-                  onClick={() => markResult(i, s.ep, s.start, s.end)}
-                  className={cn(
-                    'w-full text-left p-3 rounded-lg border mb-1.5 transition-all cursor-pointer',
-                    selectedIdx === i
-                      ? 'border-info bg-info/5 shadow-sm shadow-info/10'
-                      : 'border-border bg-card hover:bg-accent'
-                  )}
-                >
-                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground mb-1">
-                    <span>EP{s.ep}</span>
-                    <span>{s.start.toFixed(0)}s - {s.end.toFixed(0)}s</span>
-                    <span className="text-muted-foreground/50">({s.duration}s)</span>
-                    <span className="ml-auto inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple/15 text-purple">
-                      {s.score.toFixed(1)}
-                    </span>
-                  </div>
-                  <div className="text-xs text-foreground/85 leading-relaxed">
-                    <Highlighted text={s.description} />
-                  </div>
-                  {s.asr && (
-                    <div className="text-[11px] text-success/80 leading-relaxed mt-1">
-                      <Highlighted text={s.asr.substring(0, 100)} />
-                    </div>
-                  )}
-                </button>
-              ))}
-          </div>
+          <ChatPanel
+            context={{ sid: curSid, seq: curSeq, narration: narrationRef, taskId }}
+            onPreview={(r) => { markResult(-1, r.ep, r.start, r.end) }}
+            onPick={(r) => { if (curSid != null) ctxAddPick(curSid, curSeq, 'main', { ep: r.ep, start: r.start, end: r.end, file: null, duration: r.end - r.start }) }}
+            onSearch={(results) => { setResults(results) }}
+          />
         </div>
 
         {/* ═══ 右栏：预览 + picks ═══ */}
@@ -631,7 +407,7 @@ export default function MatchingDesk() {
                     <span className="text-success/60 font-medium flex-shrink-0">主{i + 1}</span>
                     <span className="text-foreground/80">EP{m.ep} {m.start.toFixed(0)}s</span>
                     {m.file ? (
-                      <a href={`素材clips/${m.file}`} target="_blank" rel="noreferrer" className="text-info hover:underline truncate">{m.file}</a>
+                      <a href={`/素材clips/${m.file}?task=${taskId}`} target="_blank" rel="noreferrer" className="text-info hover:underline truncate">{m.file}</a>
                     ) : (
                       <span className="text-muted-foreground/50 text-[10px]">提取中...</span>
                     )}

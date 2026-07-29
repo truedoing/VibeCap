@@ -96,6 +96,8 @@ export function TaskProvider({ children }) {
 
   const value = {
     project,
+    seriesId,
+    taskId,
     addPick: handleAddPick,
     removePick: handleRemovePick,
     saveTimelineCache: handleSaveTimelineCache,
@@ -115,6 +117,8 @@ export function useProject() {
 export function EmptyProjectProvider({ children }) {
   const empty = {
     project: EMPTY,
+    seriesId: null,
+    taskId: null,
     addPick: () => {},
     removePick: () => {},
     saveTimelineCache: () => {},

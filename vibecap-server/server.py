@@ -7,6 +7,16 @@ from socketserver import ThreadingMixIn
 from urllib.parse import unquote, urlparse, parse_qs
 import numpy as np
 
+# 繁→简 转换
+try:
+    from zhconv import convert as _zh_convert
+    def _norm(text):
+        """繁体转简体，用于 ASR 文本归一化"""
+        return _zh_convert(text, 'zh-cn')
+except ImportError:
+    def _norm(text):
+        return text
+
 # 国内 HuggingFace 镜像（hf-mirror.com）
 if not os.environ.get("HF_ENDPOINT"):
     os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
@@ -47,36 +57,92 @@ if si_path.exists():
     semantic_index = pickle.load(open(si_path, "rb"))
     print(f"[search] 语义索引: {semantic_index['embeddings'].shape[0]} 条")
 
+# 动态发现可用集数（ASR/VLM 数据 + 源视频）
+AVAILABLE_EPS = sorted(set(
+    int(d.name[2:]) for d in SOURCES_DIR.iterdir()
+    if d.is_dir() and d.name.startswith("ep") and d.name[2:].isdigit()
+    and ((d / "asr_result.json").exists() or (d / "vlm_analysis.json").exists())
+))
+print(f"[search] 可用集数: {AVAILABLE_EPS}")
+
 vlm_data = []
-for ep in [27,28,29]:
+for ep in AVAILABLE_EPS:
     p = SOURCES_DIR / f"ep{ep}" / "vlm_analysis.json"
     if p.exists():
         for s in json.load(open(p)): s["_ep"]=ep; vlm_data.append(s)
+print(f"[search] VLM 数据: {len(vlm_data)} 条")
 
 asr_data = {}
-for ep in [27,28,29]:
+for ep in AVAILABLE_EPS:
     p = SOURCES_DIR / f"ep{ep}" / "asr_result.json"
-    if p.exists(): asr_data[ep] = json.load(open(p))
+    if p.exists():
+        raw = json.load(open(p))
+        # ASR 文本统一转简体，确保与搜索 query 的字符集一致
+        for a in raw:
+            a["text"] = _norm(a["text"])
+        asr_data[ep] = raw
+print(f"[search] ASR 数据: {sum(len(v) for v in asr_data.values())} 条, 覆盖 EP {sorted(asr_data.keys())}")
 
 # ── Handler ──
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
+        self._cached_body = None  # 必须在 super().__init__ 之前，因为父类 __init__ 会触发 handle()
         super().__init__(*args, directory=str(TASK_DIR), **kwargs)
+
+    def _resolve_task_dir(self, task_name=None):
+        """解析任务目录：优先 ?task= 参数，否则用启动默认"""
+        name = task_name or _args.task
+        return DRAMA_DIR / "tasks" / name
+
+    def _resolve_clip_dir(self, task_name=None):
+        return self._resolve_task_dir(task_name) / "素材clips"
+
+    def _resolve_work_dir(self, task_name=None):
+        return self._resolve_task_dir(task_name) / "work_dir"
+
+    def _get_task_param(self):
+        """从请求中提取 task 参数"""
+        # GET: 从 query string
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        task = params.get("task", [None])[0]
+        if task:
+            return task
+        # POST: 从缓存的 body
+        if self.command == "POST" and self._cached_body:
+            try:
+                data = json.loads(self._cached_body)
+                return data.get("task")
+            except Exception:
+                pass
+        return None
 
     def do_GET(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         params = parse_qs(parsed.query)
 
+        # 解析 task 参数（用于动态路由）
+        req_task = params.get("task", [None])[0]
+
         if path == "/search":
             q = params.get("q", [""])[0]
             mode = params.get("mode", ["hybrid"])[0]
             self._json(self._search(q, mode=mode))
+        elif path == "/segments.json":
+            task = req_task or _args.task
+            seg_file = self._resolve_task_dir(task) / "segments.json"
+            if seg_file.exists():
+                self._json(json.load(open(seg_file)))
+            else:
+                self._json({"segments": [], "total_segments": 0})
         elif path == "/preview_video":
+            task = req_task or _args.task
             self._serve_preview(params.get("ep",["1"])[0], float(params.get("t",["0"])[0]),
-                               params.get("sid",["default"])[0])
+                               params.get("sid",["default"])[0], task=task)
         elif path == "/status":
-            self._json({"ok": True, "drama": _args.drama, "task": _args.task})
+            task = req_task or _args.task
+            self._json({"ok": True, "drama": _args.drama, "task": task})
         elif path == "/dramas":
             self._json(self._list_dramas())
         elif path == "/tasks":
@@ -85,34 +151,44 @@ class Handler(SimpleHTTPRequestHandler):
         elif "/posters/" in path:
             self._serve_poster(path)
         elif "/素材clips/" in path or "/clips/" in path or "/tts_segments/" in path:
-            self._serve_clip()
+            self._serve_clip(req_task)
         else:
-            super().do_GET()
+            # 静态文件 fallback：根据 ?task= 动态解析目录
+            self._serve_static(req_task)
 
     def do_POST(self):
-        if self.path == "/assign":
+        parsed = urlparse(self.path)
+        path = parsed.path
+        params = parse_qs(parsed.query)
+        req_task = params.get("task", [None])[0] or _args.task
+
+        if path == "/chat":
+            self._handle_chat()
+        elif path == "/assign":
+            clip_dir = self._resolve_clip_dir(req_task)
             data = json.loads(self._read_body())
             # 如果有pv_file → 复制预览文件; 否则 → 重新编码
             if data.get("pv_file"):
                 import shutil
-                src = CLIP_DIR / data["pv_file"]
+                src = clip_dir / data["pv_file"]
                 dst_name = f"clip_pick_S{data.get('sid','0')}_{data.get('seq','0')}_{data.get('type','main')}_ep{data.get('ep','0')}.mp4"
-                dst = CLIP_DIR / dst_name
+                dst = clip_dir / dst_name
                 shutil.copy(str(src), str(dst))
-                thumb = CLIP_DIR / (dst_name.rsplit('.',1)[0]+'.jpg')
+                thumb = clip_dir / (dst_name.rsplit('.',1)[0]+'.jpg')
                 mid = float(data.get("start",0)) + (float(data.get("end",0))-float(data.get("start",0)))/2
                 subprocess.run(["ffmpeg","-y","-ss",str(mid),"-i",
                     str(SOURCE_VIDEOS.get(f'ep{data.get("ep",27)}','')),"-vframes","1","-q:v","3",str(thumb)], capture_output=True)
                 self._json({"ok":True, "file":dst_name, "thumb":thumb.name})
             else:
-                result = self._extract(data, full=True)
+                result = self._extract(data, full=True, clip_dir=clip_dir)
                 self._json(result)
-        elif self.path == "/copy":
+        elif path == "/copy":
             # 将临时预览文件复制为正式命名文件（避免重新编码，添加/补充镜头时调用）
             import shutil
+            clip_dir = self._resolve_clip_dir(req_task)
             data = json.loads(self._read_body())
             pv_file = data.get("pv_file", "")
-            src = CLIP_DIR / pv_file
+            src = clip_dir / pv_file
             if not pv_file or not src.exists():
                 self._json({"ok": False, "error": f"pv_file not found: {pv_file}"}, 404)
                 return
@@ -121,10 +197,10 @@ class Handler(SimpleHTTPRequestHandler):
             ptype = data.get("type", "main")
             ep = data.get("ep", "0")
             dst_name = f"clip_pick_S{sid}_{seq}_{ptype}_ep{ep}.mp4"
-            dst = CLIP_DIR / dst_name
+            dst = clip_dir / dst_name
             shutil.copy(str(src), str(dst))
             thumb_name = dst_name.rsplit(".", 1)[0] + ".jpg"
-            thumb = CLIP_DIR / thumb_name
+            thumb = clip_dir / thumb_name
             mid = float(data.get("start", 0)) + (float(data.get("end", 0)) - float(data.get("start", 0))) / 2
             src_video = SOURCE_VIDEOS.get(f"ep{ep}", "")
             if src_video:
@@ -133,18 +209,20 @@ class Handler(SimpleHTTPRequestHandler):
                      "-vframes", "1", "-q:v", "3", str(thumb)],
                     capture_output=True)
             self._json({"ok": True, "file": dst_name, "thumb": thumb_name})
-        elif self.path == "/thumb":
+        elif path == "/thumb":
+            clip_dir = self._resolve_clip_dir(req_task)
             data = json.loads(self._read_body())
-            result = self._thumb(data)
+            result = self._thumb(data, clip_dir=clip_dir)
             self._json(result)
-        elif self.path == "/storyboard_suggest":
+        elif path == "/storyboard_suggest":
             data = json.loads(self._read_body())
             suggestions = self._generate_storyboard(data.get("narration", ""))
             self._json({"suggestions": suggestions})
-        elif self.path == "/tasks/create":
+        elif path == "/tasks/create":
             self._create_task()
-        elif self.path == "/status":
-            tasks = json.load(open(TASK_DIR/"tasks.json")) if (TASK_DIR/"tasks.json").exists() else []
+        elif path == "/status":
+            task_dir = self._resolve_task_dir(req_task)
+            tasks = json.load(open(task_dir/"tasks.json")) if (task_dir/"tasks.json").exists() else []
             self._json({"pending":sum(1 for t in tasks if t.get("status")=="pending"), "done":sum(1 for t in tasks if t.get("status")=="done"), "total":len(tasks)})
         else:
             self.send_error(404)
@@ -166,7 +244,74 @@ class Handler(SimpleHTTPRequestHandler):
             return self._hybrid_search(query, limit)
         elif mode == "deep":
             return self._deep_search(query, limit)
+        elif mode == "asr_first":
+            return self._asr_first_search(query, limit)
         return self._hybrid_search(query, limit)
+
+    def _asr_first_search(self, query, limit=10):
+        '''ASR优先匹配：纯 ASR 关键词搜索 + 语义兜底，结果展示 ASR 台词'''
+        query = _norm(query)  # 繁→简归一化
+        results = {}
+
+        # Step 1: ASR 关键词搜索（加权 n-gram，不含 VLM）
+        kws = {}  # 复刻 _keyword_search 的加权逻辑，但只搜 ASR
+        qlen = len(query)
+        for n in range(2, min(qlen + 1, 9)):
+            w = 3 ** (n - 2) if n <= 5 else 27
+            seen = set()
+            for i in range(qlen - n + 1):
+                kw = query[i:i+n]
+                if kw not in seen:
+                    seen.add(kw)
+                    kws[kw] = max(kws.get(kw, 0), w)
+        if qlen > 4:
+            kws[query] = 81
+
+        for ep in sorted(asr_data.keys()):
+            asr_list = asr_data.get(ep, [])
+            for i, a in enumerate(asr_list):
+                asr_text = a["text"]
+                score = sum(asr_text.count(kw) * w for kw, w in kws.items())
+                if score <= 0: continue
+                start, end, text = a["start"], a["end"], asr_text
+                # 合并前后匹配片段（扩展对话上下文）
+                if i > 0 and sum(asr_list[i-1]["text"].count(kw) * w for kw, w in kws.items()) > 0:
+                    start = asr_list[i-1]["start"]; text = asr_list[i-1]["text"] + " " + text
+                if i > 1 and sum(asr_list[i-2]["text"].count(kw) * w for kw, w in kws.items()) > 0:
+                    start = asr_list[i-2]["start"]; text = asr_list[i-2]["text"] + " " + text
+                if i+1 < len(asr_list) and sum(asr_list[i+1]["text"].count(kw) * w for kw, w in kws.items()) > 0:
+                    end = asr_list[i+1]["end"]; text += " " + asr_list[i+1]["text"]
+                if i+2 < len(asr_list) and sum(asr_list[i+2]["text"].count(kw) * w for kw, w in kws.items()) > 0:
+                    end = asr_list[i+2]["end"]; text += " " + asr_list[i+2]["text"]
+                # ASR 匹配得分加权
+                score = min(score * 1.5, 95)
+                k = f"{ep}_{start:.0f}"
+                r = self._make_result(ep, start, end, 0, text[:200], text[:200], score)
+                if k not in results or r["score"] > results[k]["score"]:
+                    results[k] = r
+
+        # Step 2: 语义兜底（只补不足的部分，且用 ASR 台词替换描述）
+        if len(results) < limit:
+            seen = set(results.keys())
+            semantic = self._semantic_search(query, 20)
+            for r in semantic:
+                k = f"{r['ep']}_{r['start']:.0f}"
+                if k in seen: continue
+                # 查找该时间段的 ASR 台词
+                ep = r["ep"]
+                asr_txt = ""
+                for a in asr_data.get(ep, []):
+                    if a["start"] < r["end"] and a["end"] > r["start"]:
+                        asr_txt += a["text"]
+                # 用 ASR 台词替换 VLM 描述，降权
+                if asr_txt:
+                    r["description"] = asr_txt[:200]
+                    r["asr"] = asr_txt[:200]
+                r["score"] = r["score"] * 0.4  # 语义兜底大幅降权
+                results[k] = r
+                seen.add(k)
+
+        return sorted(results.values(), key=lambda x: -x["score"])[:limit]
 
     def _semantic_search(self, query, limit=10):
         '''纯语义搜索（BGE embedding + 余弦相似度）'''
@@ -194,32 +339,56 @@ class Handler(SimpleHTTPRequestHandler):
         return sorted(results.values(), key=lambda x: -x["score"])[:limit]
 
     def _keyword_search(self, query, limit=10):
-        '''纯关键词搜索（ASR + VLM 词频匹配）'''
+        '''关键词搜索（ASR + VLM 词频匹配），使用加权 n-gram'''
         results = {}
-        # 提取2-4字关键词
-        kws = list(set(query[i:i+n] for n in [2,3,4] for i in range(len(query)-n+1)))
-        if len(query) > 4: kws.append(query)
-        
-        # ASR 关键词匹配
-        for ep in [27,28,29]:
+        # 加权 n-gram：越长权重越高，鼓励连续匹配
+        # 权重: 2-gram=1, 3-gram=3, 4-gram=9, 5+=27
+        kws = {}  # {keyword: weight}
+        qlen = len(query)
+        for n in range(2, min(qlen + 1, 9)):
+            w = 3 ** (n - 2) if n <= 5 else 27  # 权重指数增长，5+封顶
+            seen = set()
+            for i in range(qlen - n + 1):
+                kw = query[i:i+n]
+                if kw not in seen:
+                    seen.add(kw)
+                    kws[kw] = max(kws.get(kw, 0), w)
+        # 完整 query 作为最高权重关键词
+        if qlen > 4:
+            kws[query] = 81
+
+        # ASR 关键词匹配（加权得分）
+        for ep in sorted(asr_data.keys()):
             asr_list = asr_data.get(ep, [])
             for i, a in enumerate(asr_list):
-                score = sum(a["text"].count(k) for k in kws)
+                asr_text = a["text"]
+                score = sum(asr_text.count(kw) * w for kw, w in kws.items())
                 if score <= 0: continue
-                start, end, text = a["start"], a["end"], a["text"]
-                if i > 0 and sum(asr_list[i-1]["text"].count(k) for k in kws) > 0:
+                start, end, text = a["start"], a["end"], asr_text
+                # 合并前后匹配的相邻片段（扩展上下文）
+                merged = 0
+                if i > 0 and sum(asr_list[i-1]["text"].count(kw) * w for kw, w in kws.items()) > 0:
                     start = asr_list[i-1]["start"]; text = asr_list[i-1]["text"] + " " + text
-                if i+1 < len(asr_list) and sum(asr_list[i+1]["text"].count(k) for k in kws) > 0:
+                    merged += 1
+                if i > 1 and sum(asr_list[i-2]["text"].count(kw) * w for kw, w in kws.items()) > 0:
+                    start = asr_list[i-2]["start"]; text = asr_list[i-2]["text"] + " " + text
+                    merged += 1
+                if i+1 < len(asr_list) and sum(asr_list[i+1]["text"].count(kw) * w for kw, w in kws.items()) > 0:
                     end = asr_list[i+1]["end"]; text += " " + asr_list[i+1]["text"]
+                    merged += 1
+                if i+2 < len(asr_list) and sum(asr_list[i+2]["text"].count(kw) * w for kw, w in kws.items()) > 0:
+                    end = asr_list[i+2]["end"]; text += " " + asr_list[i+2]["text"]
+                # 合并奖励
+                score += merged * 5
                 k = f"{ep}_{start:.0f}_kw"
                 r = self._make_result(ep, start, end, 0, text[:200], "", score)
                 if k not in results or r["score"] > results[k]["score"]:
                     results[k] = r
-        
+
         # VLM 描述关键词匹配
         for s in vlm_data:
             desc = s.get("description","")
-            score = sum(desc.count(k) * 3 for k in kws)
+            score = sum(desc.count(kw) * w * 3 for kw, w in kws.items())
             if score <= 0: continue
             k = f"{s['_ep']}_{s['start']:.0f}"
             r = self._make_result(s["_ep"], s["start"], s["end"],
@@ -347,18 +516,20 @@ class Handler(SimpleHTTPRequestHandler):
             "score": round(score, 1),
         }
 
-    def _extract(self, data, full=False):
+    def _extract(self, data, full=False, clip_dir=None):
+        if clip_dir is None:
+            clip_dir = CLIP_DIR  # backward compat
         ep = data["ep"]; start=max(0,float(data["start"])-2); end=float(data["end"])+2
         src = SOURCE_VIDEOS.get(f"ep{ep}")
         if not src: return {"error":"src not found"}
         name = f"clip_search_ep{ep}_{int(start)}s.mp4"
-        out = CLIP_DIR / name
+        out = clip_dir / name
         if full:
             subprocess.run(["ffmpeg","-y","-ss",str(start),"-i",str(src),"-t",str(end-start),
                 "-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","192k",
                 str(out)], capture_output=True)
         # 缩略图
-        thumb = CLIP_DIR / (name.rsplit('.',1)[0]+'.jpg')
+        thumb = clip_dir / (name.rsplit('.',1)[0]+'.jpg')
         mid = start + (end-start)/2
         subprocess.run(["ffmpeg","-y","-ss",str(mid),"-i",str(src),"-vframes","1","-q:v","3",str(thumb)],
             capture_output=True)
@@ -366,20 +537,24 @@ class Handler(SimpleHTTPRequestHandler):
         if full: result["file"] = name
         return result
 
-    def _thumb(self, data):
-        return self._extract(data, full=False)
+    def _thumb(self, data, clip_dir=None):
+        return self._extract(data, full=False, clip_dir=clip_dir)
 
-    def _serve_preview(self, ep, t, sid="default"):
+    def _serve_preview(self, ep, t, sid="default", task=None):
+        task_name = task or _args.task
+        clip_dir = self._resolve_clip_dir(task_name)
         src = SOURCE_VIDEOS.get(f"ep{ep}")
         if not src: return self.send_error(404)
-        tmp = CLIP_DIR / f"_pv_{sid}.mp4"
+        tmp = clip_dir / f"_pv_{sid}.mp4"
         clip_start = max(0, t - 2)
         clip_end = clip_start + 20
         subprocess.run(["ffmpeg","-y","-ss",str(clip_start),"-i",str(src),
             "-t","20","-vf","scale=640:360","-c:v","libx264","-preset","ultrafast",
             "-crf","28","-c:a","aac","-b:a","64k",str(tmp)], capture_output=True)
         if tmp.exists():
-            self._json({"ok":True, "file":tmp.name, "url":"/clips/"+tmp.name,
+            # URL 带上 task 参数，确保前端后续请求路由到正确任务
+            url = f"/clips/{tmp.name}?task={task_name}"
+            self._json({"ok":True, "file":tmp.name, "url":url,
                 "start":clip_start, "end":clip_end})
         else:
             self.send_error(500)
@@ -579,6 +754,146 @@ class Handler(SimpleHTTPRequestHandler):
                 tasks.append({"name": t.name, "segments": 0, "status": "editing", "duration": 0})
         return sorted(tasks, key=lambda x: x["name"])
 
+    # ── AI 聊天搜索 ──
+
+    def _handle_chat(self):
+        """POST /chat — 对话式素材搜索"""
+        data = json.loads(self._read_body())
+        messages = data.get("messages", [])
+        context = data.get("context", {})
+
+        if not messages:
+            self._json({"reply": "请描述你想找的画面", "results": []})
+            return
+
+        # 检测 ASR 优先策略：前端传入 strategy="asr_first" 或 seq="D"（台词）
+        strategy = context.get("strategy", "")
+        if not strategy and str(context.get("seq", "")) == "D":
+            strategy = "asr_first"
+
+        # ── ASR 优先：跳过 AI 精炼，直接用原话搜 ASR ──
+        if strategy == "asr_first":
+            query = messages[-1].get("content", "")
+            # 去掉可能的前缀指令，保留纯台词
+            for prefix in ["ASR匹配：", "asr匹配：", "匹配台词：", "ASR台词匹配："]:
+                if query.startswith(prefix):
+                    query = query[len(prefix):]
+                    break
+            results = self._asr_first_search(query, limit=5)
+            reply = self._format_chat_reply(results, query)
+            self._json({"reply": reply, "results": results, "action": "search"})
+            return
+
+        # Step 1: DeepSeek 意图理解 + query 精炼（语义搜索路径）
+        intent = self._chat_intent(messages, context)
+        action = intent.get("action", "search")
+        reply = ""
+        results = []
+
+        if action == "search":
+            query = intent.get("query", "")
+            if not query:
+                query = messages[-1].get("content", "") if messages else ""
+            mode = intent.get("mode", "semantic")
+            results = self._search(query, mode=mode, limit=5)
+            reply = intent.get("reply", "") or self._format_chat_reply(results, query)
+        elif action == "preview":
+            ep = intent.get("ep", 1)
+            t = intent.get("start", 0)
+            sid = f"chat_{int(time.time())}"
+            self._serve_preview(str(ep), float(t), sid)
+            return
+        else:
+            reply = intent.get("reply", "我理解你想" + action + "，但这个功能还在开发中。你可以先试试搜索：直接描述你想找的画面。")
+            results = self._search(messages[-1].get("content", ""), mode="semantic", limit=3)
+
+        self._json({"reply": reply, "results": results, "action": action})
+
+    def _chat_intent(self, messages, context, strategy=""):
+        """DeepSeek 理解对话意图 → {action, query, reply, mode?, ep?, start?, end?}"""
+        import urllib.request as _ur
+
+        sid = context.get("sid", "?")
+        seq = context.get("seq", "?")
+        narration = context.get("narration", "")
+
+        # ASR优先 vs 语义搜索的规则差异
+        if strategy == "asr_first":
+            mode_hint = (
+                "当前匹配策略：ASR优先（台词匹配模式）\n"
+                "规则：\n"
+                "- 保持台词原文的关键词，不要转写为视觉描述\n"
+                "- ASR匹配需要在剧中出现的原话，用剧中角色的真实台词\n"
+                "- mode 固定为 \"asr_first\"\n"
+                "- query 使用原台词中的关键词（10-30字）\n"
+            )
+        else:
+            mode_hint = (
+                "当前匹配策略：语义搜索（画面匹配模式）\n"
+                "规则：\n"
+                "- 用视觉关键词：表情（严肃/愤怒/微笑）、动作（拍桌/站起/低头）、场景（办公室/老宅/客厅）\n"
+                "- mode 固定为 \"semantic\"\n"
+                "- query 控制在 50 字内\n"
+            )
+
+        system_prompt = (
+            "你是 VIBECAP 的 AI 剪辑助手，名字叫「小 V」。\n"
+            "你正在帮助一位视频剪辑师，从电视剧《都挺好》的原剧素材中搜索匹配的镜头画面。\n\n"
+            "你的风格：专业、热情、简洁。像一个熟悉这部剧的剪辑搭档。\n\n"
+            f"当前工作上下文：解说段 S{sid}-{seq}\n"
+            f"解说词内容：{narration[:200]}\n\n"
+            + mode_hint + "\n"
+            "你的任务：理解剪辑师的意图，输出 JSON。\n\n"
+            "支持的 action:\n"
+            '- "search": 剪辑师描述想要的画面 → 你精炼为搜索 query，附带 mode 字段\n'
+            '- "chat": 闲聊、打招呼、问功能\n\n'
+            '输出格式（严格 JSON）:\n'
+            '{"action":"search", "query":"搜索词", "mode":"asr_first|semantic", "reply":"自然的回复"}\n'
+            '{"action":"chat", "reply":"你的回复"}\n\n'
+            "通用精炼规则：\n"
+            "- 累积多轮对话中的条件，不要丢失之前的约束\n"
+            "- 用户说'不要XX'→排除XX；'换XX'→替换条件\n"
+            "- 用角色真名（苏大强、蒙总、苏明玉等），禁止用他/她\n"
+            "- reply 要自然亲切，20 字内"
+        )
+
+        api_messages = [{"role": "system", "content": system_prompt}]
+        for m in messages[-6:]:
+            role = "assistant" if m.get("role") == "ai" else "user"
+            api_messages.append({"role": role, "content": m.get("content", "")[:500]})
+        api_messages.append({"role": "user", "content": "输出JSON："})
+
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        payload = json.dumps({
+            "model": "deepseek-chat",
+            "messages": api_messages,
+            "temperature": 0.7,
+            "max_tokens": 400,
+        }).encode("utf-8")
+
+        try:
+            req = _ur.Request(
+                "https://api.deepseek.com/v1/chat/completions",
+                data=payload,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+            )
+            with _ur.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read())
+            text = result["choices"][0]["message"]["content"].strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].split("```")[0].strip()
+            return json.loads(text)
+        except Exception as e:
+            print(f"[chat_intent] LLM 失败: {e}")
+            return {"action": "search", "query": messages[-1].get("content", "") if messages else "",
+                    "reply": "让我帮你找找~"}
+
+    def _format_chat_reply(self, results, query):
+        """搜索结果简短回复"""
+        if not results:
+            return f'没找到匹配的镜头，换个角度描述试试？'
+        return f'找到 {len(results)} 个匹配镜头，看看哪个合适~'
+
     def _generate_storyboard(self, narration, num=3):
         '''将解说词转写为1-3个视觉搜索描述，每个从不同角度匹配原剧镜头'''
         if not narration or not narration.strip():
@@ -648,14 +963,21 @@ class Handler(SimpleHTTPRequestHandler):
             print(f"[storyboard_suggest] LLM call failed: {e}")
             return []
 
-    def _serve_clip(self):
+    def _serve_clip(self, req_task=None):
+        # 从 URL query 或参数获取任务名
+        params = parse_qs(urlparse(self.path).query)
+        task_name = req_task or params.get("task", [None])[0] or _args.task
+        task_dir = self._resolve_task_dir(task_name)
         clean = urlparse(self.path).path
         clean = unquote(clean.lstrip("/"))
+        # 去掉 ?task= 之后的 query string（如果路径中意外包含）
+        if "?" in clean:
+            clean = clean.split("?")[0]
         if "tts_segments/" in clean:
-            path = Path(TASK_DIR) / "work_dir" / clean
+            path = task_dir / "work_dir" / clean
         else:
             clean = clean.replace("clips/", "素材clips/")
-            path = Path(TASK_DIR) / clean
+            path = task_dir / clean
         if not path.exists(): return self.send_error(404)
         size = path.stat().st_size
         rh = self.headers.get("Range")
@@ -684,6 +1006,27 @@ class Handler(SimpleHTTPRequestHandler):
                 self.wfile.write(chunk)
                 length-=len(chunk)
 
+    def _serve_static(self, req_task=None):
+        """静态文件 fallback：动态解析 ?task= 参数，从对应任务目录 serve 文件"""
+        task_name = req_task or _args.task
+        task_dir = self._resolve_task_dir(task_name)
+        clean = urlparse(self.path).path
+        clean = unquote(clean.lstrip("/"))
+        if "?" in clean:
+            clean = clean.split("?")[0]
+        file_path = task_dir / clean
+        if not file_path.exists() or not file_path.is_file():
+            return self.send_error(404)
+        ext = file_path.suffix.lower()
+        mime_map = {
+            ".html": "text/html", ".css": "text/css", ".js": "application/javascript",
+            ".json": "application/json", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".png": "image/png", ".webp": "image/webp", ".mp4": "video/mp4",
+            ".mp3": "audio/mpeg", ".wav": "audio/wav", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }
+        mime = mime_map.get(ext, "application/octet-stream")
+        self._send_file(file_path, mime)
+
     def _json(self, data, code=200):
         self.send_response(code)
         self.send_header("Content-Type","application/json")
@@ -692,7 +1035,9 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(json.dumps(data,ensure_ascii=False).encode())
 
     def _read_body(self):
-        return self.rfile.read(int(self.headers.get("Content-Length",0))).decode()
+        if self._cached_body is None:
+            self._cached_body = self.rfile.read(int(self.headers.get("Content-Length",0))).decode()
+        return self._cached_body
 
 # ── 编码 (BGE-large-zh-v1.5, 1024维) ──
 _enc_model = None
