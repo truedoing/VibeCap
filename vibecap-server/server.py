@@ -996,7 +996,7 @@ class Handler(SimpleHTTPRequestHandler):
         else:
             start,end,length=0,size-1,size
             self.send_response(200)
-        ct = "image/jpeg" if path.suffix in (".jpg",".jpeg") else ("image/png" if path.suffix==".png" else "video/mp4")
+        ct = "image/jpeg" if path.suffix in (".jpg",".jpeg") else ("image/png" if path.suffix==".png" else ("audio/wav" if path.suffix==".wav" else "video/mp4"))
         self.send_header("Content-Type",ct)
         self.send_header("Accept-Ranges","bytes")
         self.send_header("Content-Length",str(length))

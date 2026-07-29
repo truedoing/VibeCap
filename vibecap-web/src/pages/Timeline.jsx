@@ -106,16 +106,14 @@ function buildProjectFromPicks(picks) {
   const clips = {}
   const mediaList = []
 
-  // 5 轨 ID
+  // 4 轨 ID
   const mainVideoId = generateId()   // 原声主镜头轨（画面）
   const mainAudioId = generateId()   // 原声主镜头音轨（音频）
-  const mainMutedId = generateId()   // 解说主镜头轨（静音画面）
   const suppId = generateId()        // 补充轨（静音）
   const narrId = generateId()        // 旁白音轨
 
   const mainVideoClips = []
   const mainAudioClips = []
-  const mainMutedClips = []
   const suppClips = []
   const narrClips = []
 
@@ -127,35 +125,39 @@ function buildProjectFromPicks(picks) {
     return sa - sb
   })
 
-  // 第1遍: 统计每段高亮阶段（main 总时长）
+  // 第1遍: 统计每段高亮 + 补充时长
   const segHighlight = {}
+  const segSupp = {}
   for (const [key, p] of entries) {
     const [sidStr] = key.split('_')
     const sid = parseInt(sidStr)
     if (!segHighlight[sid]) segHighlight[sid] = 0
+    if (!segSupp[sid]) segSupp[sid] = 0
     if (p.main?.length) {
       p.main.forEach(m => {
         if (m.file) segHighlight[sid] += m.duration || (m.end - m.start) || 3
       })
     }
+    if (p.supp?.length) {
+      p.supp.forEach(s => {
+        if (s.file) segSupp[sid] += s.duration || (s.end - s.start) || 2
+      })
+    }
   }
 
-  // 计算每段偏移: highlight + narration
-  // 解说阶段需要同时容纳静音 main clip（时长=hl）和旁白音频（时长=narr），
-  // 因此取 max(hl, narr)，防止静音 main clip 越过段边界与下一段重叠
+  // 计算每段偏移: highlight + narration（取 max(supp, narr) 容纳补充+TTS）
   const segOffsets = {}
   let cursor = 0
   for (let sid = 0; sid <= 8; sid++) {
     segOffsets[sid] = cursor
     const hl = segHighlight[sid] || 0
+    const supp = segSupp[sid] || 0
     const narr = NARR_DURATIONS[sid] || 0
-    cursor += hl + Math.max(hl, narr)
+    cursor += hl + Math.max(supp, narr)
   }
 
-  // 第2遍: 放置 clip
-  // 同一段可能有多个 entry（如 0_0, 0_1, 0_D），cursor 需要跨 entry 延续
-  // segOffsets / segHighlight 是秒，必须转成帧再用于 startFrame
-  const segCursors = {}  // { sid: { audioFrames, mutedFrames, suppFrames } }
+  // 第2遍: 放置 clip（无 muted 复制，每个 pick 只出现一次）
+  const segCursors = {}  // { sid: { audioFrames, suppFrames } }
   for (const [key, p] of entries) {
     const [sidStr, seqStr] = key.split('_')
     const sid = parseInt(sidStr)
@@ -163,13 +165,12 @@ function buildProjectFromPicks(picks) {
     const hlDur = secondsToFrames(segHighlight[sid] || 0, FPS)
     const narrStart = segStart + hlDur
 
-    // 初始化本段 cursor（首次遇到该段时）
     if (!segCursors[sid]) {
-      segCursors[sid] = { audioFrames: segStart, mutedFrames: narrStart, suppFrames: narrStart }
+      segCursors[sid] = { audioFrames: segStart, suppFrames: narrStart }
     }
     const cur = segCursors[sid]
 
-    // ── 原声主镜头轨: main clips 画面 + 音频（分开两条轨）──
+    // ── 原声主镜头轨: main clips 画面 + 音频（联动）──
     if (p.main?.length) {
       p.main.forEach((m, mi) => {
         const durSec = m.duration || (m.end - m.start) || 3
@@ -177,31 +178,14 @@ function buildProjectFromPicks(picks) {
         const durFrames = secondsToFrames(durSec, FPS)
         const src = `/clips/${m.file}`
         const startF = cur.audioFrames
-        // 视频轨 — 画面
         const vClipId = generateId(); const vAssetId = generateId()
         mediaList.push({ assetId: vAssetId, src, name: `S${sid} EP${m.ep} 主`, kind: 'video', durationSec: durSec, thumbnailUrl: thumbnailUrl(m.file) })
         mainVideoClips.push({ id: vClipId, trackId: mainVideoId, type: 'video', assetId: vAssetId, name: `S${sid} EP${m.ep}`, src, startFrame: startF, durationFrames: durFrames, sourceStartFrame: 0, sourceDurationFrames: durFrames, volume: 1, opacity: 1, locked: false, disabled: false })
-        // 音轨 — 同源音频
         const aClipId = generateId(); const aAssetId = generateId()
         mediaList.push({ assetId: aAssetId, src, name: `S${sid} EP${m.ep} 原声`, kind: 'audio', durationSec: durSec })
         mainAudioClips.push({ id: aClipId, trackId: mainAudioId, type: 'audio', assetId: aAssetId, name: `S${sid} EP${m.ep}`, src, startFrame: startF, durationFrames: durFrames, sourceStartFrame: 0, sourceDurationFrames: durFrames, volume: 1, locked: false, disabled: false })
-        // 建立联动关系：拖动视频 clip 时音频 clip 自动同步
         linkClipPair(vClipId, aClipId)
         cur.audioFrames += durFrames
-      })
-    }
-
-    // ── 解说主镜头轨: 同组 main clips 静音（解说期背景画面）──
-    if (p.main?.length) {
-      p.main.forEach((m) => {
-        const durSec = m.duration || (m.end - m.start) || 3
-        if (!m.file) return
-        const durFrames = secondsToFrames(durSec, FPS)
-        const src = `/clips/${m.file}`
-        const clipId = generateId(); const assetId = generateId()
-        mediaList.push({ assetId, src, name: `S${sid} EP${m.ep} 主(解)`, kind: 'video', durationSec: durSec, thumbnailUrl: thumbnailUrl(m.file) })
-        mainMutedClips.push({ id: clipId, trackId: mainMutedId, type: 'video', assetId, name: `S${sid} EP${m.ep}`, src, startFrame: cur.mutedFrames, durationFrames: durFrames, sourceStartFrame: 0, sourceDurationFrames: durFrames, volume: 0, opacity: 1, locked: false, disabled: false })
-        cur.mutedFrames += durFrames
       })
     }
 
@@ -227,7 +211,7 @@ function buildProjectFromPicks(picks) {
     const segStart = secondsToFrames(segOffsets[sid] || 0, FPS)
     const hlDur = secondsToFrames(segHighlight[sid] || 0, FPS)
     const narrStart = segStart + hlDur
-    const src = `tts_segments/narr_${String(sid).padStart(3, '0')}.wav`
+    const src = `/tts_segments/narr_${String(sid).padStart(3, '0')}.wav`
     const durFrames = secondsToFrames(dur, FPS)
     const clipId = generateId(); const assetId = generateId()
     mediaList.push({ assetId, src, name: `解说 seg_${sid}`, kind: 'audio', durationSec: dur })
@@ -238,10 +222,6 @@ function buildProjectFromPicks(picks) {
   if (suppClips.length > 0) {
     tracks.push({ id: suppId, name: '补充镜头', kind: 'video', order: 0, height: 44, locked: false, disabled: false, muted: true, solo: false })
     clips[suppId] = suppClips
-  }
-  if (mainMutedClips.length > 0) {
-    tracks.push({ id: mainMutedId, name: '解说主镜头 (静音)', kind: 'video', order: 1, height: 44, locked: false, disabled: false, muted: true, solo: false })
-    clips[mainMutedId] = mainMutedClips
   }
   if (mainVideoClips.length > 0) {
     tracks.push({ id: mainVideoId, name: '原声主镜头', kind: 'video', order: 2, height: 52, locked: false, disabled: false, muted: false, solo: false, volume: 1 })

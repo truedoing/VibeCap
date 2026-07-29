@@ -83,6 +83,7 @@ export function loadTask(seriesId, taskId) {
 }
 
 export function saveTask(task) {
+  if (!task.seriesId || !task.id) return  // 拒绝写入空 key
   task.updatedAt = Date.now()
   localStorage.setItem(taskKey(task.seriesId, task.id), JSON.stringify(task))
 }

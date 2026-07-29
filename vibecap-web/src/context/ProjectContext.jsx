@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { loadTask, saveTask, migrateLegacyProject } from '../model/series'
+import { loadTask, saveTask, loadSeriesList, loadTasks, migrateLegacyProject } from '../model/series'
 import { saveProject as saveLegacyProject, loadProject as loadLegacyProject } from '../model/project'
 
 const TaskContext = createContext(null)
@@ -14,22 +14,51 @@ export function TaskProvider({ children }) {
   const saveTimer = useRef(null)
   const prevKey = useRef(null)
 
-  // 加载任务
+  // 加载任务（URL 使用名称，需解析为 internal ID）
   useEffect(() => {
     const key = `${seriesId}/${taskId}`
-    if (key === prevKey.current && project) return
+    if (key === prevKey.current && (project?.id)) return
     prevKey.current = key
 
     if (!seriesId || !taskId) return
 
+    // 1) 直接用 seriesId/taskId 作为 internal ID 查找
     let task = loadTask(seriesId, taskId)
+
+    // 2) 按名称匹配：seriesId 可能是 slug 或原名，taskId 是任务名
     if (!task) {
-      // 尝试迁移旧数据
+      const seriesList = loadSeriesList()
+      const decoded = decodeURIComponent(seriesId)
+      const matchedSeries = seriesList.find(s =>
+        s.name === seriesId || s.name === decoded
+      )
+      if (matchedSeries) {
+        const tasks = loadTasks(matchedSeries.id)
+        task = tasks.find(t => t.name === taskId || t._realName === taskId)
+      }
+    }
+
+    // 3) 尝试迁移旧数据
+    if (!task) {
       const migrated = migrateLegacyProject()
       if (migrated && migrated.seriesId === seriesId && migrated.taskId === taskId) {
         task = loadTask(seriesId, taskId)
       }
     }
+
+    // 4) 救助孤立数据（写入 vibecap-task-- 的 picks）
+    if (task) {
+      try {
+        const orphan = JSON.parse(localStorage.getItem('vibecap-task--'))
+        if (orphan?.picks && Object.keys(orphan.picks).length > 0) {
+          // 合并孤立的 picks 到当前任务
+          task = { ...task, picks: { ...task.picks, ...orphan.picks }, timeline: null, mediaCache: null }
+          saveTask(task)
+          localStorage.removeItem('vibecap-task--')
+        }
+      } catch {}
+    }
+
     if (task) setProject(task)
   }, [seriesId, taskId])
 

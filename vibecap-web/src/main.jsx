@@ -7,52 +7,58 @@ import Home from './pages/Home'
 import SeriesPage from './pages/Series'
 import MatchingDesk from './pages/MatchingDesk'
 import Timeline from './pages/Timeline'
+import TaskOverview from './pages/TaskOverview'
 import { loadSeriesList, loadTask } from './model/series'
-
-const subLink = ({ isActive }) =>
-  `text-sm font-medium transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`
 
 // ── 导航栏 ──
 function AppLayout() {
   const { seriesId, taskId } = useParams()
-  // seriesId 现在是电视剧名称（如"都挺好"）
   const isTaskPage = !!(seriesId && taskId)
 
   return (
     <>
       <header className="sticky top-0 z-50 border-b border-border bg-card/80 backdrop-blur supports-backdrop-blur:bg-card/60">
-        <div className="flex items-center gap-3 h-12 px-4">
+        {/* 第一行：品牌 + 面包屑 */}
+        <div className="flex items-center gap-2 h-10 px-4">
           <NavLink to="/" className="flex items-center gap-2 shrink-0">
-            <span className="text-primary font-bold text-base tracking-tight">VIBECAP</span>
-            <span className="text-[10px] text-muted-foreground hidden sm:inline">分镜策划台</span>
+            <span className="text-primary font-bold text-sm tracking-tight">VIBECAP</span>
           </NavLink>
 
           {seriesId && (
             <>
-              <span className="text-border text-sm">/</span>
-              <NavLink to="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors truncate max-w-[140px]">
+              <span className="text-border text-xs">/</span>
+              <span className="text-xs text-muted-foreground truncate max-w-[140px]">
                 {seriesId === 'doutinghao' ? '都挺好' : decodeURIComponent(seriesId)}
-              </NavLink>
+              </span>
             </>
           )}
 
           {taskId && (
             <>
-              <span className="text-border text-sm">/</span>
-              <span className="text-sm text-foreground font-medium truncate max-w-[140px]">{decodeURIComponent(taskId)}</span>
+              <span className="text-border text-xs">/</span>
+              <span className="text-xs text-foreground/80 font-medium truncate max-w-[140px]">{decodeURIComponent(taskId)}</span>
             </>
           )}
 
-          {isTaskPage && (
-            <nav className="flex items-center gap-3 ml-4">
-              <NavLink to={`/${seriesId}/${taskId}/planning`} end className={subLink}>策划台</NavLink>
-              <NavLink to={`/${seriesId}/${taskId}/timeline`} className={subLink}>剪辑台</NavLink>
-            </nav>
-          )}
-
           <div className="flex-1" />
-          <span className="text-xs text-muted-foreground hidden sm:inline">API → :8765</span>
+          <span className="text-[10px] text-muted-foreground/50 hidden sm:inline">API :8765</span>
         </div>
+
+        {/* 第二行：功能标签（仅在任务页显示） */}
+        {isTaskPage && (
+          <nav className="flex items-center gap-1 px-4 h-8 border-t border-border/50 bg-secondary/30">
+            <NavLink to="/" end
+              className="text-xs px-3 py-1 rounded-md transition-colors text-muted-foreground hover:text-foreground hover:bg-background/50">任务台</NavLink>
+            <NavLink to={`/${seriesId}/${taskId}/planning`}
+              className={({ isActive }) =>
+                `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
+              }>策划台</NavLink>
+            <NavLink to={`/${seriesId}/${taskId}/timeline`}
+              className={({ isActive }) =>
+                `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
+              }>剪辑台</NavLink>
+          </nav>
+        )}
       </header>
 
       <main className="flex-1 flex flex-col overflow-hidden">
@@ -87,6 +93,7 @@ function App() {
             } />
             {/* 任务页面 — 有 TaskProvider */}
             <Route path=":seriesId/:taskId" element={<TaskLayout />}>
+              <Route index element={<TaskOverview />} />
               <Route path="planning" element={<MatchingDesk />} />
               <Route path="timeline" element={<Timeline />} />
             </Route>
