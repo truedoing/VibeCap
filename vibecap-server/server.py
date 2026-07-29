@@ -36,6 +36,7 @@ SOURCES_DIR = DRAMA_DIR / "sources"
 WORK_DIR    = TASK_DIR / "work_dir"
 CLIP_DIR    = TASK_DIR / "素材clips"
 INDEX_FILE  = DRAMA_DIR / "semantic_index.pkl"
+FRONTEND_DIR = BASE_DIR / "vibecap-web" / "dist"  # 生产前端构建产物
 
 CLIP_DIR.mkdir(exist_ok=True)
 WORK_DIR.mkdir(exist_ok=True)
@@ -153,7 +154,10 @@ class Handler(SimpleHTTPRequestHandler):
         elif "/素材clips/" in path or "/clips/" in path or "/tts_segments/" in path:
             self._serve_clip(req_task)
         else:
-            # 静态文件 fallback：根据 ?task= 动态解析目录
+            # 1) 优先尝试 serve 前端生产构建 (SPA)
+            if self._serve_frontend(path):
+                return
+            # 2) 兜底：任务目录静态文件
             self._serve_static(req_task)
 
     def do_POST(self):
@@ -1005,6 +1009,40 @@ class Handler(SimpleHTTPRequestHandler):
                 if not chunk: break
                 self.wfile.write(chunk)
                 length-=len(chunk)
+
+    def _serve_frontend(self, path):
+        """Serve 前端生产构建 (SPA)。返回 True 表示已处理。"""
+        if not FRONTEND_DIR.exists():
+            return False
+        clean = path.lstrip("/")
+        # API 路由不走这里
+        api_routes = {"/search", "/chat", "/segments.json", "/preview_video", "/status",
+                       "/dramas", "/tasks", "/assign", "/copy", "/thumb", "/storyboard_suggest"}
+        if path in api_routes:
+            return False
+        # 排除 API 前缀
+        for prefix in ("/clips/", "/素材clips/", "/tts_segments/", "/posters/"):
+            if path.startswith(prefix):
+                return False
+        # 静态资源：直接 serve
+        file_path = FRONTEND_DIR / clean if clean else FRONTEND_DIR / "index.html"
+        if file_path.exists() and file_path.is_file():
+            ext = file_path.suffix.lower()
+            mime_map = {
+                ".html": "text/html", ".css": "text/css", ".js": "application/javascript",
+                ".json": "application/json", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".png": "image/png", ".webp": "image/webp", ".svg": "image/svg+xml",
+                ".ico": "image/x-icon", ".woff2": "font/woff2", ".woff": "font/woff",
+            }
+            self._send_file(file_path, mime_map.get(ext, "application/octet-stream"))
+            return True
+        # SPA fallback: 非文件路径 → 返回 index.html
+        if "." not in clean.split("/")[-1]:
+            index_html = FRONTEND_DIR / "index.html"
+            if index_html.exists():
+                self._send_file(index_html, "text/html")
+                return True
+        return False
 
     def _serve_static(self, req_task=None):
         """静态文件 fallback：动态解析 ?task= 参数，从对应任务目录 serve 文件"""
