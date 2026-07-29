@@ -21,6 +21,17 @@ except ImportError:
 if not os.environ.get("HF_ENDPOINT"):
     os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
+# 加载本地 .env（API Keys）
+_ENV_FILE = Path(__file__).resolve().parent / ".env"
+if _ENV_FILE.exists():
+    with open(_ENV_FILE) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                if _k.strip() not in os.environ:
+                    os.environ[_k.strip()] = _v.strip().strip('"').strip("'")
+
 # ── CLI 参数 ──
 import argparse as _argparse
 _parser = _argparse.ArgumentParser(description="VIBECAP 后端服务")
