@@ -1,0 +1,4 @@
+numpy>=1.24
+sentence-transformers>=2.7
+# HuggingFace mirror (国内)
+# export HF_ENDPOINT=https://hf-mirror.com

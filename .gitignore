@@ -1,0 +1,39 @@
+# 数据目录（不提交）
+都挺好/
+解说剪辑/
+
+# 依赖
+vibecap-web/node_modules/
+__pycache__/
+*.pyc
+
+# 环境变量（含 API Key）
+.env
+.env.local
+
+# 大文件
+*.pkl
+*.wav
+*.mp3
+*.mp4
+*.jpg
+*.png
+!character_portraits/**/*.jpg
+!character_portraits/**/*.png
+
+# 临时文件
+*.log
+/tmp/
+.DS_Store
+*.swp
+*.swo
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Python
+*.egg-info/
+dist/
+build/

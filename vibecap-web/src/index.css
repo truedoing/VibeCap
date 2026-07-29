@@ -1,0 +1,200 @@
+@import "tailwindcss";
+
+/* ── shadcn/ui dark theme design tokens ── */
+@theme {
+  --color-background: hsl(218 28% 7%);
+  --color-foreground: hsl(210 17% 82%);
+  --color-card: hsl(215 21% 11%);
+  --color-card-foreground: hsl(210 17% 82%);
+  --color-popover: hsl(215 21% 11%);
+  --color-popover-foreground: hsl(210 17% 82%);
+  --color-primary: hsl(350 79% 59%);
+  --color-primary-foreground: hsl(0 0% 100%);
+  --color-secondary: hsl(215 19% 15%);
+  --color-secondary-foreground: hsl(210 17% 82%);
+  --color-muted: hsl(215 19% 15%);
+  --color-muted-foreground: hsl(212 9% 56%);
+  --color-accent: hsl(215 19% 15%);
+  --color-accent-foreground: hsl(210 17% 82%);
+  --color-destructive: hsl(0 63% 40%);
+  --color-destructive-foreground: hsl(0 0% 100%);
+  --color-success: hsl(122 39% 50%);
+  --color-success-foreground: hsl(0 0% 100%);
+  --color-warning: hsl(41 100% 47%);
+  --color-warning-foreground: hsl(0 0% 10%);
+  --color-info: hsl(199 91% 64%);
+  --color-info-foreground: hsl(0 0% 10%);
+  --color-purple: hsl(291 47% 71%);
+  --color-purple-foreground: hsl(0 0% 10%);
+  --color-border: hsl(213 12% 21%);
+  --color-input: hsl(213 12% 21%);
+  --color-ring: hsl(199 91% 64%);
+  --radius: 0.5rem;
+}
+
+/* ── base layer ── */
+@layer base {
+  * {
+    border-color: hsl(213 12% 21%);
+  }
+  body {
+    background-color: hsl(218 28% 7%);
+    color: hsl(210 17% 82%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ── scrollbar ── */
+.custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: hsl(218 28% 7%); }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: hsl(213 12% 21%); border-radius: 3px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: hsl(213 10% 30%); }
+
+/* ── highlight character names ── */
+.char-hl { color: hsl(41 100% 47%); font-weight: 600; }
+
+/* ── Elah editor theme (dark) — 完整变量 ── */
+:root {
+  /* 背景 */
+  --elah-bg: hsl(218 28% 7%);
+  --elah-bg-2: hsl(215 21% 9%);
+  --elah-bg-secondary: hsl(215 21% 9%);
+  --elah-bg-panel: hsl(215 21% 11%);
+  --elah-bg-card: hsl(215 21% 11%);
+  --elah-bg-elevated: hsl(215 19% 15%);
+  --elah-preview-bg: hsl(0 0% 0%);
+  /* 文字 */
+  --elah-text: hsl(210 17% 82%);
+  --elah-text-muted: hsl(212 9% 56%);
+  --elah-text-on-clip: hsl(0 0% 100%);
+  /* 边框 */
+  --elah-border: hsl(213 12% 21%);
+  --elah-border-subtle: hsl(213 12% 18%);
+  /* 主题色 */
+  --elah-accent: hsl(350 79% 59%);
+  --elah-accent-soft: hsl(350 79% 59% / 0.15);
+  --elah-accent-dim: hsl(350 79% 59% / 0.5);
+  --elah-outline: hsl(350 79% 59%);
+  --elah-radius-sm: 3px;
+  /* 错误/危险 */
+  --elah-color-error: hsl(0 63% 40%);
+  --elah-danger-bg: hsl(0 63% 40% / 0.1);
+  --elah-danger-bg-hover: hsl(0 63% 40% / 0.15);
+  --elah-danger-border: hsl(0 63% 40% / 0.3);
+  --elah-danger-text: hsl(0 80% 70%);
+  --elah-danger-text-alt: hsl(0 80% 70%);
+  /* 信息 */
+  --elah-info-bg: hsl(199 91% 64% / 0.1);
+  --elah-info-border: hsl(199 91% 64% / 0.3);
+  --elah-info-text: hsl(199 91% 74%);
+  /* Tag 标签 */
+  --elah-tag-video-bg: hsl(122 39% 50% / 0.15);
+  --elah-tag-video-fg: hsl(122 39% 50%);
+  --elah-tag-audio-bg: hsl(199 91% 64% / 0.15);
+  --elah-tag-audio-fg: hsl(199 91% 64%);
+  --elah-tag-image-bg: hsl(291 47% 71% / 0.15);
+  --elah-tag-image-fg: hsl(291 47% 71%);
+  --elah-tag-text-bg: hsl(271 81% 56% / 0.15);
+  --elah-tag-text-fg: hsl(271 81% 66%);
+  --elah-tag-text-border: hsl(271 81% 56% / 0.3);
+  --elah-tag-shape-bg: hsl(32 95% 44% / 0.15);
+  --elah-tag-shape-fg: hsl(32 95% 54%);
+  --elah-tag-shape-border: hsl(32 95% 44% / 0.3);
+  --elah-tag-freehand-bg: hsl(0 72% 51% / 0.15);
+  --elah-tag-freehand-fg: hsl(0 72% 61%);
+  --elah-tag-freehand-border: hsl(0 72% 51% / 0.3);
+  /* Clip 颜色 */
+  --elah-clip-video-accent: hsl(217 91% 60%);
+  --elah-clip-video-top: hsl(217 80% 45%);
+  --elah-clip-video-mid: hsl(217 75% 38%);
+  --elah-clip-video-bottom: hsl(217 70% 30%);
+  --elah-clip-audio-accent: hsl(142 71% 40%);
+  --elah-clip-audio-top: hsl(142 60% 35%);
+  --elah-clip-audio-mid: hsl(142 55% 28%);
+  --elah-clip-audio-bottom: hsl(142 50% 20%);
+  --elah-clip-text-accent: hsl(271 81% 56%);
+  --elah-clip-text-top: hsl(271 70% 45%);
+  --elah-clip-text-mid: hsl(271 65% 38%);
+  --elah-clip-text-bottom: hsl(271 60% 30%);
+  --elah-clip-image-accent: hsl(291 47% 61%);
+  --elah-clip-image-top: hsl(291 40% 50%);
+  --elah-clip-image-mid: hsl(291 35% 40%);
+  --elah-clip-image-bottom: hsl(291 30% 32%);
+  --elah-clip-shape-accent: hsl(32 95% 54%);
+  --elah-clip-shape-top: hsl(32 85% 44%);
+  --elah-clip-shape-mid: hsl(32 80% 37%);
+  --elah-clip-shape-bottom: hsl(32 75% 28%);
+  --elah-clip-freehand-accent: hsl(0 72% 61%);
+  /* 选中 */
+  --elah-selection-border: hsl(199 91% 64%);
+  --elah-selection-glow: hsl(199 91% 64% / 0.3);
+  --elah-selection-color: hsl(199 91% 64% / 0.15);
+  --elah-selection-handle: hsl(199 91% 64%);
+  /* 效果 */
+  --elah-effect-waveform: hsl(122 39% 50%);
+  --elah-effect-gloss: rgba(255,255,255,0.04);
+  --elah-effect-inner-highlight: rgba(255,255,255,0.02);
+  --elah-effect-inner-highlight-strong: rgba(255,255,255,0.06);
+  --elah-effect-placeholder-bg: hsl(215 19% 12%);
+  --elah-effect-placeholder-border: hsl(213 12% 18%);
+  --elah-effect-tile-separator: rgba(255,255,255,0.06);
+  --elah-effect-trim-scrim: rgba(0,0,0,0.5);
+  --elah-effect-clip-shadow: rgba(0,0,0,0.3);
+  --elah-effect-label-shadow: rgba(0,0,0,0.5);
+  --elah-effect-delete-btn-bg: hsl(0 63% 40% / 0.8);
+  --elah-effect-delete-btn-border: hsl(0 63% 40%);
+  --elah-effect-delete-btn-text: hsl(0 0% 100%);
+  /* 弹窗/菜单 */
+  --elah-menu-bg: hsl(215 21% 11%);
+  --elah-menu-border: hsl(213 12% 21%);
+  --elah-menu-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  --elah-dialog-bg: hsl(215 21% 11%);
+  --elah-dialog-border: hsl(213 12% 21%);
+  --elah-dialog-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  --elah-dialog-overlay: rgba(0,0,0,0.6);
+  --elah-dialog-option-bg: hsl(215 19% 15%);
+  --elah-dialog-option-bg-hover: hsl(215 19% 20%);
+  --elah-dialog-option-border: hsl(213 12% 21%);
+  --elah-dialog-primary-bg: hsl(350 79% 59%);
+  --elah-dialog-primary-bg-hover: hsl(350 79% 65%);
+  --elah-dialog-primary-border: hsl(350 79% 59%);
+  --elah-popover-bg: hsl(215 21% 11%);
+  --elah-popover-border: hsl(213 12% 21%);
+  --elah-popover-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  --elah-popover-accent: hsl(350 79% 59%);
+  --elah-popover-accent-text: hsl(0 0% 100%);
+  --elah-popover-icon: hsl(212 9% 56%);
+  --elah-popover-option-bg: transparent;
+  --elah-popover-option-bg-hover: hsl(215 19% 15%);
+  --elah-popover-option-bg-active: hsl(350 79% 59% / 0.15);
+  /* 转场 */
+  --elah-transition-fill: hsl(350 79% 59% / 0.2);
+  --elah-transition-stroke: hsl(350 79% 59% / 0.4);
+  --elah-transition-line: hsl(350 79% 59% / 0.3);
+  --elah-transition-line-hover: hsl(350 79% 59%);
+  --elah-transition-line-idle: hsl(213 12% 21%);
+  --elah-transition-add-fill: hsl(350 79% 59% / 0.15);
+  --elah-transition-add-stroke: hsl(350 79% 59% / 0.5);
+  /* 播放头/标尺 */
+  --elah-playhead: hsl(350 79% 59%);
+  --elah-tick-color: hsl(213 12% 21%);
+  --elah-tick-label: hsl(212 9% 46%);
+  /* 舞台 */
+  --elah-stage-border: hsl(213 12% 30%);
+  --elah-stage-glow: hsl(350 79% 59% / 0.2);
+  /* 字体 */
+  --elah-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --elah-font-mono: "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
+/* ── Elah Timeline 内部使用的类 ── */
+.bg-ed-bg-2 { background-color: var(--elah-bg-2); }
+.bg-ed-panel { background-color: var(--elah-bg-panel); }
+.text-ed-text { color: var(--elah-text); }
+.text-ed-text-muted { color: var(--elah-text-muted); }
+.border-ed-border { border-color: var(--elah-border); }
+.border-ed-border-subtle { border-color: var(--elah-border-subtle); }
+.border-ed-border-subtle { border-color: var(--elah-border-subtle); }
+
