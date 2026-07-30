@@ -7,6 +7,19 @@ const TaskContext = createContext(null)
 
 const EMPTY = { picks: {}, timeline: null, mediaCache: null, segments: [], name: '', id: '', seriesId: '', createdAt: 0, updatedAt: 0 }
 
+// ── 将 picks 同步到后端 SQLite ──
+let _picksSyncTimer = null
+function syncPicksToServer(taskId, picks) {
+  clearTimeout(_picksSyncTimer)
+  _picksSyncTimer = setTimeout(() => {
+    fetch('/picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: taskId, picks }),
+    }).catch(() => {})
+  }, 300)
+}
+
 // ── TaskProvider：从 URL 读取 seriesId/taskId，加载任务数据 ──
 export function TaskProvider({ children }) {
   const { seriesId, taskId } = useParams()
@@ -59,14 +72,29 @@ export function TaskProvider({ children }) {
       } catch {}
     }
 
-    if (task) setProject(task)
+    if (task) {
+      // 从服务端同步 picks（合并到 localStorage 数据）
+      fetch(`/picks?task=${taskId}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.picks && Object.keys(data.picks).length > 0) {
+            task = { ...task, picks: { ...task.picks, ...data.picks } }
+            saveTask(task)
+          }
+        })
+        .catch(() => {})
+        .finally(() => setProject(task))
+    }
   }, [seriesId, taskId])
 
-  // 自动持久化
+  // 自动持久化（localStorage + 后端 SQLite）
   const persist = useCallback((p) => {
     if (!p || !seriesId || !taskId) return
     clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => saveTask(p), 200)
+    saveTimer.current = setTimeout(() => {
+      saveTask(p)
+      syncPicksToServer(taskId, p.picks || {})
+    }, 200)
   }, [seriesId, taskId])
 
   // picks 操作

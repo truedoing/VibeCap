@@ -7,6 +7,11 @@ from socketserver import ThreadingMixIn
 from urllib.parse import unquote, urlparse, parse_qs
 import numpy as np
 
+# ── SQLite 数据库层 ──
+from db import VibeCapDB
+DB_PATH = Path(__file__).resolve().parent.parent / "vibecap.db"
+db = VibeCapDB(str(DB_PATH))
+
 # 繁→简 转换
 try:
     from zhconv import convert as _zh_convert
@@ -146,6 +151,14 @@ class Handler(SimpleHTTPRequestHandler):
             self._json(self._search(q, mode=mode))
         elif path == "/segments.json":
             task = req_task or _args.task
+            drama_id = db.get_drama_id(_args.drama)
+            if drama_id:
+                task_obj = db.get_task(drama_id, task)
+                if task_obj:
+                    segments = db.get_task_segments(task_obj["id"])
+                    self._json({"segments": segments, "total_segments": len(segments)})
+                    return
+            # fallback: 从文件读取
             seg_file = self._resolve_task_dir(task) / "segments.json"
             if seg_file.exists():
                 self._json(json.load(open(seg_file)))
@@ -158,6 +171,33 @@ class Handler(SimpleHTTPRequestHandler):
         elif path == "/status":
             task = req_task or _args.task
             self._json({"ok": True, "drama": _args.drama, "task": task})
+        elif path == "/picks":
+            task = req_task or _args.task
+            drama_id = db.get_drama_id(_args.drama)
+            if drama_id:
+                picks = db.get_picks(drama_id, task)
+                self._json({"picks": picks})
+            else:
+                self._json({"picks": {}})
+        elif path == "/data/quality":
+            drama_id = db.get_drama_id(_args.drama)
+            if drama_id:
+                eps = db.get_all_episodes(drama_id)
+                summary = db.get_episodes_summary(drama_id)
+                reports = db.get_all_quality_reports(drama_id)
+                self._json({"episodes": eps, "summary": summary, "reports": reports})
+            else:
+                self._json({"episodes": [], "summary": {}, "reports": []})
+        elif path == "/data/task_check":
+            task = req_task or _args.task
+            drama_id = db.get_drama_id(_args.drama)
+            if drama_id:
+                task_obj = db.get_task(drama_id, task)
+                if task_obj:
+                    markers = db.validate_episode_markers(task_obj["id"])
+                    self._json({"task": task, "markers": markers})
+                    return
+            self._json({"task": task, "markers": []})
         elif path == "/dramas":
             self._json(self._list_dramas())
         elif path == "/tasks":
@@ -251,10 +291,14 @@ class Handler(SimpleHTTPRequestHandler):
             self._json({"suggestions": suggestions})
         elif path == "/tasks/create":
             self._create_task()
-        elif path == "/status":
-            task_dir = self._resolve_task_dir(req_task)
-            tasks = json.load(open(task_dir/"tasks.json")) if (task_dir/"tasks.json").exists() else []
-            self._json({"pending":sum(1 for t in tasks if t.get("status")=="pending"), "done":sum(1 for t in tasks if t.get("status")=="done"), "total":len(tasks)})
+        elif path == "/picks":
+            data = json.loads(self._read_body())
+            drama_id = db.get_drama_id(_args.drama)
+            if drama_id:
+                db.save_picks(drama_id, req_task, data.get("picks", {}))
+                self._json({"ok": True})
+            else:
+                self._json({"ok": False, "error": "drama not found"}, 404)
         else:
             self.send_error(404)
 
@@ -755,6 +799,17 @@ class Handler(SimpleHTTPRequestHandler):
                        capture_output=True, text=True, env=env, timeout=60)
             results["steps"].append({"step": "parse_docx", "ok": r.returncode == 0, "output": r.stdout[-200:]})
 
+            # 同步到 SQLite
+            drama_id = db.get_drama_id(drama_name)
+            if not drama_id:
+                drama_id = db.ensure_drama(drama_name)
+            if drama_id:
+                task_id = db.create_task(drama_id, task_name)
+                if r.returncode == 0 and (task_dir / "segments.json").exists():
+                    seg_data = json.load(open(task_dir / "segments.json"))
+                    segs = seg_data.get("segments", [])
+                    db.save_task_segments(task_id, segs)
+
             if r.returncode == 0 and (task_dir / "segments.json").exists():
                 # A2: ASR 解说音频
                 audio_file = task_dir / "解说音频.wav"
@@ -776,49 +831,15 @@ class Handler(SimpleHTTPRequestHandler):
             self._json({"ok": False, "error": str(e)}, 500)
 
     def _list_dramas(self):
-        """列出所有电视剧"""
-        dramas = []
-        for d in BASE_DIR.iterdir():
-            if d.is_dir() and (d / "tasks").exists() and (d / "semantic_index.pkl").exists():
-                tasks_dir = d / "tasks"
-                task_list = [t.name for t in tasks_dir.iterdir() if t.is_dir() and (t / "segments.json").exists()]
-                dramas.append({"name": d.name, "tasks": len(task_list)})
-        return sorted(dramas, key=lambda x: x["name"])
+        """列出所有电视剧（从 SQLite 读取）"""
+        return db.list_dramas()
 
-    def _list_tasks(self, drama):
-        """列出电视剧的所有任务（含状态）"""
-        drama_dir = BASE_DIR / drama
-        tasks_dir = drama_dir / "tasks"
-        if not tasks_dir.exists():
+    def _list_tasks(self, drama_name):
+        """列出电视剧的所有任务（从 SQLite 读取）"""
+        drama_id = db.get_drama_id(drama_name)
+        if not drama_id:
             return []
-        tasks = []
-        for t in tasks_dir.iterdir():
-            if not t.is_dir() or t.name.startswith('.'):
-                continue
-            seg_file = t / "segments.json"
-            if not seg_file.exists():
-                continue
-            try:
-                segs = json.load(open(seg_file))
-                task = {
-                    "name": t.name,
-                    "segments": segs.get("total_segments", 0),
-                    "status": "editing",
-                    "duration": 0
-                }
-                # 读取状态
-                status_file = t / "status.json"
-                if status_file.exists():
-                    task["status"] = json.load(open(status_file)).get("status", "editing")
-                # 读取时长
-                narr_file = t / "work_dir" / "narration.json"
-                if narr_file.exists():
-                    narr = json.load(open(narr_file))
-                    task["duration"] = round(sum(s.get("duration", s.get("end", 0) - s.get("start", 0)) for s in narr), 1)
-                tasks.append(task)
-            except Exception:
-                tasks.append({"name": t.name, "segments": 0, "status": "editing", "duration": 0})
-        return sorted(tasks, key=lambda x: x["name"])
+        return db.list_tasks(drama_id)
 
     # ── 台词匹配 ──
 
