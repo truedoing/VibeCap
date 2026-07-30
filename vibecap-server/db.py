@@ -493,35 +493,78 @@ class VibeCapDB:
     # Quality Reports
     # ═══════════════════════════════════════════════
 
-    def compute_quality_report(self, drama_id: int, ep: int) -> dict:
-        """基于 episodes 数据计算质量评分"""
+    def compute_quality_report(self, drama_id: int, ep: int, drama_dir: str = None) -> dict:
+        """基于 episodes 数据 + 原始 ASR 文件计算质量评分"""
+        import statistics as _stat
+
         ep_data = self.get_episode(drama_id, ep)
         if not ep_data:
             return {"error": "episode not found", "overall_score": 0}
 
-        # ASR 评分: (1 - 碎片率) * 100, 碎片率 = (raw - clean) / raw
         raw = ep_data["asr_raw_count"] or 1
         clean = ep_data["asr_clean_count"] or raw
-        frag_rate = max(0, (raw - clean) / raw) if raw > 0 else 0
-        asr_score = round((1 - frag_rate) * 100, 1)
-
-        # VLM 评分: 描述完整度
         scene_count = ep_data["vlm_scene_count"] or 1
+        raw_chars = ep_data["asr_raw_chars"] or 0
+
+        # ── ASR 质量检测 ──
+        is_fixed_interval = False
+        asr_score = 50.0  # 默认
+
+        if drama_dir:
+            # 读取原始 ASR 检测固定间隔
+            asr_file = Path(drama_dir) / "sources" / f"ep{ep}" / "asr_result.json"
+            if asr_file.exists():
+                try:
+                    import json as _json
+                    asr_raw = _json.load(open(asr_file))
+                    if len(asr_raw) > 3:
+                        durs = [a["end"] - a["start"] for a in asr_raw if a["end"] > a["start"]]
+                        if len(durs) > 10:
+                            # 排除最后一段（片尾可能不整除导致偏短）
+                            durs_trimmed = durs[:-1] if len(durs) > 11 else durs
+                            std = _stat.stdev(durs_trimmed)
+                            avg_dur = sum(durs_trimmed) / len(durs_trimmed)
+                            # 标准差接近0 + 长间隔 → 固定分块（不是真正的 VAD ASR）
+                            if std < 0.5 and avg_dur > 8:
+                                is_fixed_interval = True
+                except Exception:
+                    pass
+
+        if is_fixed_interval:
+            # 固定间隔 ASR → 质量极差，不管碎片率看起来多好
+            asr_score = 15.0
+            # 尝试从 VLM 描述中估计实际语音内容
+            # 有效内容密度 = raw_chars 中真正有意义的比例（粗略估算）
+            effective_ratio = min(1.0, raw_chars / max(raw * 30, 1))  # 正常每段应有 ~30字
+            asr_score = round(15.0 + effective_ratio * 20, 1)  # 范围 15-35
+        else:
+            # 正常 VAD ASR: 碎片率低 = 质量好
+            frag_rate = max(0, (raw - clean) / raw) if raw > 0 else 0
+            # 内容密度修正: 每段平均字数太少也扣分
+            avg_chars_per_seg = raw_chars / max(raw, 1)
+            density_factor = min(1.0, avg_chars_per_seg / 8.0)  # 8字/段为正常线
+            asr_score = round((1 - frag_rate) * density_factor * 100, 1)
+
+        # ── VLM 评分 ──
         short_ratio = (ep_data["vlm_short_desc_count"] or 0) / scene_count
         shallow_ratio = (ep_data["vlm_shallow_depth_count"] or 0) / scene_count
         skip_ratio = (ep_data["vlm_skip_opening_count"] or 0) / scene_count
         vlm_score = round(max(0, (1 - short_ratio * 0.5 - shallow_ratio * 0.3 - skip_ratio * 0.1)) * 100, 1)
 
-        # 字幕评分
+        # ── 字幕评分 ──
         subtitle_score = round(min(100, (ep_data["subtitle_count"] or 0) / max(scene_count, 1) * 50), 1)
 
-        # 总分加权
+        # ── 总分加权 ──
         overall = round(asr_score * 0.35 + vlm_score * 0.4 + subtitle_score * 0.1 + (50 if ep_data["indexed"] else 0) * 0.15, 1)
 
-        # 诊断
+        # ── 诊断 ──
         issues = []
-        if frag_rate > 0.4:
-            issues.append(f"ASR 碎片率 {frag_rate:.0%}")
+        if is_fixed_interval:
+            issues.append("ASR 固定分块(非VAD)，有效内容极低")
+        else:
+            frag_rate = max(0, (raw - clean) / raw) if raw > 0 else 0
+            if frag_rate > 0.4:
+                issues.append(f"ASR 碎片率 {frag_rate:.0%}")
         if short_ratio > 0.2:
             issues.append(f"VLM 短描述 {short_ratio:.0%}")
         if not ep_data["indexed"]:
@@ -541,7 +584,7 @@ class VibeCapDB:
         return {
             "ep": ep, "asr_score": asr_score, "vlm_score": vlm_score,
             "subtitle_score": subtitle_score, "overall_score": overall,
-            "summary": summary, "frag_rate": round(frag_rate, 2),
+            "summary": summary,
         }
 
     def get_quality_report(self, drama_id: int, ep: int) -> dict | None:

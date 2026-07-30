@@ -152,22 +152,14 @@ export default function DataDesk() {
       <div className="max-w-3xl mx-auto w-full p-6 space-y-6">
 
         {/* ── Header ── */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-foreground flex items-center gap-2">
-              <Shield size={18} className="text-primary" />
-              数据台
-            </h1>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              任务 {taskId} · 数据质量与校验
-            </p>
-          </div>
-          <button
-            onClick={() => nav(`/${seriesId}/${taskId}/planning`)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
-          >
-            进入策划台 <ArrowRight size={14} />
-          </button>
+        <div>
+          <h1 className="text-lg font-bold text-foreground flex items-center gap-2">
+            <Shield size={18} className="text-primary" />
+            数据台
+          </h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            任务 {taskId} · 数据质量与校验
+          </p>
         </div>
 
         {/* ── 概览卡片 ── */}
@@ -255,15 +247,7 @@ export default function DataDesk() {
           </div>
         </div>
 
-        {/* ── 底部操作 ── */}
-        <div className="flex items-center justify-center pb-4">
-          <button
-            onClick={() => nav(`/${seriesId}/${taskId}/planning`)}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-lg shadow-primary/20"
-          >
-            确认数据质量，进入策划台 <ArrowRight size={16} />
-          </button>
-        </div>
+        {/* 导航请使用顶部标签栏 */}
       </div>
     </div>
   )

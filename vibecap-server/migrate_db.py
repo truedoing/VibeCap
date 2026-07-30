@@ -320,10 +320,11 @@ def migrate_quality_reports(db):
         drama_id = db.get_drama_id(name)
         if not drama_id:
             continue
+        drama_dir = BASE_DIR / name
         episodes = db.get_all_episodes(drama_id)
         for ep_data in episodes:
             ep = ep_data["ep_number"]
-            report = db.compute_quality_report(drama_id, ep)
+            report = db.compute_quality_report(drama_id, ep, str(drama_dir))
             score = report.get("overall_score", 0)
             summary = report.get("summary", "")
             log(f"  {name} EP{ep}: 总分={score} {summary}")
