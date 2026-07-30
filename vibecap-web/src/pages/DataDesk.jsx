@@ -271,46 +271,43 @@ export default function DataDesk() {
               </button>
             </div>
 
-            {/* ── 阶段管线图 ── */}
-            {procSteps.length > 0 && (
-              <div className="space-y-0">
-                {/* 四个阶段盒子，响应式布局 */}
-                <div className="grid grid-cols-4 gap-1.5">
-                  {procSteps.map((step, i) => {
-                    const isRunning = step.status === 'running'
-                    const isDone = step.status === 'done'
-                    const isFailed = step.status === 'failed'
-                    const isPending = step.status === 'pending'
+            {/* ── 工作流管线图 ── */}
+            <div className="space-y-0">
+              <div className="flex items-start justify-center px-2 py-1">
+                {procSteps.map((step, i) => {
+                  const isRunning = step.status === 'running'
+                  const isDone = step.status === 'done'
+                  const isFailed = step.status === 'failed'
+                  const isPending = step.status === 'pending'
 
-                    const iconMap = {
-                      analyze: <Search size={13} />,
-                      clean: <Brush size={13} />,
-                      build: <Cpu size={13} />,
-                      migrate: <HardDrive size={13} />,
-                    }
-                    const nameMap = {
-                      analyze: '分析',
-                      clean: '清洗',
-                      build: '索引',
-                      migrate: '入库',
-                    }
+                  const nameMap = { analyze: '分析剧集', clean: '数据清洗', build: '重建索引', migrate: '导入数据库' }
+                  const descMap = { analyze: 'ASR+VLM', clean: '去碎片+字幕', build: 'BGE语义索引', migrate: '写入SQLite' }
+                  const iconMap = {
+                    analyze: <Search size={14} />,
+                    clean: <Brush size={14} />,
+                    build: <Cpu size={14} />,
+                    migrate: <HardDrive size={14} />,
+                  }
 
-                    return (
-                      <div key={step.id} className="flex flex-col items-center gap-1">
-                        {/* 图标圆圈 */}
-                        <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
-                          isRunning ? 'bg-blue-500/20 text-blue-400 ring-2 ring-blue-500/40 animate-pulse' :
-                          isDone ? 'bg-green-500/20 text-green-400' :
-                          isFailed ? 'bg-red-500/20 text-red-400' :
-                          'bg-secondary text-muted-foreground/40'
+                  // 连接线颜色
+                  const lineColor = isDone ? 'bg-green-500/60' : 'bg-border'
+
+                  return (
+                    <div key={step.id} className="flex items-center flex-1" style={{ minWidth: 0 }}>
+                      {/* 阶段节点 */}
+                      <div className="flex flex-col items-center gap-1.5 shrink-0">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${
+                          isRunning ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30 scale-110' :
+                          isDone ? 'bg-green-500 text-white' :
+                          isFailed ? 'bg-red-500 text-white' :
+                          'bg-card border-2 border-border text-muted-foreground/40'
                         }`}>
-                          {isRunning ? <Loader2 size={15} className="animate-spin" /> :
-                           isDone ? <CheckCircle2 size={15} /> :
-                           isFailed ? <XCircle size={15} /> :
+                          {isRunning ? <Loader2 size={18} className="animate-spin" /> :
+                           isDone ? <CheckCircle2 size={18} /> :
+                           isFailed ? <XCircle size={18} /> :
                            iconMap[step.id]}
                         </div>
-                        {/* 阶段名 */}
-                        <span className={`text-[10px] font-medium ${
+                        <span className={`text-[10px] font-medium leading-tight text-center ${
                           isRunning ? 'text-blue-400' :
                           isDone ? 'text-green-400' :
                           isFailed ? 'text-red-400' :
@@ -318,19 +315,33 @@ export default function DataDesk() {
                         }`}>
                           {nameMap[step.id]}
                         </span>
+                        <span className="text-[9px] text-muted-foreground/40 leading-tight text-center hidden sm:block">
+                          {descMap[step.id]}
+                        </span>
                         {/* 迷你进度条（仅运行中） */}
                         {isRunning && (
                           <div className="w-full h-0.5 rounded-full bg-secondary overflow-hidden">
                             <div
                               className="h-full rounded-full bg-blue-500 transition-all duration-500"
-                              style={{ width: `${Math.max(3, step.progress || 0)}%` }}
+                              style={{ width: `${Math.max(5, step.progress || 0)}%` }}
                             />
                           </div>
                         )}
                       </div>
-                    )
-                  })}
-                </div>
+
+                      {/* 连接线（最后一个不加） */}
+                      {i < procSteps.length - 1 && (
+                        <div className="flex-1 flex items-center mx-0.5" style={{ height: 2, minWidth: 12 }}>
+                          <div className={`flex-1 h-0.5 rounded-full transition-colors duration-500 ${lineColor}`} />
+                          <div className={`w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[5px] transition-colors duration-500 ${
+                            isDone ? 'border-l-green-500/60' : 'border-l-border'
+                          }`} style={{ marginRight: -1 }} />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
 
                 {/* 运行中的阶段 — 详细信息 */}
                 {(() => {
@@ -415,7 +426,6 @@ export default function DataDesk() {
                   </div>
                 )}
               </div>
-            )}
           </div>
         </div>
 
