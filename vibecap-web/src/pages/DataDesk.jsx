@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useProject } from '../context/ProjectContext'
-import { BarChart3, Database, Shield, TrendingUp, Tv, Loader2, Play, RotateCw, CheckCircle2, XCircle, Clock } from 'lucide-react'
+import { BarChart3, Database, Shield, TrendingUp, Tv, Loader2, Play, CheckCircle2, XCircle, Clock, Search, Brush, Cpu, HardDrive } from 'lucide-react'
 
 // ── 质量色 ──
 function qualityColor(score) {
@@ -231,26 +231,26 @@ export default function DataDesk() {
         {/* ── 数据加工 ── */}
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
-            <Play size={14} className="text-muted-foreground" />
-            <h3 className="text-sm font-medium text-foreground">数据加工</h3>
+            <Cpu size={14} className="text-muted-foreground" />
+            <h3 className="text-sm font-medium text-foreground">数据加工流水线</h3>
             <span className="text-[10px] text-muted-foreground">
               analyze → clean → build_index → migrate
             </span>
           </div>
-          <div className="p-4 space-y-3">
+          <div className="p-4 space-y-4">
             {/* 输入行 */}
             <div className="flex items-center gap-2">
               <input
                 value={epInput}
                 onChange={e => setEpInput(e.target.value)}
                 placeholder="集数，如 5 或 1,2,3"
-                disabled={!!procTaskId && procSteps.some(s => s.status === 'running')}
+                disabled={procSteps.some(s => s.status === 'running')}
                 className="flex-1 bg-secondary border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
                 onKeyDown={e => { if (e.key === 'Enter') startProcess() }}
               />
               <button
                 onClick={startProcess}
-                disabled={!!procTaskId && procSteps.some(s => s.status === 'running')}
+                disabled={procSteps.some(s => s.status === 'running')}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity"
               >
                 {procSteps.some(s => s.status === 'running') ? (
@@ -262,45 +262,151 @@ export default function DataDesk() {
               </button>
             </div>
 
-            {/* 进度条 */}
+            {/* ── 阶段管线图 ── */}
             {procSteps.length > 0 && (
-              <div className="space-y-1">
-                {procSteps.map((step, i) => (
-                  <div
-                    key={step.id}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                      step.status === 'running' ? 'bg-blue-500/5 border border-blue-500/20' :
-                      step.status === 'failed' ? 'bg-red-500/5 border border-red-500/20' : ''
-                    }`}
-                  >
-                    {stepIcons[step.status]}
-                    <span className={`text-xs flex-1 ${
-                      step.status === 'running' ? 'text-blue-400 font-medium' :
-                      step.status === 'failed' ? 'text-red-400' :
-                      step.status === 'done' ? 'text-green-400' :
-                      'text-muted-foreground'
-                    }`}>
-                      {step.label}
+              <div className="space-y-0">
+                {/* 四个阶段盒子，响应式布局 */}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {procSteps.map((step, i) => {
+                    const isRunning = step.status === 'running'
+                    const isDone = step.status === 'done'
+                    const isFailed = step.status === 'failed'
+                    const isPending = step.status === 'pending'
+
+                    const iconMap = {
+                      analyze: <Search size={13} />,
+                      clean: <Brush size={13} />,
+                      build: <Cpu size={13} />,
+                      migrate: <HardDrive size={13} />,
+                    }
+                    const nameMap = {
+                      analyze: '分析',
+                      clean: '清洗',
+                      build: '索引',
+                      migrate: '入库',
+                    }
+
+                    return (
+                      <div key={step.id} className="flex flex-col items-center gap-1">
+                        {/* 图标圆圈 */}
+                        <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
+                          isRunning ? 'bg-blue-500/20 text-blue-400 ring-2 ring-blue-500/40 animate-pulse' :
+                          isDone ? 'bg-green-500/20 text-green-400' :
+                          isFailed ? 'bg-red-500/20 text-red-400' :
+                          'bg-secondary text-muted-foreground/40'
+                        }`}>
+                          {isRunning ? <Loader2 size={15} className="animate-spin" /> :
+                           isDone ? <CheckCircle2 size={15} /> :
+                           isFailed ? <XCircle size={15} /> :
+                           iconMap[step.id]}
+                        </div>
+                        {/* 阶段名 */}
+                        <span className={`text-[10px] font-medium ${
+                          isRunning ? 'text-blue-400' :
+                          isDone ? 'text-green-400' :
+                          isFailed ? 'text-red-400' :
+                          'text-muted-foreground/50'
+                        }`}>
+                          {nameMap[step.id]}
+                        </span>
+                        {/* 迷你进度条（仅运行中） */}
+                        {isRunning && (
+                          <div className="w-full h-0.5 rounded-full bg-secondary overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                              style={{ width: `${Math.max(3, step.progress || 0)}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* 运行中的阶段 — 详细信息 */}
+                {(() => {
+                  const running = procSteps.find(s => s.status === 'running')
+                  if (!running) return null
+                  return (
+                    <div className="mt-3 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-blue-400">
+                          {running.label}
+                        </span>
+                        <span className="text-[10px] text-blue-400/70 tabular-nums">
+                          已用时 {Math.floor(running.elapsed / 60)}分{Math.floor(running.elapsed % 60)}秒
+                        </span>
+                      </div>
+                      {/* 大进度条 */}
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 rounded-full bg-secondary overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-blue-500 transition-all duration-700"
+                            style={{ width: `${Math.max(2, running.progress || 0)}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-blue-400 font-mono w-8 text-right">
+                          {running.progress || 0}%
+                        </span>
+                      </div>
+                      {/* 当前操作 */}
+                      {running.detail && (
+                        <p className="text-[11px] text-foreground/60 truncate font-mono">
+                          {running.detail}
+                        </p>
+                      )}
+                      {/* 日志 */}
+                      {running.log_lines?.length > 0 && (
+                        <div className="max-h-24 overflow-y-auto bg-black/20 rounded-md p-2 font-mono text-[10px] text-muted-foreground space-y-0.5">
+                          {running.log_lines.map((l, i) => (
+                            <div key={i} className="truncate">{l}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
+                {/* 失败的阶段 */}
+                {(() => {
+                  const failed = procSteps.find(s => s.status === 'failed')
+                  if (!failed) return null
+                  return (
+                    <div className="mt-3 p-3 rounded-lg bg-red-500/5 border border-red-500/20">
+                      <div className="flex items-center gap-2 mb-1">
+                        <XCircle size={14} className="text-red-400" />
+                        <span className="text-xs font-medium text-red-400">{failed.label} 失败</span>
+                        <span className="text-[10px] text-red-400/70">
+                          用时 {Math.floor(failed.elapsed / 60)}分{Math.floor(failed.elapsed % 60)}秒
+                        </span>
+                      </div>
+                      {failed.detail && (
+                        <p className="text-[11px] text-red-400/80 font-mono">{failed.detail}</p>
+                      )}
+                      {failed.log_lines?.length > 0 && (
+                        <div className="mt-1 max-h-20 overflow-y-auto bg-black/20 rounded-md p-2 font-mono text-[10px] text-red-400/70 space-y-0.5">
+                          {failed.log_lines.map((l, i) => (
+                            <div key={i} className="truncate">{l}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
+                {/* 全部完成 */}
+                {procSteps.every(s => s.status === 'done') && (
+                  <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/20">
+                    <CheckCircle2 size={14} className="text-green-400" />
+                    <span className="text-xs text-green-400">
+                      全部完成！总用时 {
+                        Math.floor(procSteps.reduce((s, st) => s + (st.elapsed || 0), 0) / 60)
+                      }分
                     </span>
-                    {step.status === 'running' && (
-                      <span className="text-[10px] text-blue-400/70 animate-pulse">处理中...</span>
-                    )}
-                    {step.status === 'done' && (
-                      <span className="text-[10px] text-green-400/70">完成</span>
-                    )}
-                    {step.status === 'failed' && step.output && (
-                      <span className="text-[10px] text-red-400/70 truncate max-w-[200px]" title={step.output}>
-                        {step.output.split('\n').slice(-1)[0]?.substring(0, 60)}
-                      </span>
-                    )}
                   </div>
-                ))}
+                )}
               </div>
             )}
-
-            <p className="text-[10px] text-muted-foreground/60">
-              流水线自动串联：分析 → 清洗 → 索引 → 数据库。上一步成功自动进入下一步。
-            </p>
           </div>
         </div>
 

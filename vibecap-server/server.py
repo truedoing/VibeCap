@@ -17,86 +17,101 @@ _process_tasks = {}  # {task_id: {episodes, steps, current}}
 _process_lock = threading.Lock()
 
 def _run_pipeline(task_id, episodes, drama_name):
-    """后台执行数据加工流水线：analyze → clean → build_index → migrate"""
+    """后台执行数据加工流水线，实时解析进度"""
     server_dir = Path(__file__).resolve().parent
     python_bin = "/opt/anaconda3/bin/python3"
     all_eps_str = ",".join(str(e) for e in episodes)
 
     steps = [
-        {"id": "analyze", "label": f"分析 EP{all_eps_str}", "status": "pending"},
-        {"id": "clean",   "label": "数据清洗", "status": "pending"},
-        {"id": "build",   "label": "重建索引", "status": "pending"},
-        {"id": "migrate", "label": "导入数据库", "status": "pending"},
+        {"id": "analyze", "label": f"分析 EP{all_eps_str}", "status": "pending",
+         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
+        {"id": "clean",   "label": "数据清洗", "status": "pending",
+         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
+        {"id": "build",   "label": "重建索引", "status": "pending",
+         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
+        {"id": "migrate", "label": "导入数据库", "status": "pending",
+         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
     ]
 
     with _process_lock:
-        _process_tasks[task_id] = {"episodes": episodes, "steps": steps, "current": 0}
+        _process_tasks[task_id] = {"episodes": episodes, "steps": steps,
+                                     "started_at": time.time()}
 
-    def _update_step(i, status, output=""):
+    def _update(i, **kw):
         with _process_lock:
-            _process_tasks[task_id]["steps"][i]["status"] = status
-            _process_tasks[task_id]["steps"][i]["output"] = output[-300:]
-            _process_tasks[task_id]["current"] = i
+            t = _process_tasks.get(task_id)
+            if t: t["steps"][i].update(kw)
+
+    def _run_script(step_idx, script_name, args, timeout, progress_parser=None):
+        """运行脚本并逐行解析进度"""
+        _update(step_idx, status="running", detail="启动中...")
+        t0 = time.time()
+        log_lines = []
+
+        try:
+            p = subprocess.Popen(
+                [python_bin, "-u", str(server_dir / script_name)] + args,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            )
+            # 逐行读取
+            total = 0
+            for line in p.stdout:
+                line = line.rstrip()
+                if line:
+                    log_lines.append(line)
+                    if len(log_lines) > 8:
+                        log_lines = log_lines[-8:]
+                    elapsed = round(time.time() - t0, 1)
+                    detail = line[:80]
+
+                    # 尝试解析进度: [N/M] 或 N/M
+                    m = re.search(r'\[?\s*(\d+)\s*/\s*(\d+)\s*\]?', line)
+                    if m and progress_parser:
+                        current, total = int(m.group(1)), int(m.group(2))
+                        pct = min(99, round(current / max(total, 1) * 100))
+                        _update(step_idx, progress=pct, detail=detail,
+                                elapsed=elapsed, log_lines=list(log_lines))
+                    else:
+                        _update(step_idx, detail=detail, elapsed=elapsed,
+                                log_lines=list(log_lines))
+
+            p.wait(timeout=timeout)
+            elapsed = round(time.time() - t0, 1)
+            if p.returncode == 0:
+                _update(step_idx, status="done", progress=100,
+                        elapsed=elapsed, log_lines=list(log_lines))
+                return True
+            else:
+                last_log = "\n".join(log_lines[-3:]) if log_lines else "未知错误"
+                _update(step_idx, status="failed", detail=f"退出码 {p.returncode}",
+                        elapsed=elapsed, log_lines=list(log_lines))
+                return False
+        except subprocess.TimeoutExpired:
+            p.kill()
+            _update(step_idx, status="failed", detail="超时",
+                    elapsed=round(time.time() - t0, 1))
+            return False
+        except Exception as e:
+            _update(step_idx, status="failed", detail=str(e)[:80],
+                    elapsed=round(time.time() - t0, 1))
+            return False
 
     # Step 1: 分析剧集
-    _update_step(0, "running")
-    try:
-        analyze_script = server_dir / "analyze_episodes.py"
-        r = subprocess.run(
-            [python_bin, str(analyze_script), "--ep", all_eps_str],
-            capture_output=True, text=True, timeout=3600,
-        )
-        _update_step(0, "done" if r.returncode == 0 else "failed", r.stdout + "\n" + r.stderr)
-        if r.returncode != 0:
-            return
-    except subprocess.TimeoutExpired:
-        _update_step(0, "failed", "超时 (1小时)")
-        return
-    except Exception as e:
-        _update_step(0, "failed", str(e))
+    if not _run_script(0, "analyze_episodes.py", ["--ep", all_eps_str], 3600, True):
         return
 
     # Step 2: 数据清洗
-    _update_step(1, "running")
-    try:
-        clean_script = server_dir / "clean_data.py"
-        r = subprocess.run(
-            [python_bin, str(clean_script)],
-            capture_output=True, text=True, timeout=300,
-        )
-        _update_step(1, "done" if r.returncode == 0 else "failed", r.stdout + "\n" + r.stderr)
-        if r.returncode != 0:
-            return
-    except Exception as e:
-        _update_step(1, "failed", str(e))
+    if not _run_script(1, "clean_data.py", [], 300, True):
         return
 
     # Step 3: 重建索引
-    _update_step(2, "running")
-    try:
-        build_script = server_dir / "build_index.py"
-        r = subprocess.run(
-            [python_bin, str(build_script)],
-            capture_output=True, text=True, timeout=600,
-        )
-        _update_step(2, "done" if r.returncode == 0 else "failed", r.stdout + "\n" + r.stderr)
-        if r.returncode != 0:
-            return
-    except Exception as e:
-        _update_step(2, "failed", str(e))
+    if not _run_script(2, "build_index.py", [], 600, True):
         return
 
     # Step 4: 导入数据库
-    _update_step(3, "running")
-    try:
-        migrate_script = server_dir / "migrate_db.py"
-        r = subprocess.run(
-            [python_bin, str(migrate_script)],
-            capture_output=True, text=True, timeout=120,
-        )
-        _update_step(3, "done" if r.returncode == 0 else "failed", r.stdout + "\n" + r.stderr)
-    except Exception as e:
-        _update_step(3, "failed", str(e))
+    _run_script(3, "migrate_db.py", [], 120, True)
 
 # 繁→简 转换
 try:
