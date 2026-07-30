@@ -7,6 +7,7 @@ import Home from './pages/Home'
 import SeriesPage from './pages/Series'
 import MatchingDesk from './pages/MatchingDesk'
 import Timeline from './pages/Timeline'
+import DataDesk from './pages/DataDesk'
 import { loadSeriesList, loadTask } from './model/series'
 
 // ── 导航栏 ──
@@ -51,7 +52,16 @@ function AppLayout() {
               `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
             }>任务台</NavLink>
 
-          {/* 策划台 / 剪辑台：仅在任务页可点击，否则置灰 */}
+          {/* 数据台 / 策划台 / 剪辑台：仅在任务页可点击，否则置灰 */}
+          {isTaskPage ? (
+            <NavLink to={`/${seriesId}/${taskId}/data`}
+              className={({ isActive }) =>
+                `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
+              }>数据台</NavLink>
+          ) : (
+            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">数据台</span>
+          )}
+
           {isTaskPage ? (
             <NavLink to={`/${seriesId}/${taskId}/planning`}
               className={({ isActive }) =>
@@ -104,7 +114,8 @@ function App() {
             } />
             {/* 任务页面 — 有 TaskProvider */}
             <Route path=":seriesId/:taskId" element={<TaskLayout />}>
-              <Route index element={<Navigate to="planning" replace />} />
+              <Route index element={<Navigate to="data" replace />} />
+              <Route path="data" element={<DataDesk />} />
               <Route path="planning" element={<MatchingDesk />} />
               <Route path="timeline" element={<Timeline />} />
             </Route>

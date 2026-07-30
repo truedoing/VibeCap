@@ -210,7 +210,7 @@ export default function Home() {
                         return (
                           <button
                             key={t.name}
-                            onClick={() => nav(`/${toSlug(d.name)}/${t.name}/planning`)}
+                            onClick={() => nav(`/${toSlug(d.name)}/${t.name}`)}
                             className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-accent transition-colors border-b border-border last:border-b-0"
                           >
                             <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
