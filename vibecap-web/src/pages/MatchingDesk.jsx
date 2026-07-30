@@ -118,8 +118,8 @@ export default function MatchingDesk() {
   const previewAdj = useCallback(() => {
     if (!curMark) return
     setPreviewLoading(true)
-    setPlayerStatus(`跳转至 ${adjStart.toFixed(1)}s...`)
-    fetch(`/preview_video?ep=${curMark.ep}&t=${adjStart}&sid=${pvSid}&task=${taskId}`)
+    setPlayerStatus(`按 ${adjStart.toFixed(1)}s–${adjEnd.toFixed(1)}s 剪辑预览...`)
+    fetch(`/preview_video?ep=${curMark.ep}&t=${adjStart}&end=${adjEnd}&sid=${pvSid}&task=${taskId}`)
       .then(r => r.json()).then(d => {
         if (d.url) {
           setPlayerSrc(d.url + (d.url.includes('?') ? '&t=' : '?t=') + Date.now())

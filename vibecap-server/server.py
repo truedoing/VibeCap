@@ -273,8 +273,10 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json({"segments": [], "total_segments": 0})
         elif path == "/preview_video":
             task = req_task or _args.task
+            end_str = params.get("end", [None])[0]
+            end_t = float(end_str) if end_str else None
             self._serve_preview(params.get("ep",["1"])[0], float(params.get("t",["0"])[0]),
-                               params.get("sid",["default"])[0], task=task)
+                               params.get("sid",["default"])[0], task=task, end_t=end_t)
         elif path == "/status":
             task = req_task or _args.task
             self._json({"ok": True, "drama": _args.drama, "task": task})
@@ -778,19 +780,26 @@ class Handler(SimpleHTTPRequestHandler):
             ], capture_output=True)
         threading.Thread(target=extract, daemon=True).start()
 
-    def _serve_preview(self, ep, t, sid="default", task=None):
+    def _serve_preview(self, ep, t, sid="default", task=None, end_t=None):
         task_name = task or _args.task
         clip_dir = self._resolve_clip_dir(task_name)
         src = SOURCE_VIDEOS.get(f"ep{ep}")
         if not src: return self.send_error(404)
         tmp = clip_dir / f"_pv_{sid}.mp4"
-        clip_start = max(0, t - 2)
-        clip_end = clip_start + 20
+        if end_t and end_t > t:
+            # 用户指定了起止时间 → 按输入范围剪辑
+            clip_start = max(0, t - 1)
+            clip_end = end_t + 1
+            duration = clip_end - clip_start
+        else:
+            # 默认：20 秒预览窗口
+            clip_start = max(0, t - 2)
+            clip_end = clip_start + 20
+            duration = 20
         subprocess.run(["ffmpeg","-y","-ss",str(clip_start),"-i",str(src),
-            "-t","20","-vf","scale=640:360","-c:v","libx264","-preset","ultrafast",
+            "-t",str(duration),"-vf","scale=640:360","-c:v","libx264","-preset","ultrafast",
             "-crf","28","-c:a","aac","-b:a","64k",str(tmp)], capture_output=True)
         if tmp.exists():
-            # URL 带上 task 参数，确保前端后续请求路由到正确任务
             url = f"/clips/{tmp.name}?task={task_name}"
             self._json({"ok":True, "file":tmp.name, "url":url,
                 "start":clip_start, "end":clip_end})
