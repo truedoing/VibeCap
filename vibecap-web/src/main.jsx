@@ -1,13 +1,12 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Routes, Route, NavLink, useParams, Outlet } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useParams, Outlet } from 'react-router-dom'
 import './index.css'
 import { TaskProvider, EmptyProjectProvider } from './context/ProjectContext'
 import Home from './pages/Home'
 import SeriesPage from './pages/Series'
 import MatchingDesk from './pages/MatchingDesk'
 import Timeline from './pages/Timeline'
-import TaskOverview from './pages/TaskOverview'
 import { loadSeriesList, loadTask } from './model/series'
 
 // ── 导航栏 ──
@@ -44,21 +43,33 @@ function AppLayout() {
           <span className="text-[10px] text-muted-foreground/50 hidden sm:inline">API :8765</span>
         </div>
 
-        {/* 第二行：功能标签（仅在任务页显示） */}
-        {isTaskPage && (
-          <nav className="flex items-center gap-1 px-4 h-8 border-t border-border/50 bg-secondary/30">
-            <NavLink to="/" end
-              className="text-xs px-3 py-1 rounded-md transition-colors text-muted-foreground hover:text-foreground hover:bg-background/50">任务台</NavLink>
+        {/* 第二行：功能标签 — 始终显示 */}
+        <nav className="flex items-center gap-1 px-4 h-8 border-t border-border/50 bg-secondary/30">
+          {/* 任务台：始终指向根路由 */}
+          <NavLink to="/" end
+            className={({ isActive }) =>
+              `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
+            }>任务台</NavLink>
+
+          {/* 策划台 / 剪辑台：仅在任务页可点击，否则置灰 */}
+          {isTaskPage ? (
             <NavLink to={`/${seriesId}/${taskId}/planning`}
               className={({ isActive }) =>
                 `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
               }>策划台</NavLink>
+          ) : (
+            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">策划台</span>
+          )}
+
+          {isTaskPage ? (
             <NavLink to={`/${seriesId}/${taskId}/timeline`}
               className={({ isActive }) =>
                 `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
               }>剪辑台</NavLink>
-          </nav>
-        )}
+          ) : (
+            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">剪辑台</span>
+          )}
+        </nav>
       </header>
 
       <main className="flex-1 flex flex-col overflow-hidden">
@@ -93,7 +104,7 @@ function App() {
             } />
             {/* 任务页面 — 有 TaskProvider */}
             <Route path=":seriesId/:taskId" element={<TaskLayout />}>
-              <Route index element={<TaskOverview />} />
+              <Route index element={<Navigate to="planning" replace />} />
               <Route path="planning" element={<MatchingDesk />} />
               <Route path="timeline" element={<Timeline />} />
             </Route>

@@ -253,7 +253,7 @@ function TaskCard({ task, seriesId, onDelete, onStatusChange }) {
 
   return (
     <Link
-      to={`/${seriesId}/${task.id}/planning`}
+      to={`/${seriesId}/${task.id}`}
       className="group flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:border-primary/30 hover:shadow-sm transition-all"
     >
       <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
