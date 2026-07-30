@@ -81,32 +81,39 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch }) {
     setSelectedIdx(null)
 
     if (context.seq === 'D') {
-      // ── 台词/对话：直接 ASR 优先匹配，不转镜头语言 ──
-      const queryText = `ASR台词匹配：${context.narration}`
-      const userMsg = { role: 'user', content: queryText }
-      setMessages([userMsg])
+      // ── 台词：拆解 + ASR 匹配原剧对白 ──
       setLoading(true)
-      fetch(`/chat?task=${context.taskId || ''}`, {
+      fetch('/dialogue_match', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [userMsg],
-          context: { ...context, strategy: 'asr_first' }
-        })
-      }).then(r => r.json()).then(data => {
-        const aiMsg = {
-          role: 'ai',
-          content: data.reply || '找到以下匹配素材 ~',
-          results: data.results || [],
+        body: JSON.stringify({ dialogue: context.narration })
+      }).then(r => r.json()).then(d => {
+        const lines = d.lines || []
+        if (lines.length > 0) {
+          const suggestionItems = lines.flatMap(l => {
+            const best = l.matches?.[0]
+            const confident = l.confident !== false
+            return [{
+              display: confident && best
+                ? `✅「${l.normalized}」→ EP${best.ep} 原台词`
+                : `🔍「${l.normalized}」→ 未确认原台词，语义搜索`,
+              query: l.normalized,
+              confident
+            }]
+          })
+          setMessages([{
+            role: 'ai',
+            content: '这段台词拆解为以下原剧对白，点击搜索 ~',
+            suggestionItems: suggestionItems
+          }])
+        } else {
+          setMessages([{ role: 'ai', content: '没有匹配到原剧台词，换个说法试试？' }])
         }
-        setMessages([userMsg, aiMsg])
-        setEpFilter(null)
-        if (data.results?.length > 0 && onSearch) onSearch(data.results)
       }).catch(() => {
-        setMessages([userMsg, { role: 'ai', content: 'ASR 搜索出错，请重试' }])
+        setMessages([{ role: 'ai', content: '台词匹配出错，请重试' }])
       }).finally(() => setLoading(false))
     } else {
-      // ── 解说词：AI 分镜推荐 → 语义搜索 ──
+      // ── 解说词：AI 分镜推荐 → 自动搜索第一个建议 ──
       fetch(`/storyboard_suggest?task=${context.taskId || ''}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -115,7 +122,30 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch }) {
         const list = (d.suggestions || []).map(s => s.replace(/^镜头\d+[：:]\s*/, ''))
         if (list.length > 0) {
           setSuggestions(list)
-          setMessages([{ role: 'ai', content: '这段解说可以配这些画面，点击试试 ~', suggestions: list }])
+          // 自动用第一个建议发起搜索
+          const firstQuery = list[0]
+          const userMsg = { role: 'user', content: firstQuery }
+          const aiPlaceholder = { role: 'ai', content: '小 V 根据分镜方案自动搜索中...', suggestions: list }
+          setMessages([userMsg, aiPlaceholder])
+          setLoading(true)
+          const strategy = context.seq === 'D' ? 'asr_first' : undefined
+          const ctx = strategy ? { ...context, strategy } : context
+          fetch(`/chat?task=${ctx.taskId || ''}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: [userMsg], context: ctx })
+          }).then(r2 => r2.json()).then(data => {
+            setMessages([userMsg, {
+              role: 'ai',
+              content: data.reply || '找到以下匹配素材 ~',
+              results: data.results || [],
+              suggestions: list,  // 保留建议列表，方便切换
+            }])
+            setEpFilter(null)
+            if (data.results?.length > 0 && onSearch) onSearch(data.results)
+          }).catch(() => {
+            setMessages([userMsg, { role: 'ai', content: '搜索出错，请重试', suggestions: list }])
+          }).finally(() => setLoading(false))
         }
       }).catch(() => {})
     }
@@ -234,21 +264,23 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch }) {
                 </p>
               )}
 
-              {/* 推荐问题（可点击的搜索建议） */}
-              {msg.suggestions?.length > 0 && (
+              {/* 推荐问题（可点击） */}
+              {(msg.suggestions?.length > 0 || msg.suggestionItems?.length > 0) && (
                 <div className="mt-2 space-y-1.5">
-                  {msg.suggestions.map((s, j) => (
+                  {(msg.suggestionItems || msg.suggestions || []).map((s, j) => {
+                    const query = typeof s === 'string' ? s : s.query
+                    const display = typeof s === 'string' ? s : s.display
+                    const isDialogue = msg.suggestionItems?.length > 0
+                    return (
                     <button
                       key={j}
                       onClick={async () => {
-                        const query = s
-                        // 作为用户消息发送
                         const userMsg = { role: 'user', content: query }
                         const newMsgs = [...messages, userMsg]
                         setMessages(newMsgs)
                         setLoading(true)
                         try {
-                          const resp = await fetch(`/chat?task=${context.taskId || ''}`, {
+                          const resp = await fetch('/chat', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ messages: newMsgs, context })
                           })
@@ -264,13 +296,21 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch }) {
                         }
                         setLoading(false)
                       }}
-                      className="w-full text-left px-3 py-2 rounded-xl border border-purple/20 bg-purple/[0.03] hover:bg-purple/[0.06] hover:border-purple/40 transition-all text-xs text-foreground/80 group"
+                      className={cn(
+                        'w-full text-left px-3 py-2 rounded-xl border transition-all text-xs text-foreground/80 group',
+                        isDialogue
+                          ? 'border-green/20 bg-green/[0.03] hover:bg-green/[0.06] hover:border-green/40'
+                          : 'border-purple/20 bg-purple/[0.03] hover:bg-purple/[0.06] hover:border-purple/40'
+                      )}
                     >
-                      <span className="text-purple/70 mr-2 shrink-0">🎬</span>
-                      <SafeHtml text={s} className="flex-1" />
+                      <span className={cn('mr-2 shrink-0', isDialogue ? 'text-green/70' : 'text-purple/70')}>
+                        {isDialogue ? '💬' : '🎬'}
+                      </span>
+                      <SafeHtml text={display} />
                       <span className="text-[10px] text-muted-foreground/0 group-hover:text-purple/50 transition-colors ml-1 shrink-0">搜索 →</span>
                     </button>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
 

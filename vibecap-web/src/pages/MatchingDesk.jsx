@@ -133,10 +133,42 @@ export default function MatchingDesk() {
       .finally(() => setPreviewLoading(false))
   }, [curMark, adjStart])
 
-  const downloadHQ = useCallback(() => {
-    if (!curMark?.pvFile) return
-    setActionStatus(`✅ /clips/${curMark.pvFile}`)
-  }, [curMark])
+  const [downloading, setDownloading] = useState(false)
+  const downloadHQ = useCallback(async () => {
+    if (!curMark || downloading) return
+    setDownloading(true)
+    setActionStatus('⏳ 高清提取中，请稍候...')
+    try {
+      // 1) 发起提取
+      const r1 = await fetch(`/download?task=${taskId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ep: curMark.ep, start: adjStart, end: adjEnd }),
+      })
+      const d1 = await r1.json()
+      if (!d1.ok) { setActionStatus(`❌ ${d1.error || '提取失败'}`); return }
+      if (d1.cached) { setActionStatus(`✅ 已缓存，<a href="${d1.url}" download class="text-info underline">点击下载</a>`); return }
+      // 2) 轮询等待完成
+      const file = d1.file
+      let attempts = 0
+      while (attempts < 120) {
+        await new Promise(r => setTimeout(r, 2000))
+        const r2 = await fetch(`/download?task=${taskId}&file=${encodeURIComponent(file)}`)
+        const d2 = await r2.json()
+        if (d2.ready) {
+          setActionStatus(`✅ 提取完成，<a href="${d2.url}" download class="text-info underline font-medium">点击下载 HD 片段</a>`)
+          return
+        }
+        attempts++
+        setActionStatus(`⏳ 高清提取中... (${attempts * 2}s)`)
+      }
+      setActionStatus('⚠ 提取超时，请重试')
+    } catch (e) {
+      setActionStatus('❌ 网络错误，请重试')
+    } finally {
+      setDownloading(false)
+    }
+  }, [curMark, adjStart, adjEnd, taskId, downloading])
 
   const addPick = useCallback(async (type) => {
     if (!curMark) return
@@ -329,9 +361,22 @@ export default function MatchingDesk() {
             </div>
 
             {curMark && (
-              <p className="text-[11px] text-muted-foreground/60 mb-1">
-                📍 场景参考: EP{curMark.ep} {curMark.start.toFixed(0)}s–{curMark.end.toFixed(0)}s ({(curMark.end - curMark.start).toFixed(0)}s)
-              </p>
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-warning/10 border border-warning/20 mb-2">
+                <span className="text-base">🎬</span>
+                <span className="text-sm font-semibold text-warning">
+                  EP{curMark.ep} &nbsp;
+                  {(() => {
+                    const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
+                    return `${fmt(curMark.start)} – ${fmt(curMark.end)}`
+                  })()}
+                </span>
+                <span className="text-xs text-warning/60 ml-auto">
+                  时长 {(() => {
+                    const d = curMark.end - curMark.start
+                    return `${Math.floor(d / 60)}分${Math.floor(d % 60)}秒`
+                  })()}
+                </span>
+              </div>
             )}
             <p className="text-[11px] text-muted-foreground mb-3 truncate">{playerStatus}</p>
 
@@ -358,8 +403,8 @@ export default function MatchingDesk() {
               <Button variant="outline" size="sm" onClick={previewAdj} disabled={!curMark}>
                 <Play className="size-3" />预览
               </Button>
-              <Button variant="outline" size="sm" className="text-success border-success/30 hover:bg-success/10" onClick={downloadHQ} disabled={!curMark}>
-                <Download className="size-3" />高清
+              <Button variant="outline" size="sm" className="text-success border-success/30 hover:bg-success/10" onClick={downloadHQ} disabled={!curMark || downloading}>
+                <Download className={cn("size-3", downloading && "animate-pulse")} />{downloading ? '提取中' : '高清'}
               </Button>
               <span className="text-muted-foreground text-[10px] ml-1">倍速</span>
               <select

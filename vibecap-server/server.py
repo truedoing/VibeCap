@@ -81,7 +81,10 @@ vlm_data = []
 for ep in AVAILABLE_EPS:
     p = SOURCES_DIR / f"ep{ep}" / "vlm_analysis.json"
     if p.exists():
-        for s in json.load(open(p)): s["_ep"]=ep; vlm_data.append(s)
+        for s in json.load(open(p)):
+            if s is None: continue  # 跳过未完成的场景
+            s["_ep"] = ep
+            vlm_data.append(s)
 print(f"[search] VLM 数据: {len(vlm_data)} 条")
 
 asr_data = {}
@@ -160,6 +163,15 @@ class Handler(SimpleHTTPRequestHandler):
         elif path == "/tasks":
             drama = params.get("drama", [_args.drama])[0]
             self._json(self._list_tasks(drama))
+        elif path == "/download":
+            # 轮询提取状态
+            task = req_task or _args.task
+            clip_dir = self._resolve_clip_dir(task)
+            file_name = params.get("file", [None])[0]
+            if file_name and (clip_dir / file_name).exists():
+                self._json({"ok": True, "ready": True, "url": f"/clips/{file_name}?task={task}"})
+            else:
+                self._json({"ok": True, "ready": False})
         elif "/posters/" in path:
             self._serve_poster(path)
         elif "/素材clips/" in path or "/clips/" in path or "/tts_segments/" in path:
@@ -177,7 +189,9 @@ class Handler(SimpleHTTPRequestHandler):
         params = parse_qs(parsed.query)
         req_task = params.get("task", [None])[0] or _args.task
 
-        if path == "/chat":
+        if path == "/dialogue_match":
+            self._handle_dialogue_match()
+        elif path == "/chat":
             self._handle_chat()
         elif path == "/assign":
             clip_dir = self._resolve_clip_dir(req_task)
@@ -229,6 +243,8 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self._read_body())
             result = self._thumb(data, clip_dir=clip_dir)
             self._json(result)
+        elif path == "/download":
+            self._handle_download(req_task)
         elif path == "/storyboard_suggest":
             data = json.loads(self._read_body())
             suggestions = self._generate_storyboard(data.get("narration", ""))
@@ -555,6 +571,41 @@ class Handler(SimpleHTTPRequestHandler):
     def _thumb(self, data, clip_dir=None):
         return self._extract(data, full=False, clip_dir=clip_dir)
 
+    def _handle_download(self, req_task):
+        """POST /download — 提取高清片段供下载"""
+        clip_dir = self._resolve_clip_dir(req_task)
+        data = json.loads(self._read_body())
+        ep = str(data.get("ep", "1"))
+        start = float(data.get("start", 0))
+        end = float(data.get("end", 0))
+        src = SOURCE_VIDEOS.get(f"ep{ep}")
+        if not src:
+            self._json({"ok": False, "error": "源视频未找到"}, 404)
+            return
+        # 可读文件名：clip_EP1_19m05s_to_19m07s.mp4
+        def fmt(sec):
+            m, s = int(sec // 60), int(sec % 60)
+            return f"{m}m{s:02d}s"
+        name = f"clip_EP{ep}_{fmt(start)}_to_{fmt(end)}.mp4"
+        out = clip_dir / name
+        if out.exists():
+            # 已存在则直接返回
+            self._json({"ok": True, "file": name, "url": f"/clips/{name}?task={req_task}", "cached": True})
+            return
+        # ffmpeg 高清提取（preset=fast, crf=20 平衡速度与质量）
+        self._json({"ok": True, "file": name, "status": "extracting"})  # 先返回，避免超时
+        # 后台提取
+        import threading
+        def extract():
+            subprocess.run([
+                "ffmpeg", "-y", "-ss", str(start), "-i", str(src),
+                "-t", str(end - start),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "256k",
+                str(out)
+            ], capture_output=True)
+        threading.Thread(target=extract, daemon=True).start()
+
     def _serve_preview(self, ep, t, sid="default", task=None):
         task_name = task or _args.task
         clip_dir = self._resolve_clip_dir(task_name)
@@ -768,6 +819,136 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception:
                 tasks.append({"name": t.name, "segments": 0, "status": "editing", "duration": 0})
         return sorted(tasks, key=lambda x: x["name"])
+
+    # ── 台词匹配 ──
+
+    def _handle_dialogue_match(self):
+        """POST /dialogue_match — 拆解台词 + 匹配原剧 ASR"""
+        data = json.loads(self._read_body())
+        dialogue = data.get("dialogue", "")
+
+        if not dialogue or not dialogue.strip():
+            self._json({"lines": []})
+            return
+
+        # Step 1: DeepSeek 拆句 + 标准化
+        lines = self._dialogue_split_normalize(dialogue)
+
+        # Step 2: 每个变体搜 ASR，选最佳匹配作为标准化结果
+        results = []
+        for line in lines:
+            original = line.get("original", "")
+            variants = line.get("variants", [original])
+            best_match = None
+            best_variant = ""
+
+            for v in variants:
+                matches = self._search_asr_text(v, limit=1)
+                if matches:
+                    m = matches[0]
+                    if not best_match or m["score"] > best_match["score"]:
+                        best_match = m
+                        best_variant = v
+
+            # 关键字得分 ≥ 5 即认为找到匹配（关键词匹配分天然低于 BGE）
+            if best_match and best_match["score"] >= 5:
+                normalized = best_match["text"][:80]
+                confident = True
+            else:
+                normalized = variants[0] if variants else original
+                confident = False
+
+            results.append({
+                "original": original,
+                "normalized": normalized,
+                "confident": confident,
+                "variant_used": best_variant,
+                "matches": [best_match] if best_match and confident else []
+            })
+
+        self._json({"lines": results})
+
+    def _dialogue_split_normalize(self, dialogue):
+        """DeepSeek 拆解台词 + 生成多个变体，ASR 验证后选最佳匹配"""
+        import urllib.request as _ur
+
+        # Step 1: DeepSeek 拆句 + 生成多个可能说法
+        prompt = (
+            "你是一个影视台词校对助手。用户给你一段解说脚本中的'高亮台词'，"
+            "这段台词可能由多句拼凑而成，且经过了改写，与演员实际说的话不完全一致。\n\n"
+            "请完成：\n"
+            "1. 把台词拆成独立的对白句（去掉叙述性文字）\n"
+            "2. 对每句，生成 3-5 个可能的原剧说法变体——想象演员实际可能怎么说出这句话。"
+            "变体要覆盖不同的措辞、语序、省略方式。\n\n"
+            '输出 JSON：{"lines":[{"original":"原文","variants":["变体1","变体2","变体3"]}]}\n\n'
+            "示例：\n"
+            '输入: "爸，你是想跟大哥去美国吧？"\n'
+            '输出: {"lines":[{"original":"爸，你是想跟大哥去美国吧？","variants":["你想跟大哥去美国","他跟大哥去美国","他想跟你去美国","你要去美国找大哥","跟大哥去美国是吧"]}]}'
+        )
+
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        payload = json.dumps({
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": f"高亮台词：{dialogue}\n\n输出JSON："}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1500,
+        }).encode("utf-8")
+
+        try:
+            req = _ur.Request(
+                "https://api.deepseek.com/v1/chat/completions",
+                data=payload,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+            )
+            with _ur.urlopen(req, timeout=20) as resp:
+                result = json.loads(resp.read())
+            text = result["choices"][0]["message"]["content"].strip()
+            if text.startswith("```"): text = text.split("\n",1)[1].split("```")[0].strip()
+            parsed = json.loads(text)
+            return parsed.get("lines", [])
+        except Exception as e:
+            print(f"[dialogue_split] LLM 失败: {e}")
+            parts = re.split(r'[。！？?！]', dialogue)
+            return [{"original": p.strip(), "variants": [p.strip()]} for p in parts if len(p.strip()) > 2]
+
+    def _search_asr_text(self, query, limit=3):
+        """关键字搜索 ASR + 字幕数据（字幕权重 x2）"""
+        results = {}
+        q_clean = re.sub(r'[，。！？、\s　]', '', query)
+        kws = []
+        for n in [2, 3]:
+            for i in range(len(q_clean) - n + 1):
+                kw = q_clean[i:i+n]
+                stopwords2 = {'你想','想去','去跟','跟他','他的','她的','一个','这个','那个','什么','怎么','不是','就是','还是','可以','已经','因为','所以','但是','不过','虽然','如果','只是','还不','不了','哪个','那儿'}
+                if kw not in stopwords2: kws.append(kw)
+
+        # 搜 ASR 数据
+        for ep, asr_list in asr_data.items():
+            for a in asr_list:
+                text = a["text"]
+                score = sum((text.count(k) * 3) for k in kws)
+                if score <= 0: continue
+                k = f"asr_{ep}_{a['start']:.0f}"
+                r = {"ep": ep, "start": a["start"], "end": a["end"], "text": text[:200], "score": score}
+                if k not in results or r["score"] > results[k]["score"]:
+                    results[k] = r
+
+        # 搜字幕数据（从 VLM 提取的硬字幕，权重 x2）
+        if semantic_index:
+            for i, m in enumerate(semantic_index["metas"]):
+                if m.get("type") != "sub": continue
+                text = m["text"]
+                score = sum((text.count(k) * 6) for k in kws)  # 字幕权重 x2
+                if score <= 0: continue
+                k = f"sub_{m['ep']}_{m['start']:.0f}"
+                r = {"ep": m["ep"], "start": m["start"], "end": m["end"], "text": text[:200], "score": score}
+                if k not in results or r["score"] > results[k]["score"]:
+                    results[k] = r
+
+        return sorted(results.values(), key=lambda x: -x["score"])[:limit]
 
     # ── AI 聊天搜索 ──
 

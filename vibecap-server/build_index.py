@@ -8,26 +8,35 @@ if not os.environ.get("HF_ENDPOINT"):
     os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 ROOT_DIR = Path(__file__).parent.parent  # VIBECAP
-# 支持环境变量指定电视剧
 DRAMA = os.environ.get("VIBECAP_DRAMA", "都挺好")
-SOURCES_DIR = ROOT_DIR / DRAMA / "sources"
+SOURCES_DIR = ROOT_DIR / DRAMA / "sources_clean"  # 读取清洗后数据
 INDEX_FILE = ROOT_DIR / DRAMA / "semantic_index.pkl"
+
+# 如果清洗数据不存在，降级到原始数据
+if not SOURCES_DIR.exists() or not any(SOURCES_DIR.iterdir()):
+    SOURCES_DIR = ROOT_DIR / DRAMA / "sources"
+    print("[build_index] 使用原始数据源")
 
 from sentence_transformers import SentenceTransformer
 
 def build_index():
-    print("加载 BGE-large-zh-v1.5 模型...")
-    model = SentenceTransformer("BAAI/bge-base-zh-v1.5")
+    print("加载 BGE-large-zh-v1.5 模型 (CPU)...")
+    model = SentenceTransformer("BAAI/bge-base-zh-v1.5", device="cpu")
 
     texts = []
     metas = []
 
-    for ep in [1, 2, 27, 28, 29]:
+    for ep in [1, 2, 3, 4, 27, 28, 29]:
         vlm_path = SOURCES_DIR / f"ep{ep}" / "vlm_analysis.json"
         if vlm_path.exists():
             for s in json.load(open(vlm_path)):
+                if s is None: continue
+                # 跳过质量标记为排除的场景
+                tags = s.get("tags", [])
+                if "skip_opening" in tags:
+                    continue
                 text = s.get("description", "")
-                if len(text) > 10 and "片头" not in text and "片尾" not in text:
+                if len(text) > 10:
                     texts.append(text)
                     metas.append({
                         "type": "vlm", "ep": ep,
@@ -35,6 +44,16 @@ def build_index():
                         "start": s["start"], "end": s["end"],
                         "text": text[:200]
                     })
+                    # 清洗后的字幕字段直接索引
+                    for sub in s.get("subtitles", []):
+                        if len(sub) >= 3:
+                            texts.append(sub)
+                            metas.append({
+                                "type": "sub", "ep": ep,
+                                "scene_id": s["scene_id"],
+                                "start": s["start"], "end": s["end"],
+                                "text": sub[:200]
+                            })
 
         asr_path = SOURCES_DIR / f"ep{ep}" / "asr_result.json"
         if asr_path.exists():

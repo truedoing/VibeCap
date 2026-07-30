@@ -45,7 +45,7 @@ def run_ffmpeg(cmd, timeout=180):
 # Step 1: 场景切分
 # ═══════════════════════════════════════════════════════════════
 
-def detect_scenes(video_path, work_dir, segment_duration=10):
+def detect_scenes(video_path, work_dir, segment_duration):
     """按固定时长切分场景 → scenes.json（简单可靠，避免 ffmpeg scdet 切太碎）"""
     scenes_file = work_dir / "scenes.json"
     if scenes_file.exists():
@@ -100,10 +100,10 @@ def transcribe_asr(audio_path, work_dir):
         print(f"  asr_result.json 已存在，跳过")
         return json.load(open(asr_file))
 
-    print("  本地 ASR 转写中 (faster-whisper base)...")
+    print("  本地 ASR 转写中 (faster-whisper tiny)...")
     from faster_whisper import WhisperModel
 
-    model = WhisperModel("base", device="cpu", compute_type="int8")
+    model = WhisperModel("tiny", device="cpu", compute_type="int8")
     segments_out, info = model.transcribe(str(audio_path), language="zh", beam_size=5)
 
     segments = []
@@ -259,7 +259,7 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
 # 主流程
 # ═══════════════════════════════════════════════════════════════
 
-def analyze_episode(ep, video_path):
+def analyze_episode(ep, video_path, segment_duration=10):
     """完整分析一集"""
     work_dir = DRAMA_DIR / "sources" / f"ep{ep}"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -278,7 +278,7 @@ def analyze_episode(ep, video_path):
 
     # Step 1: 场景切分
     print("\n[1/4] 场景切分")
-    scenes = detect_scenes(video_path, work_dir)
+    scenes = detect_scenes(video_path, work_dir, segment_duration)
 
     # Step 2: ASR
     print("\n[2/4] ASR 转写")
@@ -353,6 +353,7 @@ def analyze_episode(ep, video_path):
 def main():
     parser = argparse.ArgumentParser(description="EP1-3 分析脚本")
     parser.add_argument("--ep", default="1,2,3", help="要分析的集数 (逗号分隔)")
+    parser.add_argument("--segment", type=int, default=10, help="场景切分间隔(秒)，默认10")
     parser.add_argument("--skip-asr", action="store_true", help="跳过 ASR")
     parser.add_argument("--skip-vlm", action="store_true", help="跳过 VLM")
     args = parser.parse_args()
@@ -364,7 +365,7 @@ def main():
         if not video_path.exists():
             print(f"❌ 找不到视频: {video_path}")
             continue
-        analyze_episode(ep, video_path)
+        analyze_episode(ep, video_path, args.segment)
 
 
 if __name__ == "__main__":
