@@ -155,7 +155,8 @@ export default function DataDesk() {
   const episodes = quality?.episodes || []
 
   const avgScore = reports.length > 0
-    ? Math.round(reports.reduce((s, r) => s + r.overall_score, 0) / reports.length)
+    ? Math.round(reports.filter(r => r.overall_score > 0).reduce((s, r) => s + r.overall_score, 0)
+        / Math.max(1, reports.filter(r => r.overall_score > 0).length))
     : 0
 
   // 收集所有步骤的日志行（用于统一日志输出区）
@@ -245,7 +246,7 @@ export default function DataDesk() {
               <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
                 <Cpu size={14} className="text-muted-foreground" />
                 <h3 className="text-sm font-medium text-foreground">数据加工流水线</h3>
-                <span className="text-[10px] text-muted-foreground">analyze → clean → build → migrate</span>
+                <span className="text-[10px] text-muted-foreground">analyze → calibrate → clean → build → migrate</span>
               </div>
               <div className="p-3 space-y-3">
                 {/* 剧集选择 */}
