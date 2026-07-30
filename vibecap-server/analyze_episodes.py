@@ -280,7 +280,7 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
 # 主流程
 # ═══════════════════════════════════════════════════════════════
 
-def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip_vlm=False):
+def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip_vlm=False, skip_asr=False):
     """完整分析一集"""
     work_dir = DRAMA_DIR / "sources" / f"ep{ep}"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -301,10 +301,19 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip
     print("\n[1/4] 场景切分")
     scenes = detect_scenes(video_path, work_dir, segment_duration)
 
-    # Step 2: ASR
-    print("\n[2/4] ASR 转写")
-    audio_path = extract_audio(video_path, work_dir)
-    asr_segments = transcribe_asr(audio_path, work_dir, model_size=asr_model)
+    # Step 2: ASR（可跳过，仅本机已有 GPU 产出的 ASR 文件时）
+    if skip_asr:
+        asr_file = work_dir / "asr_result.json"
+        if asr_file.exists():
+            asr_segments = json.load(open(asr_file))
+            print(f"\n[2/4] 跳过 ASR（使用已有文件: {len(asr_segments)} 段）")
+        else:
+            print(f"\n[2/4] ⚠️ --skip-asr 但 {asr_file} 不存在，请先从GPU机器复制")
+            return None
+    else:
+        print("\n[2/4] ASR 转写")
+        audio_path = extract_audio(video_path, work_dir)
+        asr_segments = transcribe_asr(audio_path, work_dir, model_size=asr_model)
 
     # Step 3-4: VLM（可跳过，仅 GPU 跑 ASR 时）
     if skip_vlm:
@@ -393,7 +402,7 @@ def main():
         if not video_path.exists():
             print(f"❌ 找不到视频: {video_path}")
             continue
-        analyze_episode(ep, video_path, args.segment, args.asr_model, args.skip_vlm)
+        analyze_episode(ep, video_path, args.segment, args.asr_model, args.skip_vlm, args.skip_asr)
 
 
 if __name__ == "__main__":
