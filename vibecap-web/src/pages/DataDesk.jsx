@@ -81,10 +81,16 @@ export default function DataDesk() {
   const [quality, setQuality] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // 加工面板状态
+  // 加工面板状态 — 初始显示四阶段管线图
+  const defaultSteps = [
+    { id: 'analyze', label: '分析剧集', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+    { id: 'clean',   label: '数据清洗', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+    { id: 'build',   label: '重建索引', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+    { id: 'migrate', label: '导入数据库', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+  ]
   const [epInput, setEpInput] = useState('')
   const [procTaskId, setProcTaskId] = useState(null)
-  const [procSteps, setProcSteps] = useState([])
+  const [procSteps, setProcSteps] = useState(defaultSteps)
 
   useEffect(() => {
     fetch('/data/quality')
@@ -118,7 +124,10 @@ export default function DataDesk() {
   const startProcess = () => {
     const eps = epInput.split(/[,，\s]+/).map(Number).filter(n => n > 0 && n < 100)
     if (eps.length === 0) return
-    setProcSteps([])
+    // 重置为初始状态，更新第一步标签
+    setProcSteps(defaultSteps.map(s =>
+      s.id === 'analyze' ? { ...s, label: `分析 EP${eps.join(',')}` } : { ...s }
+    ))
     fetch('/data/process', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
