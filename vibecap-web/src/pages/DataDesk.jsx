@@ -296,8 +296,8 @@ export default function DataDesk() {
                     <div key={step.id} className="flex items-center flex-1" style={{ minWidth: 0 }}>
                       {/* 阶段节点 */}
                       <div className="flex flex-col items-center gap-1.5 shrink-0">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${
-                          isRunning ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30 scale-110' :
+                        <div className={`w-16 h-10 rounded-lg flex items-center justify-center transition-all duration-300 ${
+                          isRunning ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' :
                           isDone ? 'bg-green-500 text-white' :
                           isFailed ? 'bg-red-500 text-white' :
                           'bg-card border-2 border-border text-muted-foreground/40'
