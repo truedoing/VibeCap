@@ -515,7 +515,22 @@ class VibeCapDB:
         if not ep_data:
             return {"error": "episode not found", "overall_score": 0}
 
-        raw = ep_data["asr_raw_count"] or 1
+        # 零数据 → 0分
+        raw = ep_data["asr_raw_count"] or 0
+        vlm_scenes = ep_data["vlm_scene_count"] or 0
+        if raw == 0 and vlm_scenes == 0:
+            c = self._cursor()
+            c.execute(
+                "INSERT OR REPLACE INTO quality_reports "
+                "(drama_id, ep_number, asr_score, vlm_score, subtitle_score, overall_score, summary) "
+                "VALUES (?, ?, 0, 0, 0, 0, '未分析')",
+                (drama_id, ep),
+            )
+            self.commit()
+            return {"ep": ep, "asr_score": 0, "vlm_score": 0,
+                    "subtitle_score": 0, "overall_score": 0, "summary": "未分析"}
+
+        raw = raw or 1
         clean = ep_data["asr_clean_count"] or raw
         scene_count = ep_data["vlm_scene_count"] or 1
         raw_chars = ep_data["asr_raw_chars"] or 0

@@ -4,16 +4,19 @@ import { BarChart3, Database, Shield, TrendingUp, Tv, Loader2, Play, CheckCircle
 
 // ── 质量色 ──
 function qualityColor(score) {
+  if (score <= 0) return 'text-muted-foreground/30'
   if (score >= 75) return 'text-green-400'
   if (score >= 55) return 'text-yellow-400'
   return 'text-red-400'
 }
 function qualityBg(score) {
+  if (score <= 0) return 'bg-muted-foreground/20'
   if (score >= 75) return 'bg-green-500'
   if (score >= 55) return 'bg-yellow-500'
   return 'bg-red-500'
 }
 function qualityLabel(score) {
+  if (score <= 0) return '未分析'
   if (score >= 75) return '良好'
   if (score >= 55) return '一般'
   return '需优化'
