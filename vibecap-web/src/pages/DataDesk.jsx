@@ -81,16 +81,23 @@ export default function DataDesk() {
   const [quality, setQuality] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // 加工面板状态 — 初始显示四阶段管线图
+  // 加工面板状态
   const defaultSteps = [
     { id: 'analyze', label: '分析剧集', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
     { id: 'clean',   label: '数据清洗', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
     { id: 'build',   label: '重建索引', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
     { id: 'migrate', label: '导入数据库', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
   ]
-  const [epInput, setEpInput] = useState('')
+  const [selectedEps, setSelectedEps] = useState([])
   const [procTaskId, setProcTaskId] = useState(null)
   const [procSteps, setProcSteps] = useState(defaultSteps)
+
+  // 从 quality 数据中获取所有集数及其状态
+  const allEpisodes = quality?.episodes || []
+  const hasData = (ep) => {
+    const e = allEpisodes.find(e => e.ep_number === ep)
+    return e && (e.asr_raw_count > 0 || e.vlm_scene_count > 0)
+  }
 
   useEffect(() => {
     fetch('/data/quality')
@@ -122,8 +129,8 @@ export default function DataDesk() {
   }, [procTaskId])
 
   const startProcess = () => {
-    const eps = epInput.split(/[,，\s]+/).map(Number).filter(n => n > 0 && n < 100)
-    if (eps.length === 0) return
+    if (selectedEps.length === 0) return
+    const eps = [...selectedEps].sort((a, b) => a - b)
     // 重置为初始状态，更新第一步标签
     setProcSteps(defaultSteps.map(s =>
       s.id === 'analyze' ? { ...s, label: `分析 EP${eps.join(',')}` } : { ...s }
@@ -247,28 +254,79 @@ export default function DataDesk() {
             </span>
           </div>
           <div className="p-4 space-y-4">
-            {/* 输入行 */}
-            <div className="flex items-center gap-2">
-              <input
-                value={epInput}
-                onChange={e => setEpInput(e.target.value)}
-                placeholder="集数，如 5 或 1,2,3"
-                disabled={procSteps.some(s => s.status === 'running')}
-                className="flex-1 bg-secondary border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
-                onKeyDown={e => { if (e.key === 'Enter') startProcess() }}
-              />
-              <button
-                onClick={startProcess}
-                disabled={procSteps.some(s => s.status === 'running')}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity"
-              >
-                {procSteps.some(s => s.status === 'running') ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Play size={14} />
-                )}
-                开始加工
-              </button>
+            {/* 剧集选择 + 操作按钮 */}
+            <div className="space-y-2">
+              {/* 剧集网格 */}
+              <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+                {allEpisodes.map(ep => {
+                  const isSelected = selectedEps.includes(ep.ep_number)
+                  const hasAnalysis = hasData(ep.ep_number)
+                  return (
+                    <button
+                      key={ep.ep_number}
+                      disabled={procSteps.some(s => s.status === 'running')}
+                      onClick={() => {
+                        setSelectedEps(prev =>
+                          prev.includes(ep.ep_number)
+                            ? prev.filter(e => e !== ep.ep_number)
+                            : [...prev, ep.ep_number]
+                        )
+                      }}
+                      className={`px-2 py-1 rounded text-[11px] font-mono transition-all border ${
+                        hasAnalysis
+                          ? isSelected
+                            ? 'bg-green-500/20 text-green-400 border-green-500/40'
+                            : 'bg-green-500/5 text-green-400/60 border-green-500/20 hover:border-green-500/40'
+                          : isSelected
+                            ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
+                            : 'bg-secondary text-muted-foreground border-border hover:border-primary/30 hover:text-foreground'
+                      } disabled:opacity-50`}
+                    >
+                      {ep.ep_number}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* 操作行 */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedEps(allEpisodes.map(e => e.ep_number))}
+                  disabled={procSteps.some(s => s.status === 'running')}
+                  className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+                >
+                  全选
+                </button>
+                <button
+                  onClick={() => setSelectedEps([])}
+                  disabled={procSteps.some(s => s.status === 'running')}
+                  className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+                >
+                  清空
+                </button>
+                <span className="text-[10px] text-muted-foreground/50">|</span>
+                <span className="text-[10px] text-muted-foreground">
+                  已选 <span className="text-foreground font-medium">{selectedEps.length}</span> 集
+                  {selectedEps.length > 0 && (
+                    <span className="text-muted-foreground/50 ml-1">
+                      ({selectedEps.sort((a,b)=>a-b).slice(0,5).join(',')}{selectedEps.length > 5 ? '...' : ''})
+                    </span>
+                  )}
+                </span>
+                <div className="flex-1" />
+                <button
+                  onClick={startProcess}
+                  disabled={selectedEps.length === 0 || procSteps.some(s => s.status === 'running')}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity"
+                >
+                  {procSteps.some(s => s.status === 'running') ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Play size={14} />
+                  )}
+                  开始加工
+                </button>
+              </div>
             </div>
 
             {/* ── 工作流管线图 ── */}

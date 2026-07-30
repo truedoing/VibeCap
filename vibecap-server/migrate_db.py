@@ -153,9 +153,24 @@ def migrate_dramas(db):
 
 
 def migrate_episodes(db):
-    """导入每集质量数据"""
-    log("=== 导入剧集数据 ===")
+    """初始化全部集数 + 导入已有质量数据"""
+    log("=== 初始化剧集数据 ===")
     dramas = db.list_dramas() if not DRY_RUN else [{"name": "都挺好"}]
+
+    # 硬编码：都挺好共46集
+    TOTAL_EPS = {"都挺好": 46}
+
+    for drama in dramas:
+        name = drama["name"]
+        drama_id = db.get_drama_id(name) if not DRY_RUN else 1
+        total = TOTAL_EPS.get(name, 0)
+        if total > 0:
+            if not DRY_RUN and drama_id:
+                added = db.init_drama_episodes(drama_id, total)
+                if added > 0:
+                    log(f"  {name}: 初始化 {added}/{total} 集")
+                else:
+                    log(f"  {name}: {total} 集已存在")
 
     for drama in dramas:
         name = drama["name"]

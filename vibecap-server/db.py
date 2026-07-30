@@ -233,6 +233,20 @@ class VibeCapDB:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def init_drama_episodes(self, drama_id: int, total_eps: int) -> int:
+        """初始化剧集的所有集数条目（未分析状态），返回新增数"""
+        c = self._cursor()
+        count = 0
+        for ep in range(1, total_eps + 1):
+            c.execute(
+                "INSERT OR IGNORE INTO episodes (drama_id, ep_number) VALUES (?, ?)",
+                (drama_id, ep),
+            )
+            if c.rowcount > 0:
+                count += 1
+        self.commit()
+        return count
+
     def get_episodes_summary(self, drama_id: int) -> dict:
         """汇总统计"""
         c = self._cursor()
