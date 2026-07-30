@@ -257,7 +257,7 @@ export default function DataDesk() {
             {/* 剧集选择 + 操作按钮 */}
             <div className="space-y-2">
               {/* 剧集网格 */}
-              <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+              <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto custom-scrollbar">
                 {allEpisodes.map(ep => {
                   const isSelected = selectedEps.includes(ep.ep_number)
                   const hasAnalysis = hasData(ep.ep_number)
@@ -272,13 +272,11 @@ export default function DataDesk() {
                             : [...prev, ep.ep_number]
                         )
                       }}
-                      className={`px-2 py-1 rounded text-[11px] font-mono transition-all border ${
-                        hasAnalysis
-                          ? isSelected
-                            ? 'bg-green-500/20 text-green-400 border-green-500/40'
-                            : 'bg-green-500/5 text-green-400/60 border-green-500/20 hover:border-green-500/40'
-                          : isSelected
-                            ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
+                      className={`w-9 h-6 rounded text-[11px] font-mono transition-all border flex items-center justify-center ${
+                        isSelected
+                          ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
+                          : hasAnalysis
+                            ? 'bg-card text-foreground/70 border-green-500/30 hover:border-green-500/50'
                             : 'bg-secondary text-muted-foreground border-border hover:border-primary/30 hover:text-foreground'
                       } disabled:opacity-50`}
                     >
