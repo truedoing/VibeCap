@@ -552,12 +552,23 @@ class VibeCapDB:
             effective_ratio = min(1.0, raw_chars / max(raw * 30, 1))  # 正常每段应有 ~30字
             asr_score = round(15.0 + effective_ratio * 20, 1)  # 范围 15-35
         else:
-            # 正常 VAD ASR: 碎片率低 = 质量好
+            # 正常 VAD ASR: 评估最终可用文本质量
+            # 1. 内容密度: 每集约45分钟，正常对白 4000-8000字 → 100字/分钟为满分
+            content_chars = ep_data.get("asr_clean_chars", raw_chars) or raw_chars
+            chars_per_min = content_chars / 45
+            content_score = min(100, chars_per_min / 100 * 80)
+
+            # 2. 碎片率: 区分模型基线. small~60%正常, tiny~80%正常. 超基线扣分
             frag_rate = max(0, (raw - clean) / raw) if raw > 0 else 0
-            # 内容密度修正: 每段平均字数太少也扣分
-            avg_chars_per_seg = raw_chars / max(raw, 1)
-            density_factor = min(1.0, avg_chars_per_seg / 8.0)  # 8字/段为正常线
-            asr_score = round((1 - frag_rate) * density_factor * 100, 1)
+            baseline_frag = 0.60  # small 模型基线
+            excess_frag = max(0, frag_rate - baseline_frag)
+            frag_score = max(25, 100 - excess_frag * 180)
+
+            # 3. 字幕校准加分 (cross_calibrate 效果)
+            sub_count = ep_data.get("subtitle_count", 0) or 0
+            sub_bonus = min(15, sub_count / max(scene_count, 1) * 10)
+
+            asr_score = round(content_score * 0.45 + frag_score * 0.45 + sub_bonus, 1)
 
         # ── VLM 评分 ──
         short_ratio = (ep_data["vlm_short_desc_count"] or 0) / scene_count
@@ -577,8 +588,10 @@ class VibeCapDB:
             issues.append("ASR 固定分块(非VAD)，有效内容极低")
         else:
             frag_rate = max(0, (raw - clean) / raw) if raw > 0 else 0
-            if frag_rate > 0.4:
-                issues.append(f"ASR 碎片率 {frag_rate:.0%}")
+            if frag_rate > 0.75:
+                issues.append(f"ASR 碎片率偏高 {frag_rate:.0%}")
+            elif asr_score < 40:
+                issues.append(f"ASR 内容偏少")
         if short_ratio > 0.2:
             issues.append(f"VLM 短描述 {short_ratio:.0%}")
         if not ep_data["indexed"]:
