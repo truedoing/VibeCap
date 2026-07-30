@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
-import { BarChart3, Database, CheckCircle2, AlertTriangle, HelpCircle, ArrowRight, Shield, TrendingUp, Tv, Loader2 } from 'lucide-react'
+import { BarChart3, Database, Shield, TrendingUp, Tv, Loader2 } from 'lucide-react'
 
 // ── 质量色 ──
 function qualityColor(score) {
@@ -29,12 +28,10 @@ function EpQualityBar({ ep, report, indexed }) {
 
   return (
     <div className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-accent/30 transition-colors">
-      {/* 集号 */}
       <span className="text-xs font-mono text-muted-foreground w-10 shrink-0">
         EP{ep}
       </span>
 
-      {/* 质量条 */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
           <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
@@ -60,7 +57,6 @@ function EpQualityBar({ ep, report, indexed }) {
         </div>
       </div>
 
-      {/* 标签 */}
       <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
         score >= 75 ? 'bg-green-500/10 text-green-400 border-green-500/20' :
         score >= 55 ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
@@ -72,57 +68,15 @@ function EpQualityBar({ ep, report, indexed }) {
   )
 }
 
-// ── 任务校验行 ──
-function MarkerRow({ marker }) {
-  const segId = marker.seg_id
-  const ep = marker.marker_ep
-  const hasIndex = marker.has_index
-  const status = marker.status
-
-  return (
-    <div className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-accent/30 transition-colors">
-      <span className="text-xs font-mono text-muted-foreground w-10 shrink-0">S{segId}</span>
-
-      {status === 'ok' ? (
-        <>
-          <CheckCircle2 size={14} className="text-green-400 shrink-0" />
-          <span className="text-xs text-foreground/80">EP{ep} 已索引</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/20 ml-auto">可搜索</span>
-        </>
-      ) : status === 'missing' ? (
-        <>
-          <AlertTriangle size={14} className="text-red-400 shrink-0" />
-          <span className="text-xs text-foreground/80">EP{ep}</span>
-          <span className="text-[10px] text-red-400">该集无索引数据，搜索结果将缺失</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 ml-auto">缺失</span>
-        </>
-      ) : (
-        <>
-          <HelpCircle size={14} className="text-muted-foreground/40 shrink-0" />
-          <span className="text-xs text-muted-foreground">无 episode marker</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground border border-border ml-auto">未标记</span>
-        </>
-      )}
-    </div>
-  )
-}
-
 export default function DataDesk() {
-  const { seriesId, taskId } = useProject()
-  const nav = useNavigate()
+  const { taskId } = useProject()
   const [quality, setQuality] = useState(null)
-  const [taskCheck, setTaskCheck] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    Promise.all([
-      fetch('/data/quality').then(r => r.json()),
-      fetch(`/data/task_check?task=${taskId}`).then(r => r.json()),
-    ])
-      .then(([q, t]) => {
-        setQuality(q)
-        setTaskCheck(t)
-      })
+    fetch('/data/quality')
+      .then(r => r.json())
+      .then(setQuality)
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [taskId])
@@ -138,14 +92,10 @@ export default function DataDesk() {
   const summary = quality?.summary || {}
   const reports = quality?.reports || []
   const episodes = quality?.episodes || []
-  const markers = taskCheck?.markers || []
 
   const avgScore = reports.length > 0
     ? Math.round(reports.reduce((s, r) => s + r.overall_score, 0) / reports.length)
     : 0
-  const okMarkers = markers.filter(m => m.status === 'ok').length
-  const missingMarkers = markers.filter(m => m.status === 'missing').length
-  const unknownMarkers = markers.filter(m => m.status === 'unknown').length
 
   return (
     <div className="flex-1 flex flex-col overflow-auto bg-background">
@@ -158,7 +108,7 @@ export default function DataDesk() {
             数据台
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            任务 {taskId} · 数据质量与校验
+            {summary.total_eps || 0} 集已分析 · {summary.total_indexed || 0} 条索引 · 平均质量 {avgScore} 分
           </p>
         </div>
 
@@ -194,7 +144,7 @@ export default function DataDesk() {
           <div className="rounded-lg border border-border bg-card p-4">
             <div className="flex items-center gap-2 mb-1">
               <BarChart3 size={14} className="text-yellow-400" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">ASR 字幕</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">字幕提取</span>
             </div>
             <span className="text-2xl font-bold text-foreground">{summary.total_subtitles || 0}</span>
             <span className="text-xs text-muted-foreground ml-1">条</span>
@@ -229,25 +179,6 @@ export default function DataDesk() {
           </div>
         </div>
 
-        {/* ── 任务校验 ── */}
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
-            <CheckCircle2 size={14} className="text-muted-foreground" />
-            <h3 className="text-sm font-medium text-foreground">任务分集校验</h3>
-            <span className="text-[10px] text-muted-foreground ml-auto">
-              {okMarkers} 可搜索 · {missingMarkers} 缺失 · {unknownMarkers} 未标记
-            </span>
-          </div>
-          <div className="divide-y divide-border/50 px-2">
-            {markers.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-8 text-center">暂无分段数据</p>
-            ) : (
-              markers.map(m => <MarkerRow key={m.seg_id} marker={m} />)
-            )}
-          </div>
-        </div>
-
-        {/* 导航请使用顶部标签栏 */}
       </div>
     </div>
   )
