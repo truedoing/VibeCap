@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useProject } from '../context/ProjectContext'
-import { BarChart3, Database, Shield, TrendingUp, Tv, Loader2, Play, CheckCircle2, XCircle, Clock, Search, Brush, Cpu, HardDrive } from 'lucide-react'
+import { BarChart3, Database, Shield, TrendingUp, Tv, Loader2, Play, CheckCircle2, XCircle, Search, Brush, Cpu, HardDrive } from 'lucide-react'
 
 // ── 质量色 ──
 function qualityColor(score) {
@@ -66,14 +66,6 @@ function EpQualityBar({ ep, report, indexed }) {
       </span>
     </div>
   )
-}
-
-// ── 加工步骤图标 ──
-const stepIcons = {
-  pending: <Clock size={14} className="text-muted-foreground/40" />,
-  running: <Loader2 size={14} className="animate-spin text-blue-400" />,
-  done: <CheckCircle2 size={14} className="text-green-400" />,
-  failed: <XCircle size={14} className="text-red-400" />,
 }
 
 export default function DataDesk() {
@@ -162,9 +154,12 @@ export default function DataDesk() {
     ? Math.round(reports.reduce((s, r) => s + r.overall_score, 0) / reports.length)
     : 0
 
+  // 收集所有步骤的日志行（用于统一日志输出区）
+  const allLogs = procSteps.flatMap(s => s.log_lines || [])
+
   return (
     <div className="flex-1 flex flex-col overflow-auto bg-background">
-      <div className="max-w-3xl mx-auto w-full p-6 space-y-6">
+      <div className="max-w-7xl mx-auto w-full p-6 space-y-4">
 
         {/* ── Header ── */}
         <div>
@@ -173,63 +168,58 @@ export default function DataDesk() {
             数据台
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {summary.total_eps || 0} 集已分析 · {summary.total_indexed || 0} 条索引 · 平均质量 {avgScore} 分
+            {summary.total_eps || 0} 集 · {summary.total_indexed || 0} 条索引 · 平均质量 {avgScore} 分
           </p>
         </div>
 
-        {/* ── 概览卡片 ── */}
+        {/* ── 概览卡片（全宽）── */}
         <div className="grid grid-cols-4 gap-3">
-          <div className="rounded-lg border border-border bg-card p-4">
+          <div className="rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-2 mb-1">
               <Tv size={14} className="text-blue-400" />
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">已索引</span>
             </div>
-            <span className="text-2xl font-bold text-foreground">{summary.indexed_eps || 0}</span>
+            <span className="text-xl font-bold text-foreground">{summary.indexed_eps || 0}</span>
             <span className="text-xs text-muted-foreground ml-1">/ {summary.total_eps || 0} 集</span>
           </div>
-
-          <div className="rounded-lg border border-border bg-card p-4">
+          <div className="rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-2 mb-1">
               <Database size={14} className="text-purple-400" />
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">索引条目</span>
             </div>
-            <span className="text-2xl font-bold text-foreground">{summary.total_indexed || 0}</span>
+            <span className="text-xl font-bold text-foreground">{summary.total_indexed || 0}</span>
             <span className="text-xs text-muted-foreground ml-1">条</span>
           </div>
-
-          <div className="rounded-lg border border-border bg-card p-4">
+          <div className="rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-2 mb-1">
               <TrendingUp size={14} className="text-green-400" />
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">平均质量</span>
             </div>
-            <span className={`text-2xl font-bold ${qualityColor(avgScore)}`}>{avgScore}</span>
+            <span className={`text-xl font-bold ${qualityColor(avgScore)}`}>{avgScore}</span>
             <span className="text-xs text-muted-foreground ml-1">分</span>
           </div>
-
-          <div className="rounded-lg border border-border bg-card p-4">
+          <div className="rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-2 mb-1">
               <BarChart3 size={14} className="text-yellow-400" />
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">字幕提取</span>
             </div>
-            <span className="text-2xl font-bold text-foreground">{summary.total_subtitles || 0}</span>
+            <span className="text-xl font-bold text-foreground">{summary.total_subtitles || 0}</span>
             <span className="text-xs text-muted-foreground ml-1">条</span>
           </div>
         </div>
 
-        {/* ── 分集质量 ── */}
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
-            <Database size={14} className="text-muted-foreground" />
-            <h3 className="text-sm font-medium text-foreground">分集数据质量</h3>
-            <span className="text-[10px] text-muted-foreground ml-auto">
-              加权: ASR 35% + VLM 40% + 字幕 10% + 索引 15%
-            </span>
-          </div>
-          <div className="divide-y divide-border/50 px-2 max-h-64 overflow-y-auto custom-scrollbar">
-            {episodes.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-8 text-center">暂无数据</p>
-            ) : (
-              episodes.map(ep => {
+        {/* ── 两栏布局 ── */}
+        <div className="grid grid-cols-5 gap-4" style={{ minHeight: 'calc(100vh - 220px)' }}>
+
+          {/* 左栏：分集数据质量 */}
+          <div className="col-span-2 rounded-xl border border-border bg-card overflow-hidden flex flex-col">
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border shrink-0">
+              <Database size={14} className="text-muted-foreground" />
+              <h3 className="text-sm font-medium text-foreground">分集数据质量</h3>
+              <span className="text-[9px] text-muted-foreground/50 ml-auto">ASR35+VLM40+字幕10+索引15</span>
+            </div>
+            <div className="divide-y divide-border/50 flex-1 overflow-y-auto custom-scrollbar">
+              {episodes.map(ep => {
                 const report = reports.find(r => r.ep_number === ep.ep_number)
                 return (
                   <EpQualityBar
@@ -239,249 +229,130 @@ export default function DataDesk() {
                     indexed={ep.indexed}
                   />
                 )
-              })
-            )}
-          </div>
-        </div>
-
-        {/* ── 数据加工 ── */}
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
-            <Cpu size={14} className="text-muted-foreground" />
-            <h3 className="text-sm font-medium text-foreground">数据加工流水线</h3>
-            <span className="text-[10px] text-muted-foreground">
-              analyze → clean → build_index → migrate
-            </span>
-          </div>
-          <div className="p-4 space-y-4">
-            {/* 剧集选择 + 操作按钮 */}
-            <div className="space-y-2">
-              {/* 剧集网格 */}
-              <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto custom-scrollbar">
-                {allEpisodes.map(ep => {
-                  const isSelected = selectedEps.includes(ep.ep_number)
-                  const hasAnalysis = hasData(ep.ep_number)
-                  return (
-                    <button
-                      key={ep.ep_number}
-                      disabled={procSteps.some(s => s.status === 'running')}
-                      onClick={() => {
-                        setSelectedEps(prev =>
-                          prev.includes(ep.ep_number)
-                            ? prev.filter(e => e !== ep.ep_number)
-                            : [...prev, ep.ep_number]
-                        )
-                      }}
-                      className={`w-9 h-6 rounded text-[11px] font-mono transition-all border flex items-center justify-center ${
-                        isSelected
-                          ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
-                          : hasAnalysis
-                            ? 'bg-card text-foreground/70 border-green-500/30 hover:border-green-500/50'
-                            : 'bg-secondary text-muted-foreground border-border hover:border-primary/30 hover:text-foreground'
-                      } disabled:opacity-50`}
-                    >
-                      {ep.ep_number}
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* 操作行 */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setSelectedEps(allEpisodes.map(e => e.ep_number))}
-                  disabled={procSteps.some(s => s.status === 'running')}
-                  className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
-                >
-                  全选
-                </button>
-                <button
-                  onClick={() => setSelectedEps([])}
-                  disabled={procSteps.some(s => s.status === 'running')}
-                  className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
-                >
-                  清空
-                </button>
-                <span className="text-[10px] text-muted-foreground/50">|</span>
-                <span className="text-[10px] text-muted-foreground">
-                  已选 <span className="text-foreground font-medium">{selectedEps.length}</span> 集
-                  {selectedEps.length > 0 && (
-                    <span className="text-muted-foreground/50 ml-1">
-                      ({selectedEps.sort((a,b)=>a-b).slice(0,5).join(',')}{selectedEps.length > 5 ? '...' : ''})
-                    </span>
-                  )}
-                </span>
-                <div className="flex-1" />
-                <button
-                  onClick={startProcess}
-                  disabled={selectedEps.length === 0 || procSteps.some(s => s.status === 'running')}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity"
-                >
-                  {procSteps.some(s => s.status === 'running') ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <Play size={14} />
-                  )}
-                  开始加工
-                </button>
-              </div>
+              })}
             </div>
+          </div>
 
-            {/* ── 工作流管线图 ── */}
-            <div className="space-y-0">
-              <div className="flex items-start justify-center px-2 py-1">
-                {procSteps.map((step, i) => {
-                  const isRunning = step.status === 'running'
-                  const isDone = step.status === 'done'
-                  const isFailed = step.status === 'failed'
-                  const isPending = step.status === 'pending'
+          {/* 右栏：数据加工 + 进度日志 */}
+          <div className="col-span-3 flex flex-col gap-4" style={{ minHeight: 0 }}>
 
-                  const nameMap = { analyze: '分析剧集', clean: '数据清洗', build: '重建索引', migrate: '导入数据库' }
-                  const descMap = { analyze: 'ASR+VLM', clean: '去碎片+字幕', build: 'BGE语义索引', migrate: '写入SQLite' }
-                  const iconMap = {
-                    analyze: <Search size={14} />,
-                    clean: <Brush size={14} />,
-                    build: <Cpu size={14} />,
-                    migrate: <HardDrive size={14} />,
-                  }
+            {/* 数据加工流水线 */}
+            <div className="rounded-xl border border-border bg-card overflow-hidden shrink-0">
+              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
+                <Cpu size={14} className="text-muted-foreground" />
+                <h3 className="text-sm font-medium text-foreground">数据加工流水线</h3>
+                <span className="text-[10px] text-muted-foreground">analyze → clean → build → migrate</span>
+              </div>
+              <div className="p-3 space-y-3">
+                {/* 剧集选择 */}
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto custom-scrollbar">
+                    {allEpisodes.map(ep => {
+                      const isSelected = selectedEps.includes(ep.ep_number)
+                      const hasAnalysis = hasData(ep.ep_number)
+                      return (
+                        <button
+                          key={ep.ep_number}
+                          disabled={procSteps.some(s => s.status === 'running')}
+                          onClick={() => setSelectedEps(prev =>
+                            prev.includes(ep.ep_number) ? prev.filter(e => e !== ep.ep_number) : [...prev, ep.ep_number]
+                          )}
+                          className={`w-8 h-5.5 rounded text-[10px] font-mono transition-all border flex items-center justify-center ${
+                            isSelected ? 'bg-blue-500/20 text-blue-400 border-blue-500/40' :
+                            hasAnalysis ? 'bg-card text-foreground/70 border-green-500/30 hover:border-green-500/50' :
+                            'bg-secondary text-muted-foreground border-border hover:border-primary/30 hover:text-foreground'
+                          } disabled:opacity-50`}
+                        >{ep.ep_number}</button>
+                      )
+                    })}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setSelectedEps(allEpisodes.map(e => e.ep_number))}
+                      disabled={procSteps.some(s => s.status === 'running')}
+                      className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50">全选</button>
+                    <button onClick={() => setSelectedEps([])}
+                      disabled={procSteps.some(s => s.status === 'running')}
+                      className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50">清空</button>
+                    <span className="text-[10px] text-muted-foreground">已选 {selectedEps.length} 集</span>
+                    <div className="flex-1" />
+                    <button onClick={startProcess}
+                      disabled={selectedEps.length === 0 || procSteps.some(s => s.status === 'running')}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-40 hover:opacity-90 transition-opacity">
+                      {procSteps.some(s => s.status === 'running') ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+                      开始加工
+                    </button>
+                  </div>
+                </div>
 
-                  // 连接线颜色
-                  const lineColor = isDone ? 'bg-green-500/60' : 'bg-border'
-
-                  return (
-                    <div key={step.id} className="flex items-center flex-1" style={{ minWidth: 0 }}>
-                      {/* 阶段节点 */}
-                      <div className="flex flex-col items-center gap-1.5 shrink-0">
-                        <div className={`w-16 h-10 rounded-lg flex items-center justify-center transition-all duration-300 ${
-                          isRunning ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' :
-                          isDone ? 'bg-green-500 text-white' :
-                          isFailed ? 'bg-red-500 text-white' :
-                          'bg-card border-2 border-border text-muted-foreground/40'
-                        }`}>
-                          {isRunning ? <Loader2 size={18} className="animate-spin" /> :
-                           isDone ? <CheckCircle2 size={18} /> :
-                           isFailed ? <XCircle size={18} /> :
-                           iconMap[step.id]}
+                {/* 工作流管线图 */}
+                <div className="flex items-center px-2">
+                  {procSteps.map((step, i) => {
+                    const isRunning = step.status === 'running'
+                    const isDone = step.status === 'done'
+                    const isFailed = step.status === 'failed'
+                    const nameMap = { analyze: '分析', clean: '清洗', build: '索引', migrate: '入库' }
+                    const iconMap = { analyze: <Search size={12} />, clean: <Brush size={12} />, build: <Cpu size={12} />, migrate: <HardDrive size={12} /> }
+                    const lineColor = isDone ? 'bg-green-500/60' : 'bg-border'
+                    return (
+                      <div key={step.id} className="flex items-center flex-1" style={{ minWidth: 0 }}>
+                        <div className="flex flex-col items-center gap-0.5 shrink-0">
+                          <div className={`w-10 h-7 rounded-md flex items-center justify-center transition-all duration-300 ${
+                            isRunning ? 'bg-blue-500 text-white shadow shadow-blue-500/30' :
+                            isDone ? 'bg-green-500 text-white' :
+                            isFailed ? 'bg-red-500 text-white' :
+                            'bg-card border border-border text-muted-foreground/40'
+                          }`}>
+                            {isRunning ? <Loader2 size={14} className="animate-spin" /> :
+                             isDone ? <CheckCircle2 size={14} /> :
+                             isFailed ? <XCircle size={14} /> : iconMap[step.id]}
+                          </div>
+                          <span className={`text-[9px] font-medium ${
+                            isRunning ? 'text-blue-400' : isDone ? 'text-green-400' : isFailed ? 'text-red-400' : 'text-muted-foreground/50'
+                          }`}>{nameMap[step.id]}</span>
                         </div>
-                        <span className={`text-[10px] font-medium leading-tight text-center ${
-                          isRunning ? 'text-blue-400' :
-                          isDone ? 'text-green-400' :
-                          isFailed ? 'text-red-400' :
-                          'text-muted-foreground/50'
-                        }`}>
-                          {nameMap[step.id]}
-                        </span>
-                        <span className="text-[9px] text-muted-foreground/40 leading-tight text-center hidden sm:block">
-                          {descMap[step.id]}
-                        </span>
-                        {/* 迷你进度条（仅运行中） */}
-                        {isRunning && (
-                          <div className="w-full h-0.5 rounded-full bg-secondary overflow-hidden">
-                            <div
-                              className="h-full rounded-full bg-blue-500 transition-all duration-500"
-                              style={{ width: `${Math.max(5, step.progress || 0)}%` }}
-                            />
+                        {i < procSteps.length - 1 && (
+                          <div className="flex-1 flex items-center mx-0.5" style={{ height: 2, minWidth: 8 }}>
+                            <div className={`flex-1 h-0.5 rounded-full transition-colors duration-500 ${lineColor}`} />
+                            <div className={`w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[5px] ${
+                              isDone ? 'border-l-green-500/60' : 'border-l-border'
+                            }`} />
                           </div>
                         )}
                       </div>
-
-                      {/* 连接线（最后一个不加） */}
-                      {i < procSteps.length - 1 && (
-                        <div className="flex-1 flex items-center mx-0.5" style={{ height: 2, minWidth: 12 }}>
-                          <div className={`flex-1 h-0.5 rounded-full transition-colors duration-500 ${lineColor}`} />
-                          <div className={`w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[5px] transition-colors duration-500 ${
-                            isDone ? 'border-l-green-500/60' : 'border-l-border'
-                          }`} style={{ marginRight: -1 }} />
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
               </div>
+            </div>
 
-                {/* 运行中的阶段 — 详细信息 */}
-                {(() => {
-                  const running = procSteps.find(s => s.status === 'running')
-                  if (!running) return null
-                  return (
-                    <div className="mt-3 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-blue-400">
-                          {running.label}
-                        </span>
-                        <span className="text-[10px] text-blue-400/70 tabular-nums">
-                          已用时 {Math.floor(running.elapsed / 60)}分{Math.floor(running.elapsed % 60)}秒
-                        </span>
-                      </div>
-                      {/* 大进度条 */}
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-2 rounded-full bg-secondary overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-blue-500 transition-all duration-700"
-                            style={{ width: `${Math.max(2, running.progress || 0)}%` }}
-                          />
-                        </div>
-                        <span className="text-[10px] text-blue-400 font-mono w-8 text-right">
-                          {running.progress || 0}%
-                        </span>
-                      </div>
-                      {/* 当前操作 */}
-                      {running.detail && (
-                        <p className="text-[11px] text-foreground/60 truncate font-mono">
-                          {running.detail}
-                        </p>
-                      )}
-                      {/* 日志 */}
-                      {running.log_lines?.length > 0 && (
-                        <div className="max-h-24 overflow-y-auto bg-black/20 rounded-md p-2 font-mono text-[10px] text-muted-foreground space-y-0.5">
-                          {running.log_lines.map((l, i) => (
-                            <div key={i} className="truncate">{l}</div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })()}
-
-                {/* 失败的阶段 */}
-                {(() => {
-                  const failed = procSteps.find(s => s.status === 'failed')
-                  if (!failed) return null
-                  return (
-                    <div className="mt-3 p-3 rounded-lg bg-red-500/5 border border-red-500/20">
-                      <div className="flex items-center gap-2 mb-1">
-                        <XCircle size={14} className="text-red-400" />
-                        <span className="text-xs font-medium text-red-400">{failed.label} 失败</span>
-                        <span className="text-[10px] text-red-400/70">
-                          用时 {Math.floor(failed.elapsed / 60)}分{Math.floor(failed.elapsed % 60)}秒
-                        </span>
-                      </div>
-                      {failed.detail && (
-                        <p className="text-[11px] text-red-400/80 font-mono">{failed.detail}</p>
-                      )}
-                      {failed.log_lines?.length > 0 && (
-                        <div className="mt-1 max-h-20 overflow-y-auto bg-black/20 rounded-md p-2 font-mono text-[10px] text-red-400/70 space-y-0.5">
-                          {failed.log_lines.map((l, i) => (
-                            <div key={i} className="truncate">{l}</div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })()}
-
-                {/* 全部完成 */}
+            {/* 进度日志输出区 */}
+            <div className="rounded-xl border border-border bg-card overflow-hidden flex flex-col flex-1" style={{ minHeight: 200 }}>
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0">
+                <span className="text-sm font-medium text-foreground">进度日志</span>
+                {procSteps.some(s => s.status === 'running') && (
+                  <span className="text-[10px] text-blue-400 animate-pulse">处理中...</span>
+                )}
                 {procSteps.every(s => s.status === 'done') && (
-                  <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/20">
-                    <CheckCircle2 size={14} className="text-green-400" />
-                    <span className="text-xs text-green-400">
-                      全部完成！总用时 {
-                        Math.floor(procSteps.reduce((s, st) => s + (st.elapsed || 0), 0) / 60)
-                      }分
-                    </span>
-                  </div>
+                  <span className="text-[10px] text-green-400">
+                    全部完成 · 总用时 {Math.floor(procSteps.reduce((s, st) => s + (st.elapsed || 0), 0) / 60)}分
+                  </span>
+                )}
+                {procSteps.some(s => s.status === 'failed') && (
+                  <span className="text-[10px] text-red-400">处理失败</span>
+                )}
+                <span className="text-[10px] text-muted-foreground/50 ml-auto">{allLogs.length} 行</span>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-3 font-mono text-[10px] leading-relaxed space-y-0.5 bg-black/10">
+                {allLogs.length === 0 ? (
+                  <p className="text-muted-foreground/40">选择集数并开始加工后，日志将在此实时输出...</p>
+                ) : (
+                  allLogs.map((l, i) => (
+                    <div key={i} className="whitespace-pre-wrap break-all text-muted-foreground">{l}</div>
+                  ))
                 )}
               </div>
+            </div>
+
           </div>
         </div>
 
