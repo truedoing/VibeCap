@@ -280,7 +280,7 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
 # 主流程
 # ═══════════════════════════════════════════════════════════════
 
-def analyze_episode(ep, video_path, segment_duration=10, asr_model="small"):
+def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip_vlm=False):
     """完整分析一集"""
     work_dir = DRAMA_DIR / "sources" / f"ep{ep}"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -306,11 +306,15 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small"):
     audio_path = extract_audio(video_path, work_dir)
     asr_segments = transcribe_asr(audio_path, work_dir, model_size=asr_model)
 
-    # Step 3: 提帧
+    # Step 3-4: VLM（可跳过，仅 GPU 跑 ASR 时）
+    if skip_vlm:
+        print(f"\n[3/4] 跳过 VLM（--skip-vlm）")
+        print(f"\n✅ EP{ep} 完成: {len(scenes)} 场景, {len(asr_segments)} ASR段 (仅ASR)")
+        return asr_segments
+
     print("\n[3/4] 提取关键帧")
     frames = extract_frames(video_path, work_dir)
 
-    # 构建帧时间映射
     fps = 1
     frame_times = {}
     for f in frames:
@@ -319,7 +323,6 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small"):
             t = int(parts[1]) / fps
             frame_times[f] = t
 
-    # Step 4: VLM
     print(f"\n[4/4] VLM 画面分析 ({len(scenes)} 个场景)")
 
     # 检查断点续传
@@ -390,7 +393,7 @@ def main():
         if not video_path.exists():
             print(f"❌ 找不到视频: {video_path}")
             continue
-        analyze_episode(ep, video_path, args.segment, args.asr_model)
+        analyze_episode(ep, video_path, args.segment, args.asr_model, args.skip_vlm)
 
 
 if __name__ == "__main__":
