@@ -225,7 +225,7 @@ export default function DataDesk() {
               加权: ASR 35% + VLM 40% + 字幕 10% + 索引 15%
             </span>
           </div>
-          <div className="divide-y divide-border/50 px-2">
+          <div className="divide-y divide-border/50 px-2 max-h-64 overflow-y-auto custom-scrollbar">
             {episodes.length === 0 ? (
               <p className="text-xs text-muted-foreground py-8 text-center">暂无数据</p>
             ) : (
