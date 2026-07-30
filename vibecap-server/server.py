@@ -12,6 +12,92 @@ from db import VibeCapDB
 DB_PATH = Path(__file__).resolve().parent.parent / "vibecap.db"
 db = VibeCapDB(str(DB_PATH))
 
+# ── 后台加工流水线 ──
+_process_tasks = {}  # {task_id: {episodes, steps, current}}
+_process_lock = threading.Lock()
+
+def _run_pipeline(task_id, episodes, drama_name):
+    """后台执行数据加工流水线：analyze → clean → build_index → migrate"""
+    server_dir = Path(__file__).resolve().parent
+    python_bin = "/opt/anaconda3/bin/python3"
+    all_eps_str = ",".join(str(e) for e in episodes)
+
+    steps = [
+        {"id": "analyze", "label": f"分析 EP{all_eps_str}", "status": "pending"},
+        {"id": "clean",   "label": "数据清洗", "status": "pending"},
+        {"id": "build",   "label": "重建索引", "status": "pending"},
+        {"id": "migrate", "label": "导入数据库", "status": "pending"},
+    ]
+
+    with _process_lock:
+        _process_tasks[task_id] = {"episodes": episodes, "steps": steps, "current": 0}
+
+    def _update_step(i, status, output=""):
+        with _process_lock:
+            _process_tasks[task_id]["steps"][i]["status"] = status
+            _process_tasks[task_id]["steps"][i]["output"] = output[-300:]
+            _process_tasks[task_id]["current"] = i
+
+    # Step 1: 分析剧集
+    _update_step(0, "running")
+    try:
+        analyze_script = server_dir / "analyze_episodes.py"
+        r = subprocess.run(
+            [python_bin, str(analyze_script), "--ep", all_eps_str],
+            capture_output=True, text=True, timeout=3600,
+        )
+        _update_step(0, "done" if r.returncode == 0 else "failed", r.stdout + "\n" + r.stderr)
+        if r.returncode != 0:
+            return
+    except subprocess.TimeoutExpired:
+        _update_step(0, "failed", "超时 (1小时)")
+        return
+    except Exception as e:
+        _update_step(0, "failed", str(e))
+        return
+
+    # Step 2: 数据清洗
+    _update_step(1, "running")
+    try:
+        clean_script = server_dir / "clean_data.py"
+        r = subprocess.run(
+            [python_bin, str(clean_script)],
+            capture_output=True, text=True, timeout=300,
+        )
+        _update_step(1, "done" if r.returncode == 0 else "failed", r.stdout + "\n" + r.stderr)
+        if r.returncode != 0:
+            return
+    except Exception as e:
+        _update_step(1, "failed", str(e))
+        return
+
+    # Step 3: 重建索引
+    _update_step(2, "running")
+    try:
+        build_script = server_dir / "build_index.py"
+        r = subprocess.run(
+            [python_bin, str(build_script)],
+            capture_output=True, text=True, timeout=600,
+        )
+        _update_step(2, "done" if r.returncode == 0 else "failed", r.stdout + "\n" + r.stderr)
+        if r.returncode != 0:
+            return
+    except Exception as e:
+        _update_step(2, "failed", str(e))
+        return
+
+    # Step 4: 导入数据库
+    _update_step(3, "running")
+    try:
+        migrate_script = server_dir / "migrate_db.py"
+        r = subprocess.run(
+            [python_bin, str(migrate_script)],
+            capture_output=True, text=True, timeout=120,
+        )
+        _update_step(3, "done" if r.returncode == 0 else "failed", r.stdout + "\n" + r.stderr)
+    except Exception as e:
+        _update_step(3, "failed", str(e))
+
 # 繁→简 转换
 try:
     from zhconv import convert as _zh_convert
@@ -198,6 +284,14 @@ class Handler(SimpleHTTPRequestHandler):
                     self._json({"task": task, "markers": markers})
                     return
             self._json({"task": task, "markers": []})
+        elif path == "/data/process_status":
+            task_id = params.get("task_id", [None])[0]
+            if task_id and task_id in _process_tasks:
+                with _process_lock:
+                    task = dict(_process_tasks[task_id])
+                self._json(task)
+            else:
+                self._json({"error": "task not found"}, 404)
         elif path == "/dramas":
             self._json(self._list_dramas())
         elif path == "/tasks":
@@ -291,6 +385,19 @@ class Handler(SimpleHTTPRequestHandler):
             self._json({"suggestions": suggestions})
         elif path == "/tasks/create":
             self._create_task()
+        elif path == "/data/process":
+            data = json.loads(self._read_body())
+            episodes = data.get("episodes", [])
+            if not episodes:
+                self._json({"ok": False, "error": "请指定集数"}, 400)
+                return
+            task_id = f"proc_{int(time.time())}"
+            threading.Thread(
+                target=_run_pipeline,
+                args=(task_id, episodes, _args.drama),
+                daemon=True,
+            ).start()
+            self._json({"ok": True, "task_id": task_id})
         elif path == "/picks":
             data = json.loads(self._read_body())
             drama_id = db.get_drama_id(_args.drama)

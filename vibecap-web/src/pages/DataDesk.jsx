@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useProject } from '../context/ProjectContext'
-import { BarChart3, Database, Shield, TrendingUp, Tv, Loader2 } from 'lucide-react'
+import { BarChart3, Database, Shield, TrendingUp, Tv, Loader2, Play, RotateCw, CheckCircle2, XCircle, Clock } from 'lucide-react'
 
 // ── 质量色 ──
 function qualityColor(score) {
@@ -68,10 +68,23 @@ function EpQualityBar({ ep, report, indexed }) {
   )
 }
 
+// ── 加工步骤图标 ──
+const stepIcons = {
+  pending: <Clock size={14} className="text-muted-foreground/40" />,
+  running: <Loader2 size={14} className="animate-spin text-blue-400" />,
+  done: <CheckCircle2 size={14} className="text-green-400" />,
+  failed: <XCircle size={14} className="text-red-400" />,
+}
+
 export default function DataDesk() {
   const { taskId } = useProject()
   const [quality, setQuality] = useState(null)
   const [loading, setLoading] = useState(true)
+
+  // 加工面板状态
+  const [epInput, setEpInput] = useState('')
+  const [procTaskId, setProcTaskId] = useState(null)
+  const [procSteps, setProcSteps] = useState([])
 
   useEffect(() => {
     fetch('/data/quality')
@@ -80,6 +93,42 @@ export default function DataDesk() {
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [taskId])
+
+  // 轮询加工进度
+  useEffect(() => {
+    if (!procTaskId) return
+    const timer = setInterval(() => {
+      fetch(`/data/process_status?task_id=${procTaskId}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.steps) setProcSteps(data.steps)
+          // 全部完成或失败则停止轮询
+          const allDone = data.steps?.every(s => s.status === 'done' || s.status === 'failed')
+          if (allDone) {
+            clearInterval(timer)
+            // 刷新质量报告
+            fetch('/data/quality').then(r => r.json()).then(setQuality)
+          }
+        })
+        .catch(() => {})
+    }, 1500)
+    return () => clearInterval(timer)
+  }, [procTaskId])
+
+  const startProcess = () => {
+    const eps = epInput.split(/[,，\s]+/).map(Number).filter(n => n > 0 && n < 100)
+    if (eps.length === 0) return
+    setProcSteps([])
+    fetch('/data/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ episodes: eps }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) setProcTaskId(data.task_id)
+      })
+  }
 
   if (loading) {
     return (
@@ -176,6 +225,82 @@ export default function DataDesk() {
                 )
               })
             )}
+          </div>
+        </div>
+
+        {/* ── 数据加工 ── */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
+            <Play size={14} className="text-muted-foreground" />
+            <h3 className="text-sm font-medium text-foreground">数据加工</h3>
+            <span className="text-[10px] text-muted-foreground">
+              analyze → clean → build_index → migrate
+            </span>
+          </div>
+          <div className="p-4 space-y-3">
+            {/* 输入行 */}
+            <div className="flex items-center gap-2">
+              <input
+                value={epInput}
+                onChange={e => setEpInput(e.target.value)}
+                placeholder="集数，如 5 或 1,2,3"
+                disabled={!!procTaskId && procSteps.some(s => s.status === 'running')}
+                className="flex-1 bg-secondary border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
+                onKeyDown={e => { if (e.key === 'Enter') startProcess() }}
+              />
+              <button
+                onClick={startProcess}
+                disabled={!!procTaskId && procSteps.some(s => s.status === 'running')}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity"
+              >
+                {procSteps.some(s => s.status === 'running') ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Play size={14} />
+                )}
+                开始加工
+              </button>
+            </div>
+
+            {/* 进度条 */}
+            {procSteps.length > 0 && (
+              <div className="space-y-1">
+                {procSteps.map((step, i) => (
+                  <div
+                    key={step.id}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      step.status === 'running' ? 'bg-blue-500/5 border border-blue-500/20' :
+                      step.status === 'failed' ? 'bg-red-500/5 border border-red-500/20' : ''
+                    }`}
+                  >
+                    {stepIcons[step.status]}
+                    <span className={`text-xs flex-1 ${
+                      step.status === 'running' ? 'text-blue-400 font-medium' :
+                      step.status === 'failed' ? 'text-red-400' :
+                      step.status === 'done' ? 'text-green-400' :
+                      'text-muted-foreground'
+                    }`}>
+                      {step.label}
+                    </span>
+                    {step.status === 'running' && (
+                      <span className="text-[10px] text-blue-400/70 animate-pulse">处理中...</span>
+                    )}
+                    {step.status === 'done' && (
+                      <span className="text-[10px] text-green-400/70">完成</span>
+                    )}
+                    {step.status === 'failed' && step.output && (
+                      <span className="text-[10px] text-red-400/70 truncate max-w-[200px]" title={step.output}>
+                        {step.output.split('\n').slice(-1)[0]?.substring(0, 60)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p className="text-[10px] text-muted-foreground/60">
+              流水线自动串联：分析 → 清洗 → 索引 → 数据库。上一步成功自动进入下一步。
+            </p>
           </div>
         </div>
 
