@@ -1,4 +1,4 @@
-# VIBECAP 数据加工流程
+# VIBECAP 数据加工流程 v2
 
 ## 概述
 
@@ -6,174 +6,235 @@
 原剧视频 (.mp4)
     │
     ├─→ analyze_episodes.py ──→ sources/epN/
-    │      场景切分 + ASR + VLM
+    │      场景切分 + ASR(small) + VLM(结构化字幕)
+    │      产出: asr_result.json(含置信度) + vlm_analysis.json(含subtitles)
+    │
+    ├─→ cross_calibrate.py ──→ sources/epN/
+    │      ASR↔VLM 交叉校准：时间窗匹配 + 双向补漏 + 人物验证
+    │      产出: asr_calibrated.json + calibration_report.json
     │
     ├─→ clean_data.py ──→ sources_clean/epN/
-    │      ASR碎片合并 + 字幕提取 + 质量标记
+    │      ASR碎片合并 + VLM结构化字幕(直取) + 质量标记
     │
     └─→ build_index.py ──→ semantic_index.pkl
-           BGE 语义索引
+           BGE 语义索引 (自动发现集数)
 ```
 
 ---
 
 ## Step 1: 剧集分析 (`analyze_episodes.py`)
 
-### 输入
-- 原剧视频 (1080p MP4)
-- `background_research.json`（角色描述，自动注入 VLM prompt）
+### 用法
+```bash
+python3 analyze_episodes.py --ep 3 --segment 6 --asr-model small
+```
 
-### 处理步骤
+### 参数
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--ep` | 1,2,3 | 集数，逗号分隔 |
+| `--segment` | 10 | 场景切分间隔(秒)。6=高精度(~440场景/集), 10=标准(~256场景) |
+| `--asr-model` | small | faster-whisper 模型: tiny/small/medium |
 
-#### 1.1 场景切分
+### Step 1.1: 场景切分
 ```
 算法: 固定时长分段
-默认间隔: 10s（生产）/ 6s（高精度）
 输出: scenes.json — [{start, end}, ...]
-平均: ~250-440 场景/集
+6s间隔: ~440 场景/集
+10s间隔: ~256 场景/集
 ```
 
-#### 1.2 ASR 转写
+### Step 1.2: ASR 转写 (v2)
 ```
-引擎: faster-whisper tiny (本地 CPU)
-模型: Systran/faster-whisper-tiny
+引擎: faster-whisper small (默认, 2.4G)
+       tiny → small: 中文识别准确率大幅提升
+设备: CPU int8
 采样: 16kHz 单声道
-输出: asr_result.json — [{start, end, text}, ...]
-平均: ~900 原始段/集（大量碎片）
+VAD: 启用 (min_silence_duration_ms=500)
+输出: asr_result.json — [{start, end, text, confidence, words}, ...]
+
+confidence: 对数概率 (avg_logprob)
+  > -1.0  = 高置信度
+  -1.0~-1.5 = 中等
+  < -1.5 = 低置信度 (cross_calibrate 重点修正)
+words: 词级时间戳 [{word, start, end, confidence}]
+
+碎片率预期: small~15-20% vs tiny~40-53%
 ```
 
-#### 1.3 VLM 画面分析
+### Step 1.3: VLM 画面分析 (v2)
 ```
 引擎: MiMo API (mimo-v2.5)
-频率: 每场景 3-8 帧
+频率: 每场景 3-8 帧 (按场景时长动态调整)
 并发: 4 workers
-输出: vlm_analysis.json — [{scene_id, start, end, description, depth_analysis, frame_facts}, ...]
+max_tokens: 2000
+输出: vlm_analysis.json — [{scene_id, start, end, description, subtitles, depth_analysis, frame_facts}, ...]
 
-Prompt 结构:
-  已知角色信息 (background_research.json)
-  【描述】不超过150字，人物（真名）、动作、场景、构图、光线
-  【深层分析】角色情绪、人物关系、场景变化、关键视角、台词潜台词
-  【帧标签】每帧标签：人物名、动作、表情、构图、场景
-```
+v2 Prompt 结构:
+  【描述】画面人物(真名)、动作、场景、构图、光线
+  【字幕】识别画面中硬字幕，逐条列出原文。无则写"无"
+  【深层分析】角色情绪/人物关系/场景变化/关键视角/台词潜台词
+  【帧标签】每帧: 秒数s | 人物名, 动作, 表情, 构图, 场景
 
-### 输出文件
-```
-sources/epN/
-├── scenes.json          场景时间轴
-├── asr_result.json       台词转写
-├── vlm_analysis.json     画面描述 + 深度分析
-├── audio.wav              提取的音频（可选删除）
-└── frames/                关键帧图片（可选删除）
+subtitles: 结构化字幕数组 — 直接可用，无需正则提取
+frame_facts: 每帧的人物标签 — 用于人物交叉验证
 ```
 
 ---
 
-## Step 2: 数据清洗 (`clean_data.py`)
+## Step 2: 交叉校准 (`cross_calibrate.py`) ⭐新增
 
-### 2.1 ASR 碎片合并
+### 目的
+ASR(语音转写) 和 VLM(画面字幕识别) 是两套独立的感知系统。交叉校准将它们的时间轴对齐，互相校验补漏，大幅提升台词数据质量。
 
-**问题**: faster-whisper 输出大量短碎片（"嗯"、"啊"、"过去"），EP1-4 中 40-53% 的片段 < 5 字符。
-
-**算法**:
+### 用法
+```bash
+python3 cross_calibrate.py --ep 3
 ```
-输入: asr_result.json (原始碎片)
+
+### 算法流程
+
+```
+输入: asr_result.json + vlm_analysis.json
+
+Step A: VLM 字幕 → ASR 匹配
+  对每个 VLM 场景 [start, end]:
+    取时间窗口 [start-3s, end+3s] 内的 ASR 段
+    对每条字幕 sub:
+      计算 sub 与窗口中每条 ASR text 的文本相似度 (SequenceMatcher)
+      最佳匹配 ≥ 0.55:
+        高匹配(≥0.9): 提升 ASR 置信度
+        中等匹配(0.55-0.9): 用 VLM 字幕修正 ASR 文本 (字幕通常更准确)
+      无匹配:
+        补充新 ASR 段: {text: sub, source: "vlm_subtitle", confidence: -0.1}
+
+Step B: 低置信度标记
+  遍历校准后 ASR，confidence < -1.5 → 标记 _low_confidence
+
+Step C: 人物交叉验证
+  对每个 VLM 场景:
+    提取 frame_facts 中的人物名 → vlm_chars
+    提取 ASR 文本中的人物称呼 → asr_mentions
+    交叉比对: ASR称呼 ↔ VLM画面人物
+
+输出:
+  asr_calibrated.json: 校准后的 ASR (含 _calibrated, _vlm_sub, _source 标记)
+  calibration_report.json: 统计报告
+```
+
+### 校准报告示例
+```json
+{
+  "ep": 3,
+  "asr_total": 900,
+  "confirmed": 85,       // ASR+VLM 双确认
+  "asr_corrected": 12,   // ASR 被 VLM 字幕修正
+  "vlm_only": 8,         // VLM 发现但 ASR 遗漏的字幕
+  "asr_low_conf": 45,    // 低置信度 ASR 段
+  "patches": [...]       // 详细修补记录
+}
+```
+
+---
+
+## Step 3: 数据清洗 (`clean_data.py`)
+
+### v2 改进
+- **ASR 源**: 优先读 `asr_calibrated.json`（校准版），fallback `asr_result.json`
+- **字幕源**: 直接使用 VLM 的 `subtitles` 结构化字段，正则 fallback 仅用于兼容旧数据
+- **校准标记**: 清洗后的 ASR 保留 `calibrated` 标记，建索引时提升权重
+
+### 清洗操作
+
+**ASR 碎片合并** (同 v1):
+```
 1. 过滤纯噪声词: "啊","嗯","哦","哎","呃","喂"
-2. 相邻片段合并:
-   - 间隔 < 3s 且缓冲区 < 30 字 → 拼接
-   - 否则 → 输出当前缓冲区，开始新缓冲区
+2. 相邻片段合并: 间隔 < 3s 且缓冲区 < 30 字 → 拼接
 3. 过滤结果 < 3 字
-输出: asr_result.json (合并后)
-
-效果: EP1 900→188段 (-79%), 字量保留 99.5%
+效果: EP1 900→188段(-79%), 字量保留 99.5%
 ```
 
-### 2.2 VLM 字幕提取
-
-**问题**: VLM 描述中提到了字幕但混在长文本里，无法直接搜索。
-
-**算法**:
-```
-输入: vlm_analysis.json
-1. 正则匹配字幕模式:
-   - "字幕显示/揭示/写着 ..."
-   - '字幕"..."'
-   - 字幕「...」
-   - 字幕：...
-2. 从 description 和 depth_analysis 中分别提取
-3. 去重
-输出: 每条场景新增 subtitles: ["字幕1", "字幕2", ...]
-
-效果: EP1-4 提取 192 条，EP27-29 提取 223 条，共 415 条
-```
-
-### 2.3 质量标记
-
-**标记规则**:
+**VLM 质量标记** (同 v1):
 | 标记 | 条件 | 处理 |
 |---|---|---|
 | `skip_opening` | 描述含"片头/片尾/水墨/演职人员/字幕滚动" | 建索引排除 |
 | `short_desc` | 描述 < 20 字 | 降权 |
 | `shallow_depth` | 深度分析 < 30 字 | 降权 |
 
-### 输出
-```
-sources_clean/epN/
-├── asr_result.json      合并后的 ASR（碎片已消除）
-├── vlm_analysis.json    带 subtitles 字段 + tags 标记
+### 用法
+```bash
+python3 clean_data.py              # 清洗全部
+python3 clean_data.py --ep 3       # 指定集数
 ```
 
 ---
 
-## Step 3: 语义索引 (`build_index.py`)
+## Step 4: 语义索引 (`build_index.py`)
 
-### 索引条目类型
-
-| type | 来源 | 权重 | 用途 |
-|---|---|---|---|
-| `vlm` | VLM description | 1x | 画面语义搜索 |
-| `asr` | ASR text | 1x | 台词关键词搜索 |
-| `sub` | VLM 提取字幕 | **2x** | 硬字幕精确匹配 |
+### v2 改进
+- **自动发现**: 扫描 `sources_clean/` 下所有集数，不再硬编码
+- **权重调整**:
+  | type | 来源 | 权重 | 说明 |
+  |---|---|---|---|
+  | `vlm` | VLM description | 1x | 画面语义搜索 |
+  | `asr` | ASR text (校准后) | 1.5x | 校准后的 ASR 权重提升 |
+  | `sub` | VLM 结构化字幕 | 2x | 硬字幕精确匹配 |
 
 ### 编码
 ```
 模型: BAAI/bge-base-zh-v1.5 (768维)
 归一化: L2 normalize
-设备: CPU (MPS 内存不足时降级)
+设备: CPU
 批次: 32
 ```
 
-### 搜索方式
+### 用法
+```bash
+python3 build_index.py
+```
+
+---
+
+## Step 5: 数据库导入 (`migrate_db.py`)
+
+```bash
+python3 migrate_db.py --force      # 重建数据库
+python3 migrate_db.py --dry-run    # 预览
+```
+
+---
+
+## 完整流水线命令
+
+```bash
+# 单集完整加工
+EP=3
+rm -rf 都挺好/sources/ep$EP 都挺好/sources_clean/ep$EP
+python3 analyze_episodes.py --ep $EP --segment 6 --asr-model small
+python3 cross_calibrate.py --ep $EP
+python3 clean_data.py --ep $EP
+python3 build_index.py
+python3 migrate_db.py --force
+
+# 多集批量
+python3 analyze_episodes.py --ep 5,6,7 --segment 6 --asr-model small
+python3 cross_calibrate.py --ep 5,6,7
+python3 clean_data.py --ep 5,6,7
+python3 build_index.py
+python3 migrate_db.py --force
+```
+
+---
+
+## 搜索方式 (server.py)
 
 | 方式 | 匹配类型 | 适用场景 |
 |---|---|---|
 | 语义搜索 (semantic) | BGE 余弦相似度 | 解说词→画面匹配 |
 | 关键词搜索 (keyword) | n-gram 词频 | 台词→对白匹配 |
 | 混合搜索 (hybrid) | 语义70% + 关键词30% | 通用 |
-
----
-
-## 台词匹配专线 (`/dialogue_match`)
-
-用于高亮台词 ↔ 原剧对白匹配。
-
-### 算法流程
-
-```
-高亮台词段落
-    ↓
-DeepSeek 拆句 + 生成变体
-    "爸，你是想跟大哥去美国吧？" → ["你想跟大哥去美国", "他想跟你去美国", "你要去美国找大哥"]
-    ↓
-每个变体 → ASR 关键字搜索 + 字幕关键字搜索（字幕 2x 权重）
-    ↓
-选最高分匹配为"标准化"结果
-    ↓
-返回 {original, normalized, confident, matches}
-```
-
-### 置信度
-- `confident=true`: ASR/字幕匹配分 ≥ 5
-- `confident=false`: 无匹配，使用变体兜底
+| ASR优先 (asr_first) | 纯 ASR + 字幕关键词 | 台词精准匹配 |
+| 深度搜索 (deep) | Query扩展 + 混合 + LLM重排 | 精搜 |
 
 ---
 
@@ -182,33 +243,38 @@ DeepSeek 拆句 + 生成变体
 ```
 VIBECAP/
 ├── {电视剧}/
-│   ├── sources/epN/          ← 原始 API 产出
-│   ├── sources_clean/epN/    ← 清洗后数据
-│   ├── semantic_index.pkl    ← BGE 索引
-│   ├── character_portraits/  ← 角色人脸
-│   └── tasks/{任务}/         ← 剪辑任务
+│   ├── sources/epN/              ← 原始分析产出
+│   │   ├── scenes.json
+│   │   ├── asr_result.json       ← whisper ASR (v2含置信度)
+│   │   ├── vlm_analysis.json     ← VLM分析 (v2含subtitles)
+│   │   ├── asr_calibrated.json   ← cross_calibrate 产出 ⭐
+│   │   └── calibration_report.json ⭐
+│   │
+│   ├── sources_clean/epN/        ← 清洗后数据
+│   │   ├── asr_result.json       ← 合并碎片(含校准标记)
+│   │   └── vlm_analysis.json     ← 结构化字幕+质量标记
+│   │
+│   ├── semantic_index.pkl        ← BGE 索引
+│   ├── character_portraits/      ← 角色人脸
+│   ├── characters.json
+│   └── tasks/{任务}/             ← 剪辑任务
 │
 ├── vibecap-server/
-│   ├── analyze_episodes.py   ← Step 1
-│   ├── clean_data.py         ← Step 2
-│   ├── build_index.py        ← Step 3
-│   └── server.py             ← 搜索服务
+│   ├── analyze_episodes.py       ← Step 1: 场景+ASR+VLM
+│   ├── cross_calibrate.py        ← Step 2: ASR↔VLM校准 ⭐
+│   ├── clean_data.py             ← Step 3: 清洗+字幕提取
+│   ├── build_index.py            ← Step 4: BGE索引
+│   ├── migrate_db.py             ← Step 5: SQLite导入
+│   └── server.py                 ← 搜索服务 (+ 加工API)
 │
-└── vibecap-web/              ← 前端
+└── vibecap-web/                  ← 前端 (React + Vite)
 ```
 
-## 运行命令
+## 质量评分体系
 
-```bash
-# 分析新剧集（6秒高精度）
-python3 analyze_episodes.py --ep 5 --segment 6
-
-# 数据清洗
-python3 clean_data.py
-
-# 重建索引
-python3 build_index.py
-
-# 重启服务
-python3 server.py --drama 都挺好 --task Task7029
-```
+| 维度 | 权重 | 检测逻辑 |
+|---|---|---|
+| ASR 质量 | 35% | 碎片率 + 内容密度 + 固定间隔检测 |
+| VLM 质量 | 40% | 描述完整度 + 深度分析覆盖 |
+| 字幕提取 | 10% | 结构化字幕覆盖率 |
+| 索引覆盖 | 15% | 是否纳入语义索引 |

@@ -93,33 +93,41 @@ def extract_audio(video_path, work_dir):
     return audio_path
 
 
-def transcribe_asr(audio_path, work_dir):
-    """本地 faster-whisper 转写 → asr_result.json"""
+def transcribe_asr(audio_path, work_dir, model_size="small"):
+    """本地 faster-whisper 转写 → asr_result.json（含置信度）"""
     asr_file = work_dir / "asr_result.json"
     if asr_file.exists():
-        print(f"  asr_result.json 已存在，跳过")
+        print(f"  asr_result.json 已存在，跳过（删除后重跑可重新转写）")
         return json.load(open(asr_file))
 
-    print("  本地 ASR 转写中 (faster-whisper tiny)...")
+    print(f"  本地 ASR 转写中 (faster-whisper {model_size})...")
     from faster_whisper import WhisperModel
 
-    model = WhisperModel("tiny", device="cpu", compute_type="int8")
-    segments_out, info = model.transcribe(str(audio_path), language="zh", beam_size=5)
+    model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    segments_out, info = model.transcribe(str(audio_path), language="zh", beam_size=5,
+                                           vad_filter=True,
+                                           vad_parameters=dict(min_silence_duration_ms=500))
 
     segments = []
     for seg in segments_out:
         segments.append({
             "start": round(seg.start, 1),
             "end": round(seg.end, 1),
-            "text": seg.text.strip()
+            "text": seg.text.strip(),
+            "confidence": round(seg.avg_logprob, 3),  # 置信度
+            "words": [
+                {"word": w.word, "start": round(w.start, 2), "end": round(w.end, 2),
+                 "confidence": round(w.probability, 3)}
+                for w in (seg.words or [])
+            ] if seg.words else []
         })
 
     json.dump(segments, open(asr_file, 'w'), ensure_ascii=False, indent=2)
     total_text = " ".join(s["text"] for s in segments)
-    print(f"  → {len(segments)} 段, {len(total_text)} 字")
-    # 显示前几条
+    low_conf = sum(1 for s in segments if s["confidence"] < -1.5)
+    print(f"  → {len(segments)} 段, {len(total_text)} 字, 低置信度: {low_conf}")
     for s in segments[:5]:
-        print(f"    [{s['start']:.1f}s] {s['text'][:80]}")
+        print(f"    [{s['start']:.1f}s] conf={s['confidence']:.1f} {s['text'][:80]}")
     return segments
 
 
@@ -200,9 +208,11 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
     prompt = (
         "仔细观察这些视频关键帧，用中文描述画面内容。按以下格式输出：\n\n"
         "【描述】\n不超过150字，描述画面中的人物（用真名）、动作、场景、构图、光线。必须使用具体人名，禁止用「他」「她」。\n\n"
+        "【字幕】\n如果画面中出现了硬字幕（画面底部或顶部的文字），请逐条列出原文。\n"
+        "格式：每条一行，不要编号。如果没有字幕，写「无」。\n\n"
         "【深层分析】\n1. 角色情绪：\n2. 人物关系：\n3. 场景变化：\n4. 关键视角：\n5. 台词潜台词：\n\n"
         "【帧标签】\n每帧一行，格式: 「秒数s | 标签1, 标签2, 标签3」\n"
-        "标签内容：人物名、动作、表情、构图、场景\n"
+        "标签内容：人物名、动作、表情、构图、场景。\n"
     )
     if background_ctx:
         prompt = background_ctx + "\n\n" + prompt
@@ -212,7 +222,7 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
     payload = {
         "model": VLM_MODEL,
         "messages": [{"role": "user", "content": content_parts}],
-        "max_tokens": 1500,
+        "max_tokens": 2000,
     }
 
     for attempt in range(3):
@@ -227,14 +237,22 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
             time.sleep(2)
 
     # 解析响应
-    desc_match = re.search(r'【描述】\s*\n?(.*?)(?=【帧标签】|【深层分析】|$)', raw, re.DOTALL)
+    desc_match = re.search(r'【描述】\s*\n?(.*?)(?=【字幕】|【帧标签】|【深层分析】|$)', raw, re.DOTALL)
     description = desc_match.group(1).strip() if desc_match else raw[:200]
 
-    depth_match = re.search(r'【深层分析】\s*\n?(.*?)$', raw, re.DOTALL)
+    # 字幕提取 — VLM 结构化输出
+    subtitles = []
+    sub_match = re.search(r'【字幕】\s*\n?(.*?)(?=【描述】|【帧标签】|【深层分析】|$)', raw, re.DOTALL)
+    if sub_match:
+        sub_text = sub_match.group(1).strip()
+        if sub_text and sub_text != '无':
+            subtitles = [l.strip() for l in sub_text.split('\n') if l.strip() and len(l.strip()) > 1]
+
+    depth_match = re.search(r'【深层分析】\s*\n?(.*?)(?=【描述】|【字幕】|【帧标签】|$)', raw, re.DOTALL)
     depth_analysis = depth_match.group(1).strip() if depth_match else ""
 
     frame_facts = {}
-    facts_match = re.search(r'【帧标签】\s*\n?(.*?)(?=【深层分析】|$)', raw, re.DOTALL)
+    facts_match = re.search(r'【帧标签】\s*\n?(.*?)(?=【描述】|【字幕】|【深层分析】|$)', raw, re.DOTALL)
     if facts_match:
         for line in facts_match.group(1).strip().split("\n"):
             m = re.match(r'([\d.]+)\s*s?\s*\|\s*(.+)', line.strip())
@@ -249,6 +267,8 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
         "description": description,
         "depth_analysis": depth_analysis,
     }
+    if subtitles:
+        result["subtitles"] = subtitles
     if frame_facts:
         result["frame_facts"] = frame_facts
 
@@ -259,7 +279,7 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
 # 主流程
 # ═══════════════════════════════════════════════════════════════
 
-def analyze_episode(ep, video_path, segment_duration=10):
+def analyze_episode(ep, video_path, segment_duration=10, asr_model="small"):
     """完整分析一集"""
     work_dir = DRAMA_DIR / "sources" / f"ep{ep}"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -283,7 +303,7 @@ def analyze_episode(ep, video_path, segment_duration=10):
     # Step 2: ASR
     print("\n[2/4] ASR 转写")
     audio_path = extract_audio(video_path, work_dir)
-    asr_segments = transcribe_asr(audio_path, work_dir)
+    asr_segments = transcribe_asr(audio_path, work_dir, model_size=asr_model)
 
     # Step 3: 提帧
     print("\n[3/4] 提取关键帧")
@@ -356,6 +376,8 @@ def main():
     parser.add_argument("--segment", type=int, default=10, help="场景切分间隔(秒)，默认10")
     parser.add_argument("--skip-asr", action="store_true", help="跳过 ASR")
     parser.add_argument("--skip-vlm", action="store_true", help="跳过 VLM")
+    parser.add_argument("--asr-model", default="small", choices=["tiny", "small", "medium"],
+                        help="faster-whisper 模型大小 (默认 small)")
     args = parser.parse_args()
 
     episodes = [int(e.strip()) for e in args.ep.split(",")]
@@ -365,7 +387,7 @@ def main():
         if not video_path.exists():
             print(f"❌ 找不到视频: {video_path}")
             continue
-        analyze_episode(ep, video_path, args.segment)
+        analyze_episode(ep, video_path, args.segment, args.asr_model)
 
 
 if __name__ == "__main__":

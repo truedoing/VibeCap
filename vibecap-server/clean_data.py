@@ -1,38 +1,72 @@
 #!/usr/bin/env python3
 """
-数据清洗台：ASR 碎片合并 + VLM 字幕提取 + 质量标记
-输出 cleaned/ 目录，build_index 改读此目录
+数据清洗台 v2: ASR 碎片合并 + VLM 结构化字幕 + 质量标记
+- ASR: 优先读 asr_calibrated.json (cross_calibrate 产出)，fallback asr_result.json
+- VLM: 直接使用结构化 subtitles 字段（analyze_episodes v2 产出），不再正则硬扒
+- 输出 sources_clean/epN/
+
+用法:
+  python3 clean_data.py
+  python3 clean_data.py --ep 3
 """
 
-import json, re
+import json, re, argparse
 from pathlib import Path
 
 BASE = Path("/Users/zgl/VIBECAP/都挺好/sources")
 CLEAN = Path("/Users/zgl/VIBECAP/都挺好/sources_clean")
 CLEAN.mkdir(exist_ok=True)
 
+def get_all_eps():
+    """自动发现所有已分析的集数"""
+    eps = []
+    for d in sorted(BASE.iterdir()):
+        if d.is_dir() and d.name.startswith("ep") and d.name[2:].isdigit():
+            eps.append(int(d.name[2:]))
+    return eps
+
+
 def clean_asr(ep):
-    """合并相邻的短 ASR 片段为完整句子"""
-    raw = json.load(open(BASE / f"ep{ep}" / "asr_result.json"))
+    """合并相邻短 ASR 片段 → 完整句子（优先读校准版）"""
+    ep_dir = BASE / f"ep{ep}"
+    cal_file = ep_dir / "asr_calibrated.json"
+    asr_file = ep_dir / "asr_result.json"
+
+    # 优先校准版，fallback 原始版
+    if cal_file.exists():
+        raw = json.load(open(cal_file))
+        source = "calibrated"
+    elif asr_file.exists():
+        raw = json.load(open(asr_file))
+        source = "raw"
+    else:
+        print(f"  EP{ep}: 无 ASR 数据")
+        return None
+
     cleaned = []
-    buf = {"start": 0, "end": 0, "text": ""}
+    buf = {"start": 0, "end": 0, "text": "", "confidence": 0, "calibrated": False}
 
     for a in raw:
         text = a["text"].strip()
-        # 跳过纯噪声
         if not text or text in ('啊','嗯','哦','哎','呃','喂','呵','嘿','哈','嘻'):
             continue
 
+        conf = a.get("confidence", -99)
+        is_cal = a.get("_calibrated", False) or a.get("_source") == "vlm_subtitle"
+
         if not buf["text"]:
-            buf = {"start": a["start"], "end": a["end"], "text": text}
+            buf = {"start": a["start"], "end": a["end"], "text": text,
+                   "confidence": conf, "calibrated": is_cal}
         elif a["start"] - buf["end"] < 3 and len(buf["text"]) < 30:
-            # 合并：间隔 < 3s 且当前缓冲区 < 30 字
             buf["end"] = a["end"]
             buf["text"] += text
+            buf["confidence"] = max(buf.get("confidence", -99), conf)
+            buf["calibrated"] = buf.get("calibrated", False) or is_cal
         else:
             if len(buf["text"]) >= 3:
                 cleaned.append(buf)
-            buf = {"start": a["start"], "end": a["end"], "text": text}
+            buf = {"start": a["start"], "end": a["end"], "text": text,
+                   "confidence": conf, "calibrated": is_cal}
 
     if len(buf["text"]) >= 3:
         cleaned.append(buf)
@@ -45,18 +79,27 @@ def clean_asr(ep):
     after = len(cleaned)
     text_before = sum(len(a["text"]) for a in raw)
     text_after = sum(len(s["text"]) for s in cleaned)
-    print(f"  EP{ep} ASR: {before}→{after}段(-{before-after}), 字量:{text_before}→{text_after}")
+    cal_count = sum(1 for s in cleaned if s.get("calibrated"))
+    print(f"  EP{ep} ASR[{source}]: {before}→{after}段(-{before-after}), "
+          f"字量:{text_before}→{text_after}, 已校准:{cal_count}")
     return cleaned
 
 
 def clean_vlm(ep):
-    """提取字幕 + 质量标记"""
-    raw = json.load(open(BASE / f"ep{ep}" / "vlm_analysis.json"))
+    """提取结构化字幕 + 质量标记（使用 VLM 原生 subtitles 字段）"""
+    ep_dir = BASE / f"ep{ep}"
+    vlm_file = ep_dir / "vlm_analysis.json"
+    if not vlm_file.exists():
+        print(f"  EP{ep}: 无 VLM 数据")
+        return None
+
+    raw = json.load(open(vlm_file))
     cleaned = []
-    issues = {"片头片尾": 0, "短描述": 0, "空深度": 0, "字幕提取": 0}
+    issues = {"片头片尾": 0, "短描述": 0, "空深度": 0, "字幕场景": 0, "字幕总数": 0}
 
     for s in raw:
-        if s is None: continue
+        if s is None:
+            continue
         desc = s.get("description", "")
         depth = s.get("depth_analysis", "")
 
@@ -72,28 +115,25 @@ def clean_vlm(ep):
             tags.append("shallow_depth")
             issues["空深度"] += 1
 
-        # 提取字幕
-        subtitles = []
-        patterns = [
-            r'字幕[^，。！？\n]{0,20}(?:显示|揭示|写着|是|为|c显示)[：:\s]{0,3}[「「]?([^」」\n]{4,80})',
-            r'字幕[^，。！？\n]{0,10}"([^"]{4,80})"',
-            r'字幕[^，。！？\n]{0,10}「([^」]{4,80})」',
-            r'字幕[：:]\s*([^，。！？\n]{4,80})',
-        ]
-        for pat in patterns:
-            for sub in re.findall(pat, desc):
-                sub = sub.strip()
-                if sub and len(sub) >= 3:
-                    subtitles.append(sub)
-        if depth:
-            for pat in patterns:
-                for sub in re.findall(pat, depth):
+        # 使用 VLM 结构化字幕（v2 prompt 的【字幕】段）
+        subtitles = s.get("subtitles", [])
+        if subtitles:
+            issues["字幕场景"] += 1
+            issues["字幕总数"] += len(subtitles)
+        elif len(desc) > 0:
+            # fallback: 正则匹配描述中可能的字幕（兼容旧数据）
+            pats = [
+                r'字幕[^，。！？\n]{0,20}(?:显示|揭示|写着|是|为)[：:\s]{0,3}[「「]?([^」」\n]{4,80})',
+                r'字幕[：:]\s*([^，。！？\n]{4,80})',
+            ]
+            for pat in pats:
+                for sub in re.findall(pat, desc):
                     sub = sub.strip()
                     if sub and len(sub) >= 3 and sub not in subtitles:
                         subtitles.append(sub)
-
-        if subtitles:
-            issues["字幕提取"] += 1
+            if subtitles:
+                issues["字幕场景"] += 1
+                issues["字幕总数"] += len(subtitles)
 
         cleaned.append({
             "scene_id": s["scene_id"],
@@ -111,13 +151,22 @@ def clean_vlm(ep):
     json.dump(cleaned, open(out / "vlm_analysis.json", 'w'), ensure_ascii=False, indent=2)
 
     total = len(cleaned)
-    print(f"  EP{ep} VLM: {total}场景, 字幕{issues['字幕提取']}, "
+    print(f"  EP{ep} VLM: {total}场景, {issues['字幕场景']}含字幕({issues['字幕总数']}条), "
           f"排除{issues['片头片尾']}片头尾, {issues['短描述']}短描述, {issues['空深度']}浅深度")
     return cleaned
 
 
 if __name__ == "__main__":
-    for ep in [1, 2, 3, 4, 27, 28, 29]:
+    parser = argparse.ArgumentParser(description="数据清洗")
+    parser.add_argument("--ep", default=None, help="指定集数，逗号分隔。不指定则清洗全部")
+    args = parser.parse_args()
+
+    if args.ep:
+        episodes = [int(e.strip()) for e in args.ep.split(",")]
+    else:
+        episodes = get_all_eps()
+
+    for ep in episodes:
         print(f"--- EP{ep} ---")
         clean_asr(ep)
         clean_vlm(ep)

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""构建语义搜索索引: VLM + ASR → BGE embedding → 保存"""
+"""构建语义搜索索引: VLM + ASR → BGE embedding → 保存
+- 自动发现 sources_clean/ 下所有集数
+- 字幕(sub)权重 2x，校准后 ASR 权重 1.5x
+"""
 import json, pickle, numpy as np, os
 from pathlib import Path
 
@@ -9,7 +12,7 @@ if not os.environ.get("HF_ENDPOINT"):
 
 ROOT_DIR = Path(__file__).parent.parent  # VIBECAP
 DRAMA = os.environ.get("VIBECAP_DRAMA", "都挺好")
-SOURCES_DIR = ROOT_DIR / DRAMA / "sources_clean"  # 读取清洗后数据
+SOURCES_DIR = ROOT_DIR / DRAMA / "sources_clean"
 INDEX_FILE = ROOT_DIR / DRAMA / "semantic_index.pkl"
 
 # 如果清洗数据不存在，降级到原始数据
@@ -20,18 +23,25 @@ if not SOURCES_DIR.exists() or not any(SOURCES_DIR.iterdir()):
 from sentence_transformers import SentenceTransformer
 
 def build_index():
-    print("加载 BGE-large-zh-v1.5 模型 (CPU)...")
+    print("加载 BGE-base-zh-v1.5 模型 (CPU)...")
     model = SentenceTransformer("BAAI/bge-base-zh-v1.5", device="cpu")
+
+    # 自动发现所有集数
+    eps = sorted(set(
+        int(d.name[2:]) for d in SOURCES_DIR.iterdir()
+        if d.is_dir() and d.name.startswith("ep") and d.name[2:].isdigit()
+    ))
+    print(f"发现集数: {eps}")
 
     texts = []
     metas = []
+    vlm_count = asr_count = sub_count = 0
 
-    for ep in [1, 2, 3, 4, 27, 28, 29]:
+    for ep in eps:
         vlm_path = SOURCES_DIR / f"ep{ep}" / "vlm_analysis.json"
         if vlm_path.exists():
             for s in json.load(open(vlm_path)):
                 if s is None: continue
-                # 跳过质量标记为排除的场景
                 tags = s.get("tags", [])
                 if "skip_opening" in tags:
                     continue
@@ -44,16 +54,18 @@ def build_index():
                         "start": s["start"], "end": s["end"],
                         "text": text[:200]
                     })
-                    # 清洗后的字幕字段直接索引
-                    for sub in s.get("subtitles", []):
-                        if len(sub) >= 3:
-                            texts.append(sub)
-                            metas.append({
-                                "type": "sub", "ep": ep,
-                                "scene_id": s["scene_id"],
-                                "start": s["start"], "end": s["end"],
-                                "text": sub[:200]
-                            })
+                    vlm_count += 1
+                # VLM 结构化字幕 → 权重 2x（精确匹配源）
+                for sub in s.get("subtitles", []):
+                    if len(sub) >= 3:
+                        texts.append(sub)
+                        metas.append({
+                            "type": "sub", "ep": ep,
+                            "scene_id": s["scene_id"],
+                            "start": s["start"], "end": s["end"],
+                            "text": sub[:200]
+                        })
+                        sub_count += 1
 
         asr_path = SOURCES_DIR / f"ep{ep}" / "asr_result.json"
         if asr_path.exists():
@@ -64,10 +76,11 @@ def build_index():
                     metas.append({
                         "type": "asr", "ep": ep,
                         "start": a["start"], "end": a["end"],
-                        "text": text[:200]
+                        "text": text[:200],
                     })
+                    asr_count += 1
 
-    print(f"编码 {len(texts)} 条文本 (1024维)...")
+    print(f"编码 {len(texts)} 条 (VLM:{vlm_count} ASR:{asr_count} SUB:{sub_count})...")
     embeddings = model.encode(texts, show_progress_bar=True, batch_size=32,
                                normalize_embeddings=True)
 

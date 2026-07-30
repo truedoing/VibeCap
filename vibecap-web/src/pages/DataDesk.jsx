@@ -75,10 +75,11 @@ export default function DataDesk() {
 
   // 加工面板状态
   const defaultSteps = [
-    { id: 'analyze', label: '分析剧集', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
-    { id: 'clean',   label: '数据清洗', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
-    { id: 'build',   label: '重建索引', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
-    { id: 'migrate', label: '导入数据库', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+    { id: 'analyze',   label: '分析剧集', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+    { id: 'calibrate', label: '交叉校准', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+    { id: 'clean',     label: '数据清洗', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+    { id: 'build',     label: '重建索引', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+    { id: 'migrate',   label: '导入数据库', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
   ]
   const [selectedEps, setSelectedEps] = useState([])
   const [procTaskId, setProcTaskId] = useState(null)
@@ -290,8 +291,8 @@ export default function DataDesk() {
                     const isRunning = step.status === 'running'
                     const isDone = step.status === 'done'
                     const isFailed = step.status === 'failed'
-                    const nameMap = { analyze: '分析', clean: '清洗', build: '索引', migrate: '入库' }
-                    const iconMap = { analyze: <Search size={12} />, clean: <Brush size={12} />, build: <Cpu size={12} />, migrate: <HardDrive size={12} /> }
+                    const nameMap = { analyze: '分析', calibrate: '校准', clean: '清洗', build: '索引', migrate: '入库' }
+                    const iconMap = { analyze: <Search size={12} />, calibrate: <CheckCircle2 size={12} />, clean: <Brush size={12} />, build: <Cpu size={12} />, migrate: <HardDrive size={12} /> }
                     const lineColor = isDone ? 'bg-green-500/60' : 'bg-border'
                     return (
                       <div key={step.id} className="flex items-center flex-1" style={{ minWidth: 0 }}>

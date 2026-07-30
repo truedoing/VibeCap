@@ -23,13 +23,15 @@ def _run_pipeline(task_id, episodes, drama_name):
     all_eps_str = ",".join(str(e) for e in episodes)
 
     steps = [
-        {"id": "analyze", "label": f"分析 EP{all_eps_str}", "status": "pending",
+        {"id": "analyze",  "label": f"分析 EP{all_eps_str}", "status": "pending",
          "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
-        {"id": "clean",   "label": "数据清洗", "status": "pending",
+        {"id": "calibrate","label": "交叉校准", "status": "pending",
          "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
-        {"id": "build",   "label": "重建索引", "status": "pending",
+        {"id": "clean",    "label": "数据清洗", "status": "pending",
          "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
-        {"id": "migrate", "label": "导入数据库", "status": "pending",
+        {"id": "build",    "label": "重建索引", "status": "pending",
+         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
+        {"id": "migrate",  "label": "导入数据库", "status": "pending",
          "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
     ]
 
@@ -99,19 +101,23 @@ def _run_pipeline(task_id, episodes, drama_name):
             return False
 
     # Step 1: 分析剧集
-    if not _run_script(0, "analyze_episodes.py", ["--ep", all_eps_str], 3600, True):
+    if not _run_script(0, "analyze_episodes.py", ["--ep", all_eps_str, "--asr-model", "small"], 3600, True):
         return
 
-    # Step 2: 数据清洗
-    if not _run_script(1, "clean_data.py", [], 300, True):
+    # Step 2: 交叉校准 ASR↔VLM
+    if not _run_script(1, "cross_calibrate.py", ["--ep", all_eps_str], 120, True):
         return
 
-    # Step 3: 重建索引
-    if not _run_script(2, "build_index.py", [], 600, True):
+    # Step 3: 数据清洗
+    if not _run_script(2, "clean_data.py", ["--ep", all_eps_str], 300, True):
         return
 
-    # Step 4: 导入数据库
-    _run_script(3, "migrate_db.py", [], 120, True)
+    # Step 4: 重建索引
+    if not _run_script(3, "build_index.py", [], 600, True):
+        return
+
+    # Step 5: 导入数据库
+    _run_script(4, "migrate_db.py", [], 120, True)
 
 # 繁→简 转换
 try:
