@@ -199,6 +199,14 @@ def calibrate_episode(ep):
 
     # ── 输出 ──
     # 按时间排序
+    # 过滤演职人员表字幕（片头片尾常见）
+    CREDIT_KEYWORDS = ['出品人', '总监制', '监制', '策划', '导演', '编剧', '制片',
+                       '主演', '领衔', '摄影', '美术', '音乐', '剪辑', '录音',
+                       '出品', '联合', '总策划', '总导演', '总编剧', '艺术总监',
+                       '技术', '灯光', '服装', '化妆', '道具', '场记', '统筹']
+    calibrated = [a for a in calibrated
+                  if not any(kw in a['text'] for kw in CREDIT_KEYWORDS)]
+
     calibrated.sort(key=lambda x: x["start"])
 
     cal_file = ep_dir / "asr_calibrated.json"

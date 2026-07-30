@@ -208,7 +208,8 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
     prompt = (
         "仔细观察这些视频关键帧，用中文描述画面内容。按以下格式输出：\n\n"
         "【描述】\n不超过150字，描述画面中的人物（用真名）、动作、场景、构图、光线。必须使用具体人名，禁止用「他」「她」。\n\n"
-        "【字幕】\n如果画面中出现了硬字幕（画面底部或顶部的文字），请逐条列出原文。\n"
+        "【字幕】\n如果画面中出现了硬字幕（画面底部或顶部的对白文字），请逐条列出原文。\n"
+        "注意：演职人员表、出品人名单等片头片尾信息不算字幕，不要列出。\n"
         "格式：每条一行，不要编号。如果没有字幕，写「无」。\n\n"
         "【深层分析】\n1. 角色情绪：\n2. 人物关系：\n3. 场景变化：\n4. 关键视角：\n5. 台词潜台词：\n\n"
         "【帧标签】\n每帧一行，格式: 「秒数s | 标签1, 标签2, 标签3」\n"
@@ -338,8 +339,8 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small"):
     if todo:
         print(f"  待分析: {len(todo)}/{len(scenes)}")
 
-        # 并行分析（最多 4 并发）
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        # 并行分析（API 限流 100 RPM，12 并发约 40 RPM，安全）
+        with ThreadPoolExecutor(max_workers=args.vlm_workers) as executor:
             futures = {
                 executor.submit(
                     analyze_scene_vlm, i, scenes[i], frames, frame_times, background_ctx, work_dir
@@ -378,6 +379,8 @@ def main():
     parser.add_argument("--skip-vlm", action="store_true", help="跳过 VLM")
     parser.add_argument("--asr-model", default="small", choices=["tiny", "small", "medium"],
                         help="faster-whisper 模型大小 (默认 small)")
+    parser.add_argument("--vlm-workers", type=int, default=12,
+                        help="VLM 并发数 (默认 12, API 限流 100 RPM)")
     args = parser.parse_args()
 
     episodes = [int(e.strip()) for e in args.ep.split(",")]
