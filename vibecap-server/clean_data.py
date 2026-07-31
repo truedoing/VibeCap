@@ -150,10 +150,73 @@ def clean_vlm(ep):
     out.mkdir(exist_ok=True)
     json.dump(cleaned, open(out / "vlm_analysis.json", 'w'), ensure_ascii=False, indent=2)
 
+    # ── VLM 场景智能合并 ──
+    merged = merge_similar_scenes(cleaned)
+    json.dump(merged, open(out / "vlm_merged.json", 'w'), ensure_ascii=False, indent=2)
+
     total = len(cleaned)
     print(f"  EP{ep} VLM: {total}场景, {issues['字幕场景']}含字幕({issues['字幕总数']}条), "
-          f"排除{issues['片头片尾']}片头尾, {issues['短描述']}短描述, {issues['空深度']}浅深度")
+          f"排除{issues['片头片尾']}片头尾, {issues['短描述']}短描述, {issues['空深度']}浅深度"
+          f" | 合并后→{len(merged)}场景 (-{total-len(merged)})")
     return cleaned
+
+
+def merge_similar_scenes(scenes, sim_threshold=0.65):
+    """合并相邻的相似 VLM 场景（同一对话/同一地点）
+
+    相似度 = 人物重叠×0.4 + 关键词Jaccard×0.4 + 时长均匀性×0.2
+    """
+    if len(scenes) <= 1:
+        return scenes
+
+    def extract_chars(desc):
+        """提取描述中的角色名"""
+        chars = ["苏大强", "苏明哲", "苏明成", "苏明玉", "明玉", "朱丽", "吴非",
+                 "石天冬", "蒙总", "蒙太", "沈浩", "柳青", "赵美兰", "小咪", "老蒙"]
+        return {c for c in chars if c in desc}
+
+    def extract_keywords(desc):
+        """提取场景关键词"""
+        scene_words = {"办公室", "客厅", "厨房", "卧室", "餐厅", "走廊", "门口",
+                       "站立", "坐着", "行走", "对话", "争吵", "沉默", "吃饭",
+                       "白天", "夜晚", "室内", "室外", "近景", "远景", "特写"}
+        return {w for w in scene_words if w in desc}
+
+    merged = []
+    current = dict(scenes[0])
+
+    for nxt in scenes[1:]:
+        desc1, desc2 = current.get("description", ""), nxt.get("description", "")
+        chars1, chars2 = extract_chars(desc1), extract_chars(desc2)
+        kw1, kw2 = extract_keywords(desc1), extract_keywords(desc2)
+
+        # 人物重叠度
+        char_overlap = len(chars1 & chars2) / max(len(chars1 | chars2), 1) if (chars1 or chars2) else 0.5
+        # 关键词 Jaccard
+        kw_overlap = len(kw1 & kw2) / max(len(kw1 | kw2), 1) if (kw1 or kw2) else 0.5
+        # 时长均匀性：过长的合并降低权重
+        dur1 = current["end"] - current["start"]
+        dur2 = nxt["end"] - nxt["start"]
+        dur_score = 1.0 if (dur1 + dur2) < 60 else max(0, 0.5 + 30 / (dur1 + dur2))
+
+        sim = char_overlap * 0.4 + kw_overlap * 0.4 + dur_score * 0.2
+
+        if sim >= sim_threshold:
+            # 合并：扩展 end + 拼接描述 + 合并字幕
+            current["end"] = nxt["end"]
+            if len(current["description"]) + len(desc2) < 300:
+                current["description"] += " " + desc2
+            # 合并字幕（去重）
+            subs = current.get("subtitles", []) + nxt.get("subtitles", [])
+            current["subtitles"] = list(dict.fromkeys(subs))  # 保序去重
+            tags = set(current.get("tags", []) + nxt.get("tags", []))
+            current["tags"] = list(tags)
+        else:
+            merged.append(current)
+            current = dict(nxt)
+
+    merged.append(current)
+    return merged
 
 
 if __name__ == "__main__":

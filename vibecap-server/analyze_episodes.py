@@ -16,6 +16,7 @@ import urllib.request
 BASE_DIR = Path("/Users/zgl/VIBECAP")
 DRAMA_DIR = BASE_DIR / "都挺好"
 SRC_VIDEOS = Path("/Users/zgl/解说剪辑/都挺好原剧")
+PROXY_DIR = DRAMA_DIR / "proxies"
 
 # ── MiMo API 配置 ──
 API_KEY = os.environ.get("MIMO_API_KEY", "")
@@ -230,12 +231,20 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
         try:
             resp = api_call(payload)
             raw = resp["choices"][0]["message"].get("content", "")
+            usage = resp.get("usage", {})
             if raw.strip():
                 break
         except Exception as e:
             if attempt == 2:
                 return scene_index, {"error": str(e)}
             time.sleep(2)
+
+    # 记录 token 用量
+    token_info = {
+        "prompt_tokens": usage.get("prompt_tokens", 0),
+        "completion_tokens": usage.get("completion_tokens", 0),
+        "total_tokens": usage.get("total_tokens", 0),
+    }
 
     # 解析响应
     desc_match = re.search(r'【描述】\s*\n?(.*?)(?=【字幕】|【帧标签】|【深层分析】|$)', raw, re.DOTALL)
@@ -267,6 +276,7 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
         "end": round(end, 2),
         "description": description,
         "depth_analysis": depth_analysis,
+        "_tokens": token_info,
     }
     if subtitles:
         result["subtitles"] = subtitles
@@ -280,7 +290,7 @@ def analyze_scene_vlm(scene_index, scene, frames, frame_times, background_ctx, w
 # 主流程
 # ═══════════════════════════════════════════════════════════════
 
-def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip_vlm=False, skip_asr=False):
+def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip_vlm=False, skip_asr=False, vlm_workers=12, proxy_res=None):
     """完整分析一集"""
     work_dir = DRAMA_DIR / "sources" / f"ep{ep}"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -292,8 +302,17 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip
         import shutil
         shutil.copy(bg_src, bg_dst)
 
+    # Proxy 模式：使用低分辨率代理视频，帧需重新提取
+    proxy_label = f" [{proxy_res}p proxy]" if proxy_res else ""
+    if proxy_res:
+        frames_dir = work_dir / "frames"
+        if frames_dir.exists():
+            import shutil
+            shutil.rmtree(frames_dir)
+            print(f"  🗑️  已清除 1080p 帧缓存，将提取 {proxy_res}p 帧")
+
     print(f"\n{'='*60}")
-    print(f"EP{ep} 分析: {video_path.name}")
+    print(f"EP{ep} 分析: {video_path.name}{proxy_label}")
     print(f"输出目录: {work_dir}")
     print(f"{'='*60}")
 
@@ -334,8 +353,9 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip
 
     print(f"\n[4/4] VLM 画面分析 ({len(scenes)} 个场景)")
 
-    # 检查断点续传
-    cache_file = work_dir / "vlm_scene_cache.json"
+    # 检查断点续传（proxy 用独立缓存文件避免混淆）
+    cache_suffix = f"_{proxy_res}p" if proxy_res else ""
+    cache_file = work_dir / f"vlm_scene_cache{cache_suffix}.json"
     cache = {}
     if cache_file.exists():
         try:
@@ -344,6 +364,7 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip
         except Exception:
             pass
 
+    t0_vlm = time.time()
     background_ctx = load_background_context(work_dir)
     results = [None] * len(scenes)
     todo = [i for i in range(len(scenes)) if str(i) not in cache]
@@ -352,7 +373,7 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip
         print(f"  待分析: {len(todo)}/{len(scenes)}")
 
         # 并行分析（API 限流 100 RPM，12 并发约 40 RPM，安全）
-        with ThreadPoolExecutor(max_workers=args.vlm_workers) as executor:
+        with ThreadPoolExecutor(max_workers=vlm_workers) as executor:
             futures = {
                 executor.submit(
                     analyze_scene_vlm, i, scenes[i], frames, frame_times, background_ctx, work_dir
@@ -367,19 +388,30 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small", skip
                     # 每完成一个就保存
                     json.dump(cache, open(cache_file, 'w'), ensure_ascii=False, indent=2)
                     desc_preview = result.get("description", "")[:60]
-                    print(f"  [{idx+1}/{len(scenes)}] {desc_preview}...")
+                    tok = result.get("_tokens", {})
+                    print(f"  [{idx+1}/{len(scenes)}] {desc_preview}... (in:{tok.get('prompt_tokens',0)} out:{tok.get('completion_tokens',0)})")
                 except Exception as e:
                     print(f"  场景 {i+1} 失败: {e}")
     else:
         results = [cache[str(i)] for i in range(len(scenes))]
         print(f"  全部复用缓存")
 
-    # 保存最终结果
-    vlm_file = work_dir / "vlm_analysis.json"
+    # 汇总 token 统计
+    total_prompt = sum(r.get("_tokens", {}).get("prompt_tokens", 0) for r in results if r)
+    total_completion = sum(r.get("_tokens", {}).get("completion_tokens", 0) for r in results if r)
+    total_tokens = total_prompt + total_completion
+    elapsed_vlm = time.time() - t0_vlm
+
+    # 保存最终结果（proxy 用独立文件名）
+    vlm_suffix = f"_{proxy_res}p" if proxy_res else ""
+    vlm_file = work_dir / f"vlm_analysis{vlm_suffix}.json"
     json.dump(results, open(vlm_file, 'w'), ensure_ascii=False, indent=2)
     cache_file.unlink(missing_ok=True)
 
     print(f"\n✅ EP{ep} 完成: {len(scenes)} 场景, {len(asr_segments)} ASR段")
+    print(f"   VLM token: 输入={total_prompt:,}  输出={total_completion:,}  合计={total_tokens:,}")
+    print(f"   VLM 耗时: {elapsed_vlm:.0f}s  ({elapsed_vlm/len(scenes):.1f}s/场景)")
+    print(f"   输出文件: {vlm_file.name}")
     return results
 
 
@@ -393,16 +425,33 @@ def main():
                         help="faster-whisper 模型大小 (默认 small)")
     parser.add_argument("--vlm-workers", type=int, default=12,
                         help="VLM 并发数 (默认 12, API 限流 100 RPM)")
+    parser.add_argument("--proxy", type=int, default=540, choices=[360, 540],
+                        help="代理视频分辨率 (默认540p)。可用 --no-proxy 强制用 1080p 源")
+    parser.add_argument("--no-proxy", action="store_true", help="强制使用 1080p 源视频")
     args = parser.parse_args()
 
     episodes = [int(e.strip()) for e in args.ep.split(",")]
 
     for ep in episodes:
-        video_path = SRC_VIDEOS / f"都挺好 {ep:02d}_1080p.mp4"
+        # 选择视频源：默认 proxy 优先，--no-proxy 强制 1080p
+        proxy_res = None if args.no_proxy else args.proxy
+        video_path = None
+        if proxy_res:
+            proxy_path = PROXY_DIR / f"都挺好_{ep:02d}_{proxy_res}p.mp4"
+            if proxy_path.exists():
+                video_path = proxy_path
+                print(f"📺 使用代理: {proxy_path.name}")
+            else:
+                print(f"⚠️  代理不存在: {proxy_path.name}，回退到 1080p 源")
+                proxy_res = None
+
+        if video_path is None:
+            video_path = SRC_VIDEOS / f"都挺好 {ep:02d}_1080p.mp4"
+
         if not video_path.exists():
             print(f"❌ 找不到视频: {video_path}")
             continue
-        analyze_episode(ep, video_path, args.segment, args.asr_model, args.skip_vlm, args.skip_asr)
+        analyze_episode(ep, video_path, args.segment, args.asr_model, args.skip_vlm, args.skip_asr, args.vlm_workers, proxy_res)
 
 
 if __name__ == "__main__":

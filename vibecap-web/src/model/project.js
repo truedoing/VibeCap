@@ -201,3 +201,141 @@ function framesToSec(frames, fps) {
 function framesToMicrosec(frames, fps) {
   return Math.round((frames / fps) * 1_000_000)
 }
+
+// ═══════════════════════════════════════════════
+// Vibe 导出（代理模式 → 1080p 提取 → 剪映草稿）
+// ═══════════════════════════════════════════════
+
+/**
+ * 从 Elah project 收集所有需要导出的 clip 引用
+ * 代理模式下 clip.src 是 /proxies/xxx.mp4，需从 sourceStartFrame/sourceDurationFrames 反推时间
+ */
+export function collectVibeClips(elahProject, fps = 25) {
+  if (!elahProject?.tracks) return []
+
+  const clips = []
+  for (const track of elahProject.tracks) {
+    const trackClips = elahProject.clips[track.id] || []
+    for (const clip of trackClips) {
+      if (clip.type === 'text' || clip.type === 'shape' || clip.type === 'freehand') continue
+
+      // 从 src 中解析 ep（代理文件命名: 都挺好_27_540p.mp4）
+      let ep = null
+      const srcMatch = clip.src?.match(/_(\d+)_540p/)
+      if (srcMatch) ep = parseInt(srcMatch[1])
+
+      const sourceStartSec = framesToSec(clip.sourceStartFrame || 0, fps)
+      const sourceEndSec = sourceStartSec + framesToSec(clip.sourceDurationFrames || 1, fps)
+
+      if (ep) {
+        clips.push({
+          ep,
+          start: sourceStartSec,
+          end: sourceEndSec,
+          outputName: `${clip.name?.replace(/[^a-zA-Z0-9一-鿿]/g, '_') || 'clip'}.mp4`,
+          trackName: track.name,
+          trackKind: track.kind,
+          startFrame: clip.startFrame,
+          durationFrames: clip.durationFrames,
+          clipId: clip.id,
+        })
+      }
+    }
+  }
+
+  // 按时间轴位置排序
+  clips.sort((a, b) => a.startFrame - b.startFrame)
+  return clips
+}
+
+/**
+ * 调用后端提取 1080p 片段
+ */
+export async function requestVibeExport(taskId, clips) {
+  const resp = await fetch(`/export/extract_clips?task=${taskId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task: taskId, clips }),
+  })
+  return await resp.json()
+}
+
+/**
+ * 从 Vibe model 的 Elah project 生成剪映草稿
+ * 使用提取后的 1080p clip 路径
+ */
+export function toCapCutDraftFromExtracted(elahProject, extractedClips, projectName = 'vibecap-export') {
+  const allTracks = []
+  const allMaterials = {}
+  let materialSeq = 0
+
+  // 构建 clipId → extractedUrl 的映射
+  const extractedMap = {}
+  for (const ec of extractedClips) {
+    if (ec.clipId) extractedMap[ec.clipId] = ec.url
+  }
+
+  for (const track of elahProject.tracks) {
+    const trackClips = elahProject.clips[track.id] || []
+    if (trackClips.length === 0) continue
+
+    const segments = trackClips.map(clip => {
+      const materialId = `material_${++materialSeq}`
+      const exportedPath = extractedMap[clip.id] || clip.src
+      const cleanPath = exportedPath.replace(/^\/export_clips\//, '').replace(/^\/clips\//, '').replace(/^\//, '')
+
+      allMaterials[materialId] = {
+        id: materialId,
+        path: cleanPath,
+        type: clip.type === 'audio' ? 'audio' : 'video',
+        duration: framesToSec(clip.durationFrames, FPS),
+      }
+
+      return {
+        id: clip.id,
+        material_id: materialId,
+        target_timerange: {
+          start: framesToMicrosec(clip.startFrame, FPS),
+          duration: framesToMicrosec(clip.durationFrames, FPS),
+        },
+        source_timerange: {
+          start: 0,
+          duration: framesToMicrosec(clip.durationFrames, FPS),
+        },
+        speed: 1.0,
+        volume: clip.volume ?? 1,
+        clip: {
+          transform: clip.transform || { x: 0, y: 0, scale: 1, rotation: 0, anchor: { x: 0, y: 0 } },
+          opacity: clip.opacity ?? 1,
+        },
+      }
+    })
+
+    allTracks.push({
+      id: track.id,
+      type: track.kind === 'audio' ? 'audio' : 'video',
+      name: track.name,
+      is_muted: track.muted,
+      segments,
+    })
+  }
+
+  const totalFrames = Object.values(elahProject.clips || {}).flat().reduce(
+    (max, c) => Math.max(max, c.startFrame + c.durationFrames), 0
+  )
+
+  return {
+    draft_name: projectName,
+    draft_id: `vibe_${Date.now()}`,
+    draft_version: 1,
+    draft_root_path: '',
+    draft_fps: FPS,
+    draft_resolution: { width: 1920, height: 1080 },
+    draft_total_duration: framesToMicrosec(totalFrames, FPS),
+    draft_materials: Object.values(allMaterials),
+    draft_tracks: allTracks,
+    draft_cover: '',
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  }
+}

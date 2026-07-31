@@ -38,7 +38,10 @@ def build_index():
     vlm_count = asr_count = sub_count = 0
 
     for ep in eps:
-        vlm_path = SOURCES_DIR / f"ep{ep}" / "vlm_analysis.json"
+        # 优先读取合并后的 VLM（clean_data 产出），fallback 原版
+        vlm_path = SOURCES_DIR / f"ep{ep}" / "vlm_merged.json"
+        if not vlm_path.exists():
+            vlm_path = SOURCES_DIR / f"ep{ep}" / "vlm_analysis.json"
         if vlm_path.exists():
             for s in json.load(open(vlm_path)):
                 if s is None: continue

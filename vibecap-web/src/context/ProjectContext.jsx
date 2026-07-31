@@ -106,11 +106,34 @@ export function TaskProvider({ children }) {
       next.picks[key] = prev.picks[key]
         ? { main: [...(prev.picks[key].main || [])], supp: [...(prev.picks[key].supp || [])] }
         : { main: [], supp: [] }
-      const idx = next.picks[key][type].findIndex(c => c.ep === clipRef.ep && c.start === clipRef.start)
+      // 兼容新旧格式：通过 ep + start 或 ep + sourceStartSec 匹配去重
+      const idx = next.picks[key][type].findIndex(c =>
+        c.ep === clipRef.ep && (
+          (clipRef.sourceStartSec !== undefined && c.sourceStartSec === clipRef.sourceStartSec) ||
+          (clipRef.start !== undefined && c.start === clipRef.start) ||
+          (clipRef.file && c.file === clipRef.file)
+        )
+      )
       if (idx >= 0) next.picks[key][type][idx] = { ...next.picks[key][type][idx], ...clipRef }
       else next.picks[key][type].push(clipRef)
       next.timeline = null
       next.mediaCache = null
+      persist(next)
+      return next
+    })
+  }, [persist])
+
+  const handleUpdatePick = useCallback((sid, seq, type, idx, patch) => {
+    setProject(prev => {
+      if (!prev) return prev
+      const next = { ...prev, picks: { ...prev.picks } }
+      const key = `${sid}_${seq}`
+      if (next.picks[key]?.[type]?.[idx]) {
+        next.picks[key] = {
+          ...next.picks[key],
+          [type]: next.picks[key][type].map((c, i) => i === idx ? { ...c, ...patch } : c)
+        }
+      }
       persist(next)
       return next
     })
@@ -133,10 +156,12 @@ export function TaskProvider({ children }) {
     })
   }, [persist])
 
-  const handleSaveTimelineCache = useCallback((elahProject, mediaState) => {
+  const handleSaveTimelineCache = useCallback((elahProject, mediaState, prefix = '') => {
     setProject(prev => {
       if (!prev) return prev
-      const next = { ...prev, timeline: elahProject, mediaCache: mediaState }
+      const cacheKey = prefix ? `${prefix}_timeline` : 'timeline'
+      const mediaKey = prefix ? `${prefix}_mediaCache` : 'mediaCache'
+      const next = { ...prev, [cacheKey]: elahProject, [mediaKey]: mediaState }
       persist(next)
       return next
     })
@@ -157,6 +182,7 @@ export function TaskProvider({ children }) {
     taskId,
     addPick: handleAddPick,
     removePick: handleRemovePick,
+    updatePick: handleUpdatePick,
     saveTimelineCache: handleSaveTimelineCache,
     invalidateTimeline: handleInvalidateTimeline,
   }

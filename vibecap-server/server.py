@@ -164,6 +164,10 @@ FRONTEND_DIR = BASE_DIR / "vibecap-web" / "dist"  # 生产前端构建产物
 CLIP_DIR.mkdir(exist_ok=True)
 WORK_DIR.mkdir(exist_ok=True)
 
+PROXY_DIR = DRAMA_DIR / "proxies"
+PROXY_DIR.mkdir(exist_ok=True)
+PROXY_MANIFEST = PROXY_DIR / ".proxies_manifest.json"
+
 VIDEO_DIR = Path("/Users/zgl/解说剪辑/都挺好原剧")
 SOURCE_VIDEOS = {}
 for ep in range(1, 47):  # EP1-46
@@ -329,9 +333,13 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json({"ok": True, "ready": True, "url": f"/clips/{file_name}?task={task}"})
             else:
                 self._json({"ok": True, "ready": False})
+        elif path == "/proxies/manifest":
+            self._serve_proxy_manifest()
+        elif "/proxies/" in path:
+            self._serve_proxy(path)
         elif "/posters/" in path:
             self._serve_poster(path)
-        elif "/素材clips/" in path or "/clips/" in path or "/tts_segments/" in path:
+        elif "/素材clips/" in path or "/clips/" in path or "/tts_segments/" in path or "/export_clips/" in path:
             self._serve_clip(req_task)
         else:
             # 1) 优先尝试 serve 前端生产构建 (SPA)
@@ -429,6 +437,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json({"ok": True})
             else:
                 self._json({"ok": False, "error": "drama not found"}, 404)
+        elif path == "/export/extract_clips":
+            self._handle_export_extract(req_task)
         else:
             self.send_error(404)
 
@@ -817,6 +827,125 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_file(file_path, "image/jpeg")
                 return
         return self.send_error(404)
+
+    def _serve_proxy_manifest(self):
+        """GET /proxies/manifest → 返回 .proxies_manifest.json"""
+        if PROXY_MANIFEST.exists():
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(PROXY_MANIFEST.read_bytes())
+        else:
+            self._json({"drama": _args.drama, "proxies": [], "note": "无代理文件，请先运行 generate_proxies.py"})
+
+    def _serve_proxy(self, path):
+        """Serve 代理视频文件，支持 HTTP Range 请求"""
+        clean = unquote(path).lstrip("/")
+        # /proxies/都挺好_01_540p.mp4 → <drama>/proxies/都挺好_01_540p.mp4
+        filename = clean.split("/")[-1]
+        file_path = PROXY_DIR / filename
+        if not file_path.exists():
+            return self.send_error(404)
+
+        size = file_path.stat().st_size
+        rh = self.headers.get("Range")
+        if rh:
+            start, end = 0, size - 1
+            m = rh.replace("bytes=", "").split("-")
+            start = int(m[0]) if m[0] else 0
+            end = int(m[1]) if len(m) > 1 and m[1] else size - 1
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            length = end - start + 1
+        else:
+            start, end, length = 0, size - 1, size
+            self.send_response(200)
+
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        with open(file_path, "rb") as f:
+            f.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = f.read(min(65536, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
+    def _handle_export_extract(self, task_name):
+        """POST /export/extract_clips — 从 1080p 原剧批量提取 clip 片段用于导出"""
+        import tempfile, os
+
+        data = json.loads(self._read_body())
+        clips = data.get("clips", [])
+        if not clips:
+            self._json({"ok": False, "error": "no clips provided"}, 400)
+            return
+
+        # 按剧集分组
+        by_ep = {}
+        for c in clips:
+            ep = c["ep"]
+            if ep not in by_ep:
+                by_ep[ep] = []
+            by_ep[ep].append(c)
+
+        # 输出目录
+        task_dir = self._resolve_task_dir(task_name)
+        export_dir = task_dir / "export_clips"
+        export_dir.mkdir(exist_ok=True)
+
+        extracted = []
+        for ep, ep_clips in sorted(by_ep.items()):
+            src_key = f"ep{ep}"
+            if src_key not in SOURCE_VIDEOS:
+                print(f"[export] 未找到 EP{ep} 源视频")
+                continue
+
+            src_path = SOURCE_VIDEOS[src_key]
+            for i, c in enumerate(ep_clips):
+                out_name = c.get("outputName", f"ep{ep}_clip{i:03d}.mp4")
+                out_path = export_dir / out_name
+
+                # 跳过已存在的
+                if out_path.exists() and not c.get("overwrite"):
+                    extracted.append({
+                        "ep": ep, "outputName": out_name,
+                        "url": f"/export_clips/{out_name}?task={task_name}",
+                    })
+                    continue
+
+                start = c["start"]
+                dur = c["end"] - c["start"]
+
+                cmd = [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-ss", str(start), "-t", str(dur),
+                    "-i", str(src_path),
+                    "-c", "copy",  # 无损复制，不从代理转码
+                    "-avoid_negative_ts", "make_zero",
+                    str(out_path),
+                ]
+
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0 and out_path.exists():
+                    extracted.append({
+                        "ep": ep, "outputName": out_name,
+                        "url": f"/export_clips/{out_name}?task={task_name}",
+                        "duration": dur,
+                    })
+                    print(f"[export] EP{ep} {start}s-{c['end']}s → {out_name}")
+                else:
+                    print(f"[export] EP{ep} 提取失败: {result.stderr[:200]}")
+
+        self._json({"ok": True, "clips": extracted, "total": len(extracted)})
 
     def _send_file(self, file_path, mime):
         self.send_response(200)
@@ -1329,6 +1458,8 @@ class Handler(SimpleHTTPRequestHandler):
             clean = clean.split("?")[0]
         if "tts_segments/" in clean:
             path = task_dir / "work_dir" / clean
+        elif "export_clips/" in clean:
+            path = task_dir / clean
         else:
             clean = clean.replace("clips/", "素材clips/")
             path = task_dir / clean
@@ -1371,7 +1502,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path in api_routes:
             return False
         # 排除 API 前缀
-        for prefix in ("/clips/", "/素材clips/", "/tts_segments/", "/posters/"):
+        for prefix in ("/clips/", "/素材clips/", "/tts_segments/", "/posters/", "/proxies/", "/export_clips/"):
             if path.startswith(prefix):
                 return False
         # 静态资源：直接 serve

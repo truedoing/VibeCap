@@ -7,6 +7,7 @@ import Home from './pages/Home'
 import SeriesPage from './pages/Series'
 import MatchingDesk from './pages/MatchingDesk'
 import Timeline from './pages/Timeline'
+import VibeEdit from './pages/VibeEdit'
 import DataDesk from './pages/DataDesk'
 import { loadSeriesList, loadTask } from './model/series'
 
@@ -79,6 +80,15 @@ function AppLayout() {
           ) : (
             <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">剪辑台</span>
           )}
+
+          {isTaskPage ? (
+            <NavLink to={`/${seriesId}/${taskId}/vibe`}
+              className={({ isActive }) =>
+                `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm ring-1 ring-purple/30' : 'text-purple/80 hover:text-purple hover:bg-background/50'}`
+              }>沉浸剪辑</NavLink>
+          ) : (
+            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">沉浸剪辑</span>
+          )}
         </nav>
       </header>
 
@@ -118,6 +128,7 @@ function App() {
               <Route path="data" element={<DataDesk />} />
               <Route path="planning" element={<MatchingDesk />} />
               <Route path="timeline" element={<Timeline />} />
+              <Route path="vibe" element={<VibeEdit />} />
             </Route>
           </Route>
         </Routes>

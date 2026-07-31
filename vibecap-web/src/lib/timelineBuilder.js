@@ -1,0 +1,263 @@
+/**
+ * 从 proxy picks 构建 Elah Project
+ * 替代 Timeline.jsx 中的 buildProjectFromPicks，使用代理视频 + 时间引用
+ */
+import { generateId, secondsToFrames } from '@elah/editor'
+import { resolveClipSource } from './proxyEngine'
+
+const FPS = 25
+const STAGE = { width: 1920, height: 1080 }
+
+function thumbnailUrl(filePath) {
+  if (!filePath) return undefined
+  // 代理模式下暂不生成缩略图，返回 undefined 即可
+  return undefined
+}
+
+// 视频/音频 clipId 配对（联动编辑）
+const linkedPairs = new Map()
+
+export function linkClipPair(videoClipId, audioClipId) {
+  linkedPairs.set(videoClipId, audioClipId)
+  linkedPairs.set(audioClipId, videoClipId)
+}
+
+export function unlinkClipPair(clipId) {
+  const partner = linkedPairs.get(clipId)
+  if (partner) {
+    linkedPairs.delete(partner)
+    linkedPairs.delete(clipId)
+  }
+}
+
+export function getLinkedPairs() {
+  return linkedPairs
+}
+
+export function clearLinkedPairs() {
+  linkedPairs.clear()
+}
+
+/**
+ * 从 picks 构建 Elah Project
+ * picks = { "sid_seq": { main: [ClipRef], supp: [ClipRef] } }
+ * ClipRef = { ep, sourceStartSec, sourceEndSec }
+ *
+ * clipRegistry 记录 clipId → {ep, sourceStartSec, sourceEndSec} 供导出阶段使用
+ */
+export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = []) {
+  const tracks = []
+  const clips = {}
+  const mediaList = []
+  const clipRegistry = {}
+
+  // 4 轨 ID
+  const mainVideoId = generateId()
+  const mainAudioId = generateId()
+  const suppId = generateId()
+  const narrId = generateId()
+
+  const mainVideoClips = []
+  const mainAudioClips = []
+  const suppClips = []
+  const narrClips = []
+
+  const NARR_DURATIONS = { 0: 26, 1: 24, 2: 12, 3: 5, 4: 15, 5: 56, 6: 18, 7: 18, 8: 45 }
+
+  const entries = Object.entries(picks).sort((a, b) => {
+    const [sa] = a[0].split('_').map(Number)
+    const [sb] = b[0].split('_').map(Number)
+    return sa - sb
+  })
+
+  // 第 1 遍: 统计每段高亮 + 补充时长
+  const segHighlight = {}
+  const segSupp = {}
+  for (const [key, p] of entries) {
+    const [sidStr] = key.split('_')
+    const sid = parseInt(sidStr)
+    if (!segHighlight[sid]) segHighlight[sid] = 0
+    if (!segSupp[sid]) segSupp[sid] = 0
+    if (p.main?.length) {
+      p.main.forEach(m => {
+        const dur = m.sourceEndSec !== undefined
+          ? (m.sourceEndSec - m.sourceStartSec)
+          : (m.duration || (m.end - m.start) || 3)
+        segHighlight[sid] += dur
+      })
+    }
+    if (p.supp?.length) {
+      p.supp.forEach(s => {
+        const dur = s.sourceEndSec !== undefined
+          ? (s.sourceEndSec - s.sourceStartSec)
+          : (s.duration || (s.end - s.start) || 2)
+        segSupp[sid] += dur
+      })
+    }
+  }
+
+  // 计算每段偏移
+  const segOffsets = {}
+  let cursor = 0
+  const maxSid = Math.max(...Object.keys(picks).map(k => parseInt(k.split('_')[0])), 8)
+  for (let sid = 0; sid <= maxSid; sid++) {
+    segOffsets[sid] = cursor
+    const hl = segHighlight[sid] || 0
+    const supp = segSupp[sid] || 0
+    const narr = NARR_DURATIONS[sid] || 0
+    cursor += hl + Math.max(supp, narr)
+  }
+
+  // 第 2 遍: 放置 clip
+  const segCursors = {}
+  for (const [key, p] of entries) {
+    const [sidStr, seqStr] = key.split('_')
+    const sid = parseInt(sidStr)
+    const segStart = secondsToFrames(segOffsets[sid] || 0, FPS)
+    const hlDur = secondsToFrames(segHighlight[sid] || 0, FPS)
+    const narrStart = segStart + hlDur
+
+    if (!segCursors[sid]) {
+      segCursors[sid] = { audioFrames: segStart, suppFrames: narrStart }
+    }
+    const cur = segCursors[sid]
+
+    // ── 主镜头：使用代理视频 ──
+    if (p.main?.length) {
+      p.main.forEach((m, mi) => {
+        const resolved = resolveClipSource(m)
+        const durFrames = resolved.sourceDurationFrames
+        const proxyFile = proxyFileName(m.ep)
+        const src = `/proxies/${proxyFile}`
+
+        const vClipId = generateId(); const vAssetId = generateId()
+        mediaList.push({
+          assetId: vAssetId, src, name: `S${sid} EP${m.ep} 主`,
+          kind: 'video', durationSec: resolved.durationSec, thumbnailUrl: thumbnailUrl()
+        })
+        mainVideoClips.push({
+          id: vClipId, trackId: mainVideoId, type: 'video', assetId: vAssetId,
+          name: `S${sid} EP${m.ep}`, src,
+          startFrame: cur.audioFrames, durationFrames: durFrames,
+          sourceStartFrame: resolved.sourceStartFrame,
+          sourceDurationFrames: resolved.sourceDurationFrames,
+          volume: 1, opacity: 1, locked: false, disabled: false,
+        })
+        clipRegistry[vClipId] = { ep: m.ep, sourceStartSec: resolved.sourceStartSec, sourceEndSec: resolved.sourceEndSec }
+
+        const aClipId = generateId(); const aAssetId = generateId()
+        mediaList.push({
+          assetId: aAssetId, src, name: `S${sid} EP${m.ep} 原声`,
+          kind: 'audio', durationSec: resolved.durationSec,
+        })
+        mainAudioClips.push({
+          id: aClipId, trackId: mainAudioId, type: 'audio', assetId: aAssetId,
+          name: `S${sid} EP${m.ep}`, src,
+          startFrame: cur.audioFrames, durationFrames: durFrames,
+          sourceStartFrame: resolved.sourceStartFrame,
+          sourceDurationFrames: resolved.sourceDurationFrames,
+          volume: 1, locked: false, disabled: false,
+        })
+        linkClipPair(vClipId, aClipId)
+
+        cur.audioFrames += durFrames
+      })
+    }
+
+    // ── 补充轨 ──
+    if (p.supp?.length) {
+      p.supp.forEach((s, si) => {
+        const resolved = resolveClipSource(s)
+        const durFrames = resolved.sourceDurationFrames
+        const proxyFile = proxyFileName(s.ep)
+        const src = `/proxies/${proxyFile}`
+
+        const clipId = generateId(); const assetId = generateId()
+        mediaList.push({
+          assetId, src, name: `S${sid} EP${s.ep} 补`,
+          kind: 'video', durationSec: resolved.durationSec, thumbnailUrl: thumbnailUrl()
+        })
+        suppClips.push({
+          id: clipId, trackId: suppId, type: 'video', assetId,
+          name: `S${sid} EP${s.ep}`, src,
+          startFrame: cur.suppFrames, durationFrames: durFrames,
+          sourceStartFrame: resolved.sourceStartFrame,
+          sourceDurationFrames: resolved.sourceDurationFrames,
+          volume: 0, opacity: 1, locked: false, disabled: false,
+        })
+        clipRegistry[clipId] = { ep: s.ep, sourceStartSec: resolved.sourceStartSec, sourceEndSec: resolved.sourceEndSec }
+
+        cur.suppFrames += durFrames
+      })
+    }
+  }
+
+  // ── 旁白音轨 ──
+  const maxNarrSid = Math.max(...Object.keys(picks).map(k => parseInt(k.split('_')[0])), 8)
+  for (let sid = 0; sid <= maxNarrSid; sid++) {
+    const dur = NARR_DURATIONS[sid]
+    if (!dur) continue
+    const segStart = secondsToFrames(segOffsets[sid] || 0, FPS)
+    const hlDur = secondsToFrames(segHighlight[sid] || 0, FPS)
+    const narrStart = segStart + hlDur
+    const src = `/tts_segments/narr_${String(sid).padStart(3, '0')}.wav`
+    const durFrames = secondsToFrames(dur, FPS)
+    const clipId = generateId(); const assetId = generateId()
+    mediaList.push({ assetId, src, name: `解说 seg_${sid}`, kind: 'audio', durationSec: dur })
+    narrClips.push({
+      id: clipId, trackId: narrId, type: 'audio', assetId,
+      name: `解说 seg_${sid}`, src,
+      startFrame: narrStart, durationFrames: durFrames,
+      sourceStartFrame: 0, sourceDurationFrames: durFrames,
+      volume: 1, locked: false, disabled: false,
+    })
+  }
+
+  // ── 组装轨道 ──
+  if (suppClips.length > 0) {
+    tracks.push({ id: suppId, name: '补充镜头', kind: 'video', order: 0, height: 44, locked: false, disabled: false, muted: true, solo: false })
+    clips[suppId] = suppClips
+  }
+  if (mainVideoClips.length > 0) {
+    tracks.push({ id: mainVideoId, name: '原声主镜头', kind: 'video', order: 2, height: 52, locked: false, disabled: false, muted: false, solo: false, volume: 1 })
+    clips[mainVideoId] = mainVideoClips
+  }
+  if (mainAudioClips.length > 0) {
+    tracks.push({ id: mainAudioId, name: '原声主镜头 音频', kind: 'audio', order: 0, height: 44, locked: false, disabled: false, muted: false, solo: false })
+    clips[mainAudioId] = mainAudioClips
+  }
+  if (narrClips.length > 0) {
+    tracks.push({ id: narrId, name: '旁白 TTS', kind: 'audio', order: 1, height: 44, locked: false, disabled: false, muted: false, solo: false })
+    clips[narrId] = narrClips
+  }
+
+  // 自定义额外轨道
+  for (const et of extraTracks) {
+    tracks.push({ id: et.id, name: et.name, kind: et.kind || 'audio', order: tracks.length, height: 44, locked: false, disabled: false, muted: false, solo: false })
+    clips[et.id] = []
+  }
+
+  const totalFrames = cursor * FPS
+  return {
+    project: {
+      id: 'vibecap-timeline-v2',
+      fps: FPS,
+      stage: STAGE,
+      tracks,
+      clips,
+      transitions: [],
+      version: 1,
+      masterVolume: 1,
+    },
+    mediaList,
+    clipRegistry,
+    trackIds: { mainVideo: mainVideoId, mainAudio: mainAudioId, supp: suppId, narr: narrId },
+  }
+}
+
+/**
+ * 代理文件名格式
+ */
+function proxyFileName(ep) {
+  return `都挺好_${String(ep).padStart(2, '0')}_540p.mp4`
+}

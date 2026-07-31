@@ -568,22 +568,30 @@ class VibeCapDB:
             asr_score = round(15.0 + effective_ratio * 20, 1)  # 范围 15-35
         else:
             # 正常 VAD ASR: 评估最终可用文本质量
-            # 1. 内容密度: 每集约45分钟，正常对白 4000-8000字 → 100字/分钟为满分
+            # 1. 内容密度 (40%): 每集约45分钟，正常对白 4000-8000字 → 100字/分钟为满分
             content_chars = ep_data.get("asr_clean_chars", raw_chars) or raw_chars
             chars_per_min = content_chars / 45
             content_score = min(100, chars_per_min / 100 * 80)
 
-            # 2. 碎片率: 区分模型基线. small~60%正常, tiny~80%正常. 超基线扣分
-            frag_rate = max(0, (raw - clean) / raw) if raw > 0 else 0
-            baseline_frag = 0.60  # small 模型基线
-            excess_frag = max(0, frag_rate - baseline_frag)
-            frag_score = max(25, 100 - excess_frag * 180)
+            # 2. 段质量 (40%): 替代碎片率，用平均段长和字密度衡量模型能力
+            # 平均 raw 段长 (秒) — 反映 VAD + 模型质量，越长越好
+            avg_raw_dur = (45 * 60) / max(raw, 1)
+            # 平均 raw 段字数 — 反映模型转写完整度
+            avg_chars_per_seg = raw_chars / max(raw, 1)
+            # 综合段质量: 段长权重 0.5 + 字密度权重 0.5
+            dur_score = min(100, avg_raw_dur / 5.0 * 100)       # 5秒/段 = 100分
+            char_score = min(100, avg_chars_per_seg / 10 * 100)  # 10字/段 = 100分
+            seg_quality = dur_score * 0.5 + char_score * 0.5
 
-            # 3. 字幕校准加分 (cross_calibrate 效果)
+            # 3. 模型规模检测加分 (10%): 段越长、字越多 → 模型越大
+            # tiny: ~2s/段 3字, small: ~3s/段 6字, medium: ~3.5s/段 8字
+            model_bonus = min(15, max(0, (avg_raw_dur - 2.2) * 5 + (avg_chars_per_seg - 3) * 1.5))
+
+            # 4. 字幕校准加分 (10%): cross_calibrate 效果
             sub_count = ep_data.get("subtitle_count", 0) or 0
-            sub_bonus = min(15, sub_count / max(scene_count, 1) * 10)
+            sub_bonus = min(10, sub_count / max(scene_count, 1) * 8)
 
-            asr_score = round(content_score * 0.45 + frag_score * 0.45 + sub_bonus, 1)
+            asr_score = round(content_score * 0.40 + seg_quality * 0.40 + model_bonus + sub_bonus, 1)
 
         # ── VLM 评分 ──
         short_ratio = (ep_data["vlm_short_desc_count"] or 0) / scene_count
@@ -602,9 +610,12 @@ class VibeCapDB:
         if is_fixed_interval:
             issues.append("ASR 固定分块(非VAD)，有效内容极低")
         else:
-            frag_rate = max(0, (raw - clean) / raw) if raw > 0 else 0
-            if frag_rate > 0.75:
-                issues.append(f"ASR 碎片率偏高 {frag_rate:.0%}")
+            avg_raw_dur = (45 * 60) / max(raw, 1)
+            avg_chars = raw_chars / max(raw, 1)
+            if avg_raw_dur < 2.5:
+                issues.append(f"ASR 段长偏短({avg_raw_dur:.1f}s)，疑似低质量模型")
+            elif avg_chars < 3:
+                issues.append(f"ASR 内容稀疏({avg_chars:.0f}字/段)")
             elif asr_score < 40:
                 issues.append(f"ASR 内容偏少")
         if short_ratio > 0.2:
