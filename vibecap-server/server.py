@@ -449,19 +449,29 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
-    def _search(self, query, limit=10, mode="hybrid"):
+    def _search(self, query, limit=10, mode="hybrid", eps=None, boost_eps=None):
         if not query: return []
         if mode == "keyword":
-            return self._keyword_search(query, limit)
+            results = self._keyword_search(query, limit)
         elif mode == "semantic":
-            return self._semantic_search(query, limit)
+            results = self._semantic_search(query, limit)
         elif mode == "hybrid":
-            return self._hybrid_search(query, limit)
+            results = self._hybrid_search(query, limit)
         elif mode == "deep":
-            return self._deep_search(query, limit)
+            results = self._deep_search(query, limit)
         elif mode == "asr_first":
-            return self._asr_first_search(query, limit)
-        return self._hybrid_search(query, limit)
+            results = self._asr_first_search(query, limit)
+        else:
+            results = self._hybrid_search(query, limit)
+        # 剧集过滤 / 加权
+        if eps:
+            ep_set = set(int(e) for e in str(eps).split(",") if e.strip().isdigit())
+            if ep_set:
+                # 先筛选优先剧集，再拼接其他结果
+                priority = [r for r in results if r.get("ep") in ep_set]
+                others = [r for r in results if r.get("ep") not in ep_set]
+                results = priority + others
+        return results
 
     def _asr_first_search(self, query, limit=10):
         '''ASR优先匹配：纯 ASR 关键词搜索 + 语义兜底，结果展示 ASR 台词'''
@@ -1244,6 +1254,7 @@ class Handler(SimpleHTTPRequestHandler):
         data = json.loads(self._read_body())
         messages = data.get("messages", [])
         context = data.get("context", {})
+        eps = data.get("eps", None)  # 优先剧集
 
         if not messages:
             self._json({"reply": "请描述你想找的画面", "results": []})
@@ -1278,7 +1289,7 @@ class Handler(SimpleHTTPRequestHandler):
             if not query:
                 query = messages[-1].get("content", "") if messages else ""
             mode = intent.get("mode", "semantic")
-            results = self._search(query, mode=mode, limit=5)
+            results = self._search(query, mode=mode, limit=5, eps=eps)
             reply = intent.get("reply", "") or self._format_chat_reply(results, query)
         elif action == "preview":
             ep = intent.get("ep", 1)

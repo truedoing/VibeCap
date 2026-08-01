@@ -58,7 +58,7 @@ function TypingDots() {
   )
 }
 
-export default function ChatPanel({ context, onPreview, onPick, onSearch }) {
+export default function ChatPanel({ context, onPreview, onPick, onSearch, onSuggestions, eps }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -69,7 +69,11 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch }) {
   const inputRef = useRef(null)
   const prevSid = useRef(null)
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    window.__sourceSearchQuery = (q) => { setInput(q); send() }
+    return () => { delete window.__sourceSearchQuery }
+  }, [messages, loading])
 
   // 点击句子时：台词 → ASR优先搜索，解说词 → AI分镜推荐
   useEffect(() => {
@@ -122,34 +126,12 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch }) {
         const list = (d.suggestions || []).map(s => s.replace(/^镜头\d+[：:]\s*/, ''))
         if (list.length > 0) {
           setSuggestions(list)
-          // 自动用第一个建议发起搜索
-          const firstQuery = list[0]
-          const userMsg = { role: 'user', content: firstQuery }
-          const aiPlaceholder = { role: 'ai', content: '小 V 根据分镜方案自动搜索中...', suggestions: list }
-          setMessages([userMsg, aiPlaceholder])
-          setLoading(true)
-          const strategy = context.seq === 'D' ? 'asr_first' : undefined
-          const ctx = strategy ? { ...context, strategy } : context
-          fetch(`/chat?task=${ctx.taskId || ''}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: [userMsg], context: ctx })
-          }).then(r2 => r2.json()).then(data => {
-            setMessages([userMsg, {
-              role: 'ai',
-              content: data.reply || '找到以下匹配素材 ~',
-              results: data.results || [],
-              suggestions: list,  // 保留建议列表，方便切换
-            }])
-            setEpFilter(null)
-            if (data.results?.length > 0 && onSearch) onSearch(data.results)
-          }).catch(() => {
-            setMessages([userMsg, { role: 'ai', content: '搜索出错，请重试', suggestions: list }])
-          }).finally(() => setLoading(false))
+          if (onSuggestions) onSuggestions(list)
+          // 分镜推荐已在左侧面板显示，聊天区不重复展示
         }
       }).catch(() => {})
     }
-  }, [context.sid, context.seq, context.narration])
+  }, [context.sid, context.seq, context.narration, onSuggestions])
 
   const send = async () => {
     const text = input.trim()
@@ -169,7 +151,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch }) {
       const resp = await fetch(`/chat?task=${ctx.taskId || ''}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages, context: ctx })
+        body: JSON.stringify({ messages: newMessages, context: ctx, eps })
       })
       const data = await resp.json()
 
@@ -282,7 +264,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch }) {
                         try {
                           const resp = await fetch('/chat', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ messages: newMsgs, context })
+                            body: JSON.stringify({ messages: newMsgs, context, eps })
                           })
                           const data = await resp.json()
                           setMessages([...newMsgs, {

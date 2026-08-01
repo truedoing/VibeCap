@@ -16,6 +16,7 @@ import {
 } from '@elah/editor'
 
 import ScriptPanel from '../components/ScriptPanel'
+import StoryboardPanel from '../components/StoryboardPanel'
 import ChatPanel from '../components/ChatPanel'
 import SourceInspector from '../components/SourceInspector'
 import TimelineControls from '../components/TimelineControls'
@@ -150,6 +151,7 @@ export default function VibeEdit() {
   const [curNarration, setCurNarration] = useState('')
   const [proxyManifest, setProxyManifest] = useState(null)
   const [prgReady, setPrgReady] = useState(false)
+  const [storySuggestions, setStorySuggestions] = useState(null)
   const prgCurrentFrame = usePlaybackStore(s => s.currentFrame)  // 顶层调用，供源检视器同步
 
   if (!demuxRef.current) { try { demuxRef.current = createDefaultDemuxerFactory() } catch(e) { console.warn('[vibe] demux:', e) } }
@@ -178,6 +180,7 @@ export default function VibeEdit() {
       if (seq === 'D') ref = (seg.highlight_text || '').substring(0, 200)
       else { const ss = (seg.narration_text || '').split(/[。！？]/).filter(s => s.trim()); ref = (ss[parseInt(seq) || 0] || '').trim() }
       setCurNarration(ref)
+      setStorySuggestions(null)
     }
   }, [segments])
 
@@ -244,6 +247,7 @@ export default function VibeEdit() {
   }
 
   const chatCtx = { sid: curSid, seq: curSeq, narration: curNarration, taskId }
+  const proxyEps = proxyManifest?.proxies?.map(p => p.ep)?.join(",") || ""
   const leftW = scriptCollapsed ? 0 : scriptW
   const rightW = aiCollapsed ? 0 : aiW
 
@@ -266,6 +270,7 @@ export default function VibeEdit() {
                       <button onClick={() => setScriptCollapsed(true)} className="text-muted-foreground hover:text-foreground shrink-0">◀</button>
                     </div>
                     <ScriptPanel segments={segments} curSid={curSid} curSeq={curSeq} onPickSentence={handleSelectSegment} picks={project.picks} collapsed={false} />
+                    <StoryboardPanel suggestions={storySuggestions} curSid={curSid} curSeq={curSeq} onSearch={(q) => { if (window.__sourceSearchQuery) window.__sourceSearchQuery(q) }} />
                   </div>
                 )}
               </div>
@@ -291,7 +296,7 @@ export default function VibeEdit() {
               <button onClick={() => setAiCollapsed(true)} className="text-muted-foreground hover:text-foreground">▶</button>
             </div>
             <div style={{ flex: `${100 - bottomPct}%`, minHeight: 0, overflow: 'hidden' }}>
-              <ChatPanel context={chatCtx} onPreview={handlePreviewClick} onPick={null} onSearch={handleSearch} />
+              <ChatPanel context={chatCtx} onPreview={handlePreviewClick} onPick={null} onSearch={handleSearch} onSuggestions={setStorySuggestions} eps={proxyEps} />
             </div>
             {/* AI搜索 / 源预览 分隔条 — 拖拽同步两侧底部面板高度 */}
             <div onMouseDown={(e) => {

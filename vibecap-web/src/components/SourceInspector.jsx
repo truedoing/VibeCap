@@ -38,18 +38,24 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
       setEp(e); setDur(0); setMarkers([]); setPos(0)
       setSelIn(endTime > st ? st : null)
       setSelOut(endTime > st ? endTime : null)
-      setZoom(1); setOffset(Math.max(0, st - 5))
+      setZoom(1)
+      const url = proxyUrlForEpisode(e, proxyManifest)
+      setOffset(url ? Math.max(0, st - 30) : 0)  // 非代理视频不从大偏移开始
       window.__sourceIO = endTime > st ? { in: st, out: endTime } : {}
       if (!videoRef.current) return
-      setLoading(true)
-      const url = proxyUrlForEpisode(e, proxyManifest)
+      const vid = videoRef.current
       if (url) {
+        setLoading(true)
         const info = proxyInfoForEpisode(e, proxyManifest)
         if (info) setDur(info.duration_sec)
-        videoRef.current.src = url
-        videoRef.current.currentTime = st
-        const onReady = () => { setLoading(false); videoRef.current?.removeEventListener('loadeddata', onReady) }
-        videoRef.current.addEventListener('loadeddata', onReady)
+        // 强制重载（同源切换时浏览器不触发 loadeddata）
+        vid.src = ''
+        requestAnimationFrame(() => {
+          vid.src = url
+          vid.currentTime = st
+          const onReady = () => { setLoading(false); vid.removeEventListener('loadeddata', onReady) }
+          vid.addEventListener('loadeddata', onReady)
+        })
       } else {
         fetch(`/preview_video?ep=${e}&t=${st}&task=Task7029`).then(r => r.json()).then(d => {
           if (d?.url && videoRef.current) { videoRef.current.src = d.url; setDur(d.end ? d.end - d.start : 60); setLoading(false) }
@@ -68,9 +74,17 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
 
   useEffect(() => {
     const v = videoRef.current; if (!v) return
-    const t = () => { if (!scrubbing) setPos(v.currentTime) }
+    const t = () => {
+      if (scrubbing) return
+      const ct = v.currentTime
+      setPos(ct)
+      // 自动跟随：播放头超出可视范围 80% 时平移
+      const r = dur / zoom  // 可视范围
+      if (ct > offset + r * 0.8) setOffset(Math.max(0, Math.min(dur - r, ct - r * 0.3)))
+      if (ct < offset + r * 0.1) setOffset(Math.max(0, ct - r * 0.3))
+    }
     const id = setInterval(t, 100); return () => clearInterval(id)
-  }, [scrubbing])
+  }, [scrubbing, dur, zoom, offset])
 
   useEffect(() => {
     const k = (e) => {
@@ -152,7 +166,7 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
           <div style={{ position:'absolute', top:0, left:0, right:0, height:12, display:'flex', justifyContent:'space-between', alignItems:'flex-end', pointerEvents:'none' }}>
             {Array.from({length:5}).map((_,i) => {
               const ts = viewStart + (viewEnd-viewStart)*(i/4)
-              return <span key={i} style={{ fontSize:8, color:'rgba(255,255,255,0.25)', fontFamily:'monospace', lineHeight:1 }}>{tc(ts)}</span>
+              return <span key={i} style={{ fontSize:9, color:'rgba(255,255,255,0.4)', fontFamily:'monospace', lineHeight:1, fontWeight:500 }}>{tc(ts)}</span>
             })}
           </div>
           <div ref={barRef} onMouseDown={scrub}
@@ -167,7 +181,7 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
                 style={{ position:'absolute', top:2, bottom:2, borderRadius:2, left:`${l}%`, width:`${w}%`, background:`${m.color}44`, borderLeft:`1px solid ${m.color}`, cursor:'pointer' }}
                 title={`${Math.floor(m.startSec)}s-${Math.floor(m.endSec)}s`} />
             })}
-            {ep && <div style={{ position:'absolute', top:0, bottom:0, width:2, background:'#fff', zIndex:5, pointerEvents:'none', left:`${((pos-viewStart)/viewLen*100)}%` }} />}
+            {ep && dur > 0 && <div style={{ position:'absolute', top:0, bottom:0, width:2, background:'#fbbf24', zIndex:10, pointerEvents:'none', left:`${((pos-viewStart)/viewLen*100)}%`, transition: scrubbing ? 'none' : 'left 0.05s linear', boxShadow:'0 0 4px rgba(251,191,36,0.6)' }} />}
           </div>
         </div>
 
@@ -178,11 +192,9 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
               left:`${(viewStart/dur)*100}%`, width:`${(1/zoom)*100}%`,
               background:'rgba(255,255,255,0.12)', cursor:'grab' }}
               onMouseDown={(e) => scrollStart(e, 'center')}>
-              {/* 左拖拽手柄 */}
-              <div style={{ position:'absolute', left:0, top:-1, bottom:-1, width:4, cursor:'col-resize', background:'rgba(255,255,255,0.25)', borderRadius:1 }}
+              <div style={{ position:'absolute', left:0, top:-2, bottom:-2, width:6, cursor:'col-resize', background:'rgba(255,255,255,0.4)', borderRadius:2 }}
                 onMouseDown={(e) => scrollStart(e, 'left')} />
-              {/* 右拖拽手柄 */}
-              <div style={{ position:'absolute', right:0, top:-1, bottom:-1, width:4, cursor:'col-resize', background:'rgba(255,255,255,0.25)', borderRadius:1 }}
+              <div style={{ position:'absolute', right:0, top:-2, bottom:-2, width:6, cursor:'col-resize', background:'rgba(255,255,255,0.4)', borderRadius:2 }}
                 onMouseDown={(e) => scrollStart(e, 'right')} />
             </div>
           )}
