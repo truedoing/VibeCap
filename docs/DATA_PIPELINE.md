@@ -278,3 +278,101 @@ VIBECAP/
 | VLM 质量 | 40% | 描述完整度 + 深度分析覆盖 |
 | 字幕提取 | 10% | 结构化字幕覆盖率 |
 | 索引覆盖 | 15% | 是否纳入语义索引 |
+
+---
+
+## 口播采访数据管线 (v0.11)
+
+### 概述
+
+```
+采访音频 (.wav)
+    │
+    ├─→ ASR转写 ──→ sources/asr_*.json
+    │      faster-whisper 或外部ASR
+    │
+    ├─→ classify_transcript.py ──→ sources_clean/classified_*.json
+    │      LLM 逐句分类: content / meta / guide / filler
+    │      标注 importance (1-5)
+    │
+    ├─→ segment_transcript.py ──→ sources_clean/segmented.json
+    │      LLM 采样 + 主题分段 (5-8组观点单元)
+    │
+    ├─→ clean_interview_data.py ──→ sources_clean/classified_enhanced.json
+    │      LLM 批量清洗文本 (去废词/口误) + 说话人识别 (host/guest)
+    │      新增字段: cleaned_text, speaker
+    │
+    └─→ build_interview_index.py ──→ semantic_embeddings.npy + semantic_metas.json
+           BGE 语义索引 (guest-only, speaker边界断开, cleaned_text编码)
+```
+
+### Step 1: ASR 分类 (`classify_transcript.py`)
+
+**用法**: 已集成到 server.py 数据台 UI
+
+**算法**: LLM 逐句分为四层
+- `content`: 实质内容（方法论、数据、案例）
+- `guide`: 引导性语句（承上启下、提出问题）
+- `meta`: 元评论（"这个值得讲""我举个例子"）
+- `filler`: 纯废句（"嗯""对""好"）
+
+**输出**: `classified_*.json` — 原始 ASR 字段 + `layer` + `importance`
+
+### Step 2: 主题分段 (`segment_transcript.py`)
+
+**算法**: 均匀采样 40 句 → LLM 识别 5-8 个观点单元 → 回填到完整 ASR
+
+**输出**: `segmented.json` — `{groups: [{title, summary, start_sec, end_sec, lines}]}`
+
+### Step 3: 数据增强 (`clean_interview_data.py`)
+
+**用法**:
+```bash
+python3 clean_interview_data.py --project 杨老师教育
+# 跳过清洗，只重建索引:
+python3 clean_interview_data.py --project 杨老师教育 --skip-clean
+```
+
+**算法**:
+- **文本清洗**: 批量 25 句 → LLM 修正 ASR 转写错误、删除口语废词、补全残缺句。最小修正原则（不改写为书面语）
+- **说话人识别**: LLM 判断 host/guest。host = 提问/引导/接话；guest = 方法论/数据/案例/长篇论述
+- filler/meta 层自动标记为 host
+
+**输出**: `classified_enhanced.json` — 新增 `cleaned_text` + `speaker` 字段
+
+**实测 (杨老师教育)**:
+```
+467条 → 299句 guest / 168句 host / 38句文本修正 / 88s
+```
+
+### Step 4: BGE 索引构建 (`build_interview_index.py`)
+
+**用法**:
+```bash
+python3 build_interview_index.py --project 杨老师教育
+```
+
+**算法**:
+- 优先使用 `classified_enhanced.json`（guest-only, cleaned_text）
+- **speaker 边界断开**: 不同说话人不合并到同一语义单元
+- 用 `cleaned_text` 编码 BGE 768维向量
+- 保留 `original_text` 字段用于前端展示
+
+**索引质量对比**:
+
+| 指标 | 旧索引 (原始ASR) | 新索引 (enhanced) |
+|---|---|---|
+| 数据源 | 全部 ASR | guest-only, cleaned |
+| 分块策略 | 固定 15s | speaker边界 + 15s |
+| 索引单元 | 73 条 | 66 条 |
+| 主持人污染 | "对""你讲吧"混入结果 | 零污染 |
+| 模型加载 | 194s (HF mirror) | 8s (HF_HUB_OFFLINE=1) |
+
+### Step 5: 质量评分
+
+| 维度 | 权重 | 检测逻辑 |
+|---|---|---|
+| ASR 完整度 | 30% | content 占比 + 平均段长 |
+| 分类质量 | 25% | filler 占比 + guide/content 比例 |
+| 说话人分离 | 20% | guest 占比 + host 过滤率 |
+| 索引覆盖 | 25% | 语义单元数 + 时间分布均匀度 |
