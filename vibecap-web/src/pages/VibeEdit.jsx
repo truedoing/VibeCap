@@ -49,37 +49,51 @@ function HBar({ onMouseDown }) {
 // ═══════════════════════════════════
 // 程序引擎数据加载
 // ═══════════════════════════════════
-function ProgramLoader({ prgTLRef, proxyManifest, onReady }) {
+function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments }) {
   const engine = useTimelineEngine()
   const { project, saveTimelineCache } = useProject()
   const didInit = useRef(false)
   const saveTimer = useRef(null)
 
-  // 初始化：创建 4 个固定轨道（一次性，不覆盖）
+  // v0.11: 从 segments 检测是否为口播 interview 模式
+  const isInterview = segments?.length > 0 && segments.some(s => s.source_start > 0)
+
+  // 初始化：口播2轨 / 电视剧4轨
+  // 依赖 isInterview：segments 异步到达后触发重初始化切换到 interview 模式
   useEffect(() => {
     try {
     programEngineRef.current = engine
     window.__vibe_prg_engine = engine
-    if (didInit.current) return
+
+    // v0.11: 若已初始化但 segments 到达后检测到模式需要从 drama→interview 切换，则强制重初始化
+    // initTrigger 递增会触发此 effect 重新执行
     const timeline = project?.timeline
     const mediaCache = project?.mediaCache
     const vibeTimeline = project?.vibe_timeline
     const vibeMediaCache = project?.vibe_mediaCache
+
     if (vibeTimeline && vibeMediaCache?.assets) {
-      engine.loadProject(vibeTimeline)
-      const store = useMediaLibraryStore.getState()
-      for (const id of (vibeMediaCache.order || [])) {
-        if (vibeMediaCache.assets[id] && !store.assets[id]) store.addAsset(vibeMediaCache.assets[id])
+      if (didInit.current) return
+      // v0.11: 检测缓存模式是否匹配 (drama=4轨, interview=2轨)
+      const cachedTrackCount = vibeTimeline.tracks?.length || 0
+      const expectedTrackCount = isInterview ? 2 : 4
+      if (cachedTrackCount !== expectedTrackCount) {
+        console.log(`[prg] 缓存模式不匹配 (cached=${cachedTrackCount} expected=${expectedTrackCount}), 重新初始化`)
+        // 跳过缓存，继续下方新布局创建
+      } else {
+        engine.loadProject(vibeTimeline)
+        const store = useMediaLibraryStore.getState()
+        for (const id of (vibeMediaCache.order || [])) {
+          if (vibeMediaCache.assets[id] && !store.assets[id]) store.addAsset(vibeMediaCache.assets[id])
+        }
+        didInit.current = true
+        if (onReady) setTimeout(onReady, 50)
+        setTimeout(() => prgTLRef?.current?.fitToWindow(), 100)
+        return
       }
-      didInit.current = true
-      if (onReady) setTimeout(onReady, 50)
-      setTimeout(() => prgTLRef?.current?.fitToWindow(), 100)
-      return
     }
+
     clearLinkedPairs()
-    // v0.11: 口播2轨, 电视剧4轨 (segments有source_start → interview)
-    const hasDirectSource = window.__vibe_segments?.some?.(s => s.source_start > 0)
-    const isInterview = hasDirectSource
     const t = isInterview ? [
       { id: generateId(), name: '原声主镜头', kind: 'video', order: 0, height: 52, locked: false, disabled: false, muted: false, solo: false, volume: 1 },
       { id: generateId(), name: '原声主镜头 音频', kind: 'audio', order: 0, height: 44, locked: false, disabled: false, muted: false, solo: false },
@@ -89,6 +103,21 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady }) {
       { id: generateId(), name: '原声主镜头 音频', kind: 'audio', order: 1, height: 44, locked: false, disabled: false, muted: false, solo: false },
       { id: generateId(), name: '旁白 TTS', kind: 'audio', order: 3, height: 44, locked: false, disabled: false, muted: false, solo: false },
     ]
+
+    // 如果之前已初始化为不同模式，先清除旧轨道
+    if (didInit.current) {
+      const prj = engine.getProject()
+      const prevTrackCount = prj.tracks?.length || 0
+      const newTrackCount = t.length
+      if (prevTrackCount !== newTrackCount) {
+        // 移除所有旧 clips
+        for (const track of prj.tracks) {
+          const clips = prj.clips[track.id] || []
+          for (const c of [...clips]) engine.removeClip(c.id, track.id)
+        }
+      }
+    }
+
     const c = {}
     t.forEach(tr => { c[tr.id] = [] })
     engine.loadProject({ id: 'vibecap-prg', fps: FPS, stage: STAGE, tracks: t, clips: c, transitions: [], version: 1, masterVolume: 1 })
@@ -96,7 +125,78 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady }) {
     if (onReady) setTimeout(onReady, 50)
     setTimeout(() => prgTLRef?.current?.fitToWindow(), 100)
     } catch(e) { console.error('[prg] init error:', e) }
-  }, [engine])
+  }, [engine, isInterview])
+
+  // v0.11: 口播自动建轨 — segments + proxy 就绪后，一键铺满时间轴
+  const didAutoBuild = useRef(false)
+  useEffect(() => {
+    // 重置标记：缓存被清除时（rebuild），允许重新 auto-build
+    if (!project?.vibe_timeline) didAutoBuild.current = false
+  }, [project?.vibe_timeline])
+
+  useEffect(() => {
+    if (!isInterview || !didInit.current || didAutoBuild.current) return
+    if (!segments?.length || !proxyManifest?.proxies?.length) return
+    // 已有缓存 timeline → 保留用户手动编辑成果
+    if (project?.vibe_timeline) return
+
+    try {
+      // 1. segments → picks（有精切 sub_clips 则只用 KEEP，否则用粗段边界）
+      const hasSubClips = segments.some(s => s.sub_clips?.length > 0)
+      const picks = {}
+
+      if (hasSubClips) {
+        // ── 精切模式：每个 KEEP sub_clip 独立为一段 ──
+        let idx = 0
+        for (const seg of segments) {
+          for (const sc of (seg.sub_clips || [])) {
+            if (sc.decision !== 'KEEP') continue
+            const ep = seg.episode_marker?.episode || seg.video_episode || 1
+            const key = `${seg.seg_id ?? 0}_${idx++}`
+            picks[key] = { main: [{ ep, sourceStartSec: sc.start, sourceEndSec: sc.end }] }
+          }
+        }
+      } else {
+        // ── 粗段模式：逐段用 source_start/end ──
+        const sorted = [...segments].sort((a, b) => (a.seg_id ?? 0) - (b.seg_id ?? 0))
+        sorted.forEach(s => {
+          const ep = s.episode_marker?.episode || s.video_episode || 1
+          const startSec = s.source_start ?? 0
+          const endSec = s.source_end ?? (startSec + 5)
+          if (startSec <= 0 && endSec <= 0) return
+          const key = `${s.seg_id ?? 0}_0`
+          picks[key] = { main: [{ ep, sourceStartSec: startSec, sourceEndSec: endSec }] }
+        })
+      }
+
+      if (Object.keys(picks).length === 0) return
+
+      // 2. build project（复用 timelineBuilder 的 interview 模式）
+      const { project: elahProject, mediaList } = buildProjectFromProxyPicks(
+        picks, proxyManifest, [], { mode: 'interview' }
+      )
+
+      // 3. 加载到 engine（替换空轨道）
+      engine.loadProject(elahProject)
+
+      // 4. 注册媒体资源到 MediaLibrary
+      const store = useMediaLibraryStore.getState()
+      const order = []
+      for (const m of mediaList) {
+        if (!store.assets[m.assetId]) store.addAsset(m)
+        order.push(m.assetId)
+      }
+
+      // 5. 持久化缓存
+      saveTimelineCache(elahProject, { assets: { ...store.assets }, order }, 'vibe')
+
+      didAutoBuild.current = true
+      if (onReady) setTimeout(onReady, 50)
+      setTimeout(() => prgTLRef?.current?.fitToWindow(), 100)
+
+      console.log(`[prg] 🎬 口播自动建轨: ${Object.keys(picks).length} clips → 时间轴${hasSubClips ? ' (精切)' : ' (粗段)'}`)
+    } catch (e) { console.error('[prg] auto-build error:', e) }
+  }, [isInterview, didInit.current, segments, proxyManifest, project?.vibe_timeline])
 
   // proxyManifest 就绪 → 给空轨道加占位 clip（确保轨道显示）
   const didPlaceholders = useRef(false)
@@ -268,6 +368,7 @@ export default function VibeEdit() {
   }
 
   const chatCtx = { sid: curSid, seq: curSeq, narration: curNarration, taskId }
+  const isInterview = segments?.length > 0 && segments.some(s => s.source_start > 0)
   const proxyEps = proxyManifest?.proxies?.map(p => p.ep)?.join(",") || ""
   const leftW = scriptCollapsed ? 0 : scriptW
   const rightW = aiCollapsed ? 0 : aiW
@@ -276,7 +377,7 @@ export default function VibeEdit() {
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* ── 节目引擎 ── */}
       <EditorProvider fps={FPS} defaultTrackHeight={36} stage={STAGE}>
-        <ProgramLoader prgTLRef={prgTLRef} proxyManifest={proxyManifest} onReady={() => setPrgReady(true)} />
+        <ProgramLoader prgTLRef={prgTLRef} proxyManifest={proxyManifest} onReady={() => setPrgReady(true)} segments={segments} />
         <ClipLinker />
 
         <div className="elah-root" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
@@ -317,7 +418,7 @@ export default function VibeEdit() {
               <button onClick={() => setAiCollapsed(true)} className="text-muted-foreground hover:text-foreground">▶</button>
             </div>
             <div style={{ flex: `${100 - bottomPct}%`, minHeight: 0, overflow: 'hidden' }}>
-              <ChatPanel context={chatCtx} onPreview={handlePreviewClick} onPick={null} onSearch={handleSearch} onSuggestions={setStorySuggestions} eps={proxyEps} />
+              <ChatPanel context={chatCtx} onPreview={handlePreviewClick} onPick={null} onSearch={handleSearch} onSuggestions={setStorySuggestions} eps={proxyEps} isInterview={isInterview} />
             </div>
             {/* AI搜索 / 源预览 分隔条 — 拖拽同步两侧底部面板高度 */}
             <div onMouseDown={(e) => {

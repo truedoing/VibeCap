@@ -50,6 +50,7 @@ const SourcePanel = memo(function SourcePanel({
   searchInputRef, searchQuery, setSearchQuery, searchMode, setSearchMode, doSearch, searching,
   searchResults, setSearchResults, matchSet, isMatch, hl,
   segments, selectedIdx, addSegmentFromLine,
+  onCollapse,
 }) {
   const [visibleRange, setVisibleRange] = useState([0, 60])
   const scrollRef = useRef(null)
@@ -72,12 +73,13 @@ const SourcePanel = memo(function SourcePanel({
     <>
       <div style={S.panelHeader}>
         <div style={S.flexRow}>
-          <span style={S.headerTitle}>转写素材</span>
+          <span style={S.headerTitle}>口播素材</span>
           {asrLoaded && <span style={{ marginLeft: 6, fontSize: F.sm, color: '#6b7280' }}>
             {groups.length} 段 · {asrStats.content || 0} 句
           </span>}
         </div>
         <div style={{ ...S.flexRow, gap: 4 }}>
+          <button onClick={onCollapse} style={{ ...S.headerBtn(false), fontSize: 11, padding: '1px 6px' }} title="折叠">◀</button>
           <button onClick={() => setCollapsedGroups({})} style={S.headerBtn(false)}>展开</button>
           <button onClick={() => { const a = {}; groups.forEach((_, i) => { a[i] = true }); setCollapsedGroups(a) }} style={S.headerBtn(false)}>折叠</button>
           <button onClick={() => setFilterMode(filterMode === 'all' ? 'content' : 'all')} style={{
@@ -176,12 +178,47 @@ const ScriptPanel = memo(function ScriptPanel({
   moveSegment, removeSegment, updateSegment,
   generating, genMsg, exportJSON,
 }) {
+  const [scriptTab, setScriptTab] = useState('coarse')  // 'coarse' | 'refine'
+  const hasRefine = useMemo(() => segments.some(s => s.sub_clips?.length > 0), [segments])
+  const allSubClips = useMemo(() => {
+    if (!hasRefine) return []
+    const r = []
+    for (const seg of segments) {
+      for (const sc of (seg.sub_clips || [])) r.push({ ...sc, seg_id: seg.seg_id })
+    }
+    return r.sort((a, b) => a.start - b.start)
+  }, [segments, hasRefine])
+
+  const refineStats = useMemo(() => {
+    let keep = 0, cut = 0
+    for (const sc of allSubClips) {
+      if (sc.decision === 'KEEP') keep++; else cut++
+    }
+    return { keep, cut }
+  }, [allSubClips])
+
   return (
     <>
       <div style={S.panelHeader}>
         <div style={S.flexRow}>
           <span style={S.headerTitle}>剪辑脚本</span>
           {segments.length > 0 && <span style={{ marginLeft: 6, fontSize: F.sm, color: '#6b7280' }}>{segments.length} 段</span>}
+          {/* 精切页签 */}
+          {hasRefine && (
+            <div style={{ display: 'flex', marginLeft: 10, gap: 0 }}>
+              <button onClick={() => setScriptTab('coarse')}
+                style={{ fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: '5px 0 0 5px', border: '1px solid rgba(139,92,246,0.2)', cursor: 'pointer',
+                  background: scriptTab === 'coarse' ? 'rgba(139,92,246,0.15)' : 'rgba(255,255,255,0.03)',
+                  color: scriptTab === 'coarse' ? '#c4b5fd' : '#6b7280', transition: 'all 0.15s' }}>📝 粗剪</button>
+              <button onClick={() => setScriptTab('refine')}
+                style={{ fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: '0 5px 5px 0', border: '1px solid rgba(16,185,129,0.2)', cursor: 'pointer',
+                  background: scriptTab === 'refine' ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.03)',
+                  color: scriptTab === 'refine' ? '#6ee7b7' : '#6b7280', transition: 'all 0.15s', borderLeft: 0 }}>
+                ✂️ 精切
+                <span style={{ marginLeft: 5, fontSize: 10, opacity: 0.7 }}>{refineStats.keep}K/{refineStats.cut}C</span>
+              </button>
+            </div>
+          )}
         </div>
         <div style={{ ...S.flexRow, gap: 4 }}>
           <button onClick={() => { setSegments([]); setGenResult(null); setTopic(''); setOutline([]) }}
@@ -217,30 +254,68 @@ const ScriptPanel = memo(function ScriptPanel({
         </div>
       </div>
 
-      {/* 脚本列表 */}
+      {/* 脚本列表 / 精切视图 */}
       <div style={{ flex: 1, overflow: 'auto', padding: '6px 8px' }}>
-        {segments.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#6b7280', fontSize: F.sm, marginTop: 50 }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>📝</div>
-            填入主题后点「AI 生成」<br />
-            <span style={{ fontSize: F.sm, color: '#4b5563' }}>或从左侧素材栏点 + 手动添加</span>
-          </div>
+        {scriptTab === 'refine' && hasRefine ? (
+          /* ── 精切视图 ── */
+          allSubClips.length === 0 ? (
+            <div style={{ textAlign: 'center', color: '#6b7280', fontSize: F.sm, marginTop: 50 }}>暂无精切数据</div>
+          ) : (
+            <div style={{ spaceY: 1 }}>
+              {allSubClips.map((sc, i) => {
+                const isKeep = sc.decision === 'KEEP'
+                const dur = sc.end - sc.start
+                return (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 6, padding: '5px 8px', marginBottom: 3, borderRadius: 4, fontSize: F.sm,
+                    background: isKeep ? 'rgba(16,185,129,0.04)' : 'rgba(239,68,68,0.04)',
+                    borderLeft: `3px solid ${isKeep ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.3)'}`,
+                  }}>
+                    <span style={{ fontWeight: 600, color: isKeep ? '#6ee7b7' : '#f87171', flexShrink: 0, fontSize: 13, lineHeight: 1.3 }}>
+                      {isKeep ? '✅' : '❌'}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', gap: 6, marginBottom: 2 }}>
+                        <span style={{ color: '#6b7280', fontFamily: 'monospace', fontSize: F.xs }}>S{sc.seg_id} {sc.start.toFixed(0)}s-{sc.end.toFixed(0)}s</span>
+                        <span style={{ color: isKeep ? '#6ee7b7' : '#f87171', fontWeight: 500, fontSize: F.xs }}>
+                          {dur.toFixed(1)}s
+                        </span>
+                        <span style={{ color: '#6b7280', fontSize: F.xs }}>{sc.speaker}</span>
+                      </div>
+                      <span style={{ color: isKeep ? '#d1d5db' : '#9ca3af', textDecoration: isKeep ? 'none' : 'line-through', fontSize: F.sm, lineHeight: 1.5 }}>
+                        {sc.text}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )
         ) : (
-          segments.map((seg, idx) => (
-            <SegmentCard key={idx}
-              seg={seg} idx={idx}
-              isSelected={selectedIdx === idx}
-              isEditing={editingIdx === idx}
-              onSelect={() => setSelectedIdx(idx)}
-              onEdit={() => setEditingIdx(editingIdx === idx ? null : idx)}
-              onMoveUp={() => moveSegment(idx, idx - 1)}
-              onMoveDown={() => moveSegment(idx, idx + 1)}
-              onRemove={() => removeSegment(idx)}
-              onUpdate={(f, v) => updateSegment(idx, f, v)}
-              canMoveUp={idx > 0}
-              canMoveDown={idx < segments.length - 1}
-            />
-          ))
+          /* ── 粗剪视图 ── */
+          segments.length === 0 ? (
+            <div style={{ textAlign: 'center', color: '#6b7280', fontSize: F.sm, marginTop: 50 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📝</div>
+              填入主题后点「AI 生成」<br />
+              <span style={{ fontSize: F.sm, color: '#4b5563' }}>或从左侧素材栏点 + 手动添加</span>
+            </div>
+          ) : (
+            segments.map((seg, idx) => (
+              <SegmentCard key={idx}
+                seg={seg} idx={idx}
+                isSelected={selectedIdx === idx}
+                isEditing={editingIdx === idx}
+                onSelect={() => setSelectedIdx(idx)}
+                onEdit={() => setEditingIdx(editingIdx === idx ? null : idx)}
+                onMoveUp={() => moveSegment(idx, idx - 1)}
+                onMoveDown={() => moveSegment(idx, idx + 1)}
+                onRemove={() => removeSegment(idx)}
+                onUpdate={(f, v) => updateSegment(idx, f, v)}
+                canMoveUp={idx > 0}
+                canMoveDown={idx < segments.length - 1}
+              />
+            ))
+          )
         )}
       </div>
     </>
@@ -254,10 +329,10 @@ const SegmentCard = memo(function SegmentCard({ seg, idx, isSelected, isEditing,
         background: isSelected ? 'rgba(96,165,250,0.06)' : S.bgCard,
         border: `1px solid ${isSelected ? '#60a5fa' : isEditing ? '#60a5fa' : '#232938'}`,
         overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px', background: 'rgba(0,0,0,0.2)', borderBottom: S.borderSubtle }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: 'rgba(0,0,0,0.2)', borderBottom: S.borderSubtle }}>
         <span style={{ fontSize: F.xs, fontWeight: 700, color: '#e5e7eb', minWidth: 20 }}>S{idx}</span>
-        {seg.topic && <span style={{ fontSize: 7, padding: '0 3px', borderRadius: 2, background: S.purpleBg, color: '#a78bfa' }}>{seg.topic}</span>}
-        <span style={{ fontSize: 7, fontFamily: 'monospace', color: '#6b7280' }}>{tc(seg.source_start)}-{tc(seg.source_end)}</span>
+        {seg.topic && <span style={{ fontSize: F.xs, padding: '1px 5px', borderRadius: 2, background: S.purpleBg, color: '#a78bfa' }}>{seg.topic}</span>}
+        <span style={{ fontSize: F.xs, fontFamily: 'monospace', color: '#6b7280' }}>{tc(seg.source_start)}-{tc(seg.source_end)}</span>
         <div style={{ flex: 1 }} />
         <button onClick={onMoveUp} disabled={!canMoveUp} style={smallBtn(canMoveUp)}>↑</button>
         <button onClick={onMoveDown} disabled={!canMoveDown} style={smallBtn(canMoveDown)}>↓</button>
@@ -299,7 +374,78 @@ const numInputStyle = { flex: 1, padding: '2px 4px', fontSize: F.xs, fontFamily:
 const selectInputStyle = { padding: '2px 4px', fontSize: F.xs, background: S.bgPanel, color: '#e5e7eb', border: S.borderSubtle, borderRadius: 3, outline: 'none' }
 
 // ── 右侧：AI 助手 ──
-const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, setTopic, genLog, generating, generateScript, topic }) {
+/* ── 精剪结果卡片（可展开详情）── */
+function RefineResultCard({ refineResult, segments }) {
+  const [show, setShow] = useState(false)
+  const allSubClips = useMemo(() => {
+    const r = []
+    for (const seg of segments) {
+      for (const sc of (seg.sub_clips || [])) {
+        r.push({ ...sc, seg_id: seg.seg_id })
+      }
+    }
+    return r.sort((a, b) => a.start - b.start)
+  }, [segments])
+
+  return (
+    <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <div style={{ fontWeight: 600, color: '#6ee7b7', fontSize: 10 }}>✅ 精剪完成</div>
+          <div style={{ display: 'flex', gap: 6, fontSize: 9, color: '#9ca3af', marginTop: 1 }}>
+            <span style={{ color: '#6ee7b7', fontWeight: 600 }}>{refineResult.keep} 保留</span>
+            <span style={{ color: '#f87171', fontWeight: 600 }}>{refineResult.cut} 删除</span>
+            <span>保留 {refineResult.keep_duration}s</span>
+            <span style={{ color: '#6b7280' }}>删除 {refineResult.cut_duration}s</span>
+          </div>
+        </div>
+        <button onClick={() => setShow(!show)}
+          style={{ background: 'none', border: 'none', color: '#6ee7b7', cursor: 'pointer', fontSize: 10, padding: '2px 4px' }}>
+          {show ? '收起 ▲' : '详情 ▼'}
+        </button>
+      </div>
+
+      {show && (
+        <div style={{ marginTop: 6, maxHeight: 260, overflowY: 'auto' }}>
+          {allSubClips.length === 0 ? (
+            <div style={{ fontSize: 9, color: '#6b7280', padding: 4 }}>暂无精切数据，请确认 segments 已包含 sub_clips</div>
+          ) : (
+            <div className="space-y-0.5">
+              {allSubClips.map((sc, i) => {
+                const isKeep = sc.decision === 'KEEP'
+                const dur = sc.end - sc.start
+                return (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 4, padding: '3px 4px', borderRadius: 3, fontSize: 9,
+                    background: isKeep ? 'rgba(16,185,129,0.06)' : 'rgba(239,68,68,0.06)',
+                    borderLeft: `2px solid ${isKeep ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.4)'}`,
+                  }}>
+                    <span style={{ fontWeight: 600, color: isKeep ? '#6ee7b7' : '#f87171', flexShrink: 0 }}>
+                      {isKeep ? '✅' : '❌'}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', gap: 4, marginBottom: 1 }}>
+                        <span style={{ color: '#6b7280', fontFamily: 'monospace' }}>S{sc.seg_id}</span>
+                        <span style={{ color: isKeep ? '#6ee7b7' : '#f87171', fontWeight: 500 }}>{dur.toFixed(1)}s</span>
+                        <span style={{ color: '#6b7280' }}>{sc.speaker}</span>
+                      </div>
+                      <span style={{ color: isKeep ? '#d1d5db' : '#9ca3af', textDecoration: isKeep ? 'none' : 'line-through' }}>
+                        {sc.text.length > 50 ? sc.text.substring(0, 50) + '...' : sc.text}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, setTopic, genLog, generating, generateScript, topic,
+  refining, refineResult, handleRefine }) {
   const [tab, setTab] = useState('ai')
   const [selTheme, setSelTheme] = useState(null)
 
@@ -324,13 +470,39 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
 
       {tab === 'ai' ? (
         <div style={{ flex: 1, overflow: 'auto', padding: 8, fontSize: 10 }}>
-          {/* AI 生成按钮 */}
-          <button onClick={generateScript} disabled={generating || !topic?.trim()}
-            style={{ width: '100%', padding: '6px 0', marginBottom: 10, borderRadius: 6, border: 'none', cursor: (generating || !topic?.trim()) ? 'not-allowed' : 'pointer',
-              background: (!generating && topic?.trim()) ? 'linear-gradient(135deg, rgba(139,92,246,0.3), rgba(34,197,94,0.2))' : 'rgba(255,255,255,0.03)',
-              color: (!generating && topic?.trim()) ? '#e5e7eb' : '#6b7280', fontSize: 14, fontWeight: 700 }}>
-            {generating ? '⏳ 生成中...' : '🧠 AI 生成脚本'}
-          </button>
+          {/* ── 生成 + 精剪 按钮组 ── */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+            <button onClick={generateScript} disabled={generating || !topic?.trim()}
+              style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
+                cursor: (generating || !topic?.trim()) ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
+                background: (!generating && topic?.trim()) ? 'linear-gradient(135deg, rgba(139,92,246,0.3), rgba(34,197,94,0.2))' : 'rgba(255,255,255,0.04)',
+                color: (!generating && topic?.trim()) ? '#e5e7eb' : '#6b7280' }}>
+              {generating ? '⏳ 生成中...' : '🧠 AI 生成脚本'}
+            </button>
+
+            {segments.length > 0 && (
+              <button onClick={handleRefine} disabled={refining}
+                style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
+                  cursor: refining ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
+                  background: refining ? 'rgba(255,255,255,0.04)' : 'linear-gradient(135deg, rgba(16,185,129,0.25), rgba(5,150,105,0.15))',
+                  color: refining ? '#6b7280' : '#6ee7b7' }}>
+                {refining ? '⏳ 精切中...' : '✂️ 精剪'}
+              </button>
+            )}
+          </div>
+
+          {/* 精剪结果摘要 */}
+          {refineResult && (
+            <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)' }}>
+              <div style={{ fontWeight: 600, color: '#6ee7b7', fontSize: 10 }}>✅ 精剪完成</div>
+              <div style={{ display: 'flex', gap: 6, fontSize: 9, color: '#9ca3af', marginTop: 1 }}>
+                <span style={{ color: '#6ee7b7', fontWeight: 600 }}>{refineResult.keep} 保留</span>
+                <span style={{ color: '#f87171', fontWeight: 600 }}>{refineResult.cut} 删除</span>
+                <span style={{ color: '#6b7280' }}>在「剪辑脚本 → 精切」查看</span>
+              </div>
+            </div>
+          )}
+
           {/* 统计 */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
             {stats.map((st, i) => (
@@ -463,6 +635,8 @@ export default function PlanningDesk() {
     { label: '深层洞察', narrative_role: 'insight' },
   ])
   const [generating, setGenerating] = useState(false)
+  const [refining, setRefining] = useState(false)
+  const [refineResult, setRefineResult] = useState(null)  // { keep, cut, keep_duration, cut_duration }
 
   const [segments, setSegments] = useState([])
   const [editingIdx, setEditingIdx] = useState(null)
@@ -488,6 +662,7 @@ export default function PlanningDesk() {
 
   // ── UI 状态 ──
   const [leftW, setLeftW] = useState(510)
+  const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightW, setRightW] = useState(450)
   const [rightTab, setRightTab] = useState('ai')
 
@@ -622,6 +797,39 @@ export default function PlanningDesk() {
     finally { setGenerating(false); setGenMsg('') }
   }, [topic])
 
+  // ── 精剪 (POST /script/refine SSE) ──
+  const handleRefine = useCallback(async () => {
+    if (!segments?.length) return
+    setRefining(true); setRefineResult(null)
+    try {
+      const resp = await fetch('/script/refine', { method: 'POST' })
+      const reader = resp.body.getReader(); const decoder = new TextDecoder()
+      let buf = ''; let currentEvent = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n'); buf = lines.pop() || ''
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (trimmed.startsWith('event: ')) { currentEvent = trimmed.slice(7); continue }
+          if (!trimmed.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(trimmed.slice(6))
+            if (currentEvent === 'complete' && data.ok) {
+              setRefineResult(data.summary)
+              // 更新 segments 为精切版（含 sub_clips）
+              if (data.segments) setSegments(data.segments)
+            } else if (currentEvent === 'error') {
+              setError(data.error || '精切失败')
+            }
+          } catch {}
+        }
+      }
+    } catch (e) { setError('精切网络错误: ' + e.message) }
+    finally { setRefining(false) }
+  }, [segments])
+
   const updateOutlineItem = useCallback((idx, f, v) => { setOutline(prev => prev.map((o, i) => i === idx ? { ...o, [f]: v } : o)) }, [])
   const addOutlineItem = useCallback(() => { setOutline(prev => [...prev, { label: '新段落', narrative_role: 'evidence' }]) }, [])
   const removeOutlineItem = useCallback((idx) => { setOutline(prev => prev.filter((_, i) => i !== idx)) }, [])
@@ -634,18 +842,27 @@ export default function PlanningDesk() {
   }, [exportJSON])
 
   const rightW_final = rightTab === 'ai' ? rightW : 0
+  const leftPanelW = leftCollapsed ? 0 : leftW
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      <div style={{ width: leftW, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: S.border, overflow: 'hidden' }}>
-        <SourcePanel {...{ transcript, asrLoaded, asrGroups, asrStats, classifiedSegs, filterMode, setFilterMode, collapsedGroups, setCollapsedGroups, toggleGroup, searchInputRef, searchQuery, setSearchQuery, searchMode, setSearchMode, doSearch, searching, searchResults, setSearchResults, matchSet, isMatch, hl, segments, selectedIdx, addSegmentFromLine }} />
-      </div>
-      <Divider onDrag={dragX(() => leftW, setLeftW, 360)} />
+      {/* 左侧折叠条 */}
+      {leftCollapsed ? (
+        <div style={{ width: 4, flexShrink: 0, cursor: 'col-resize', background: S.border }}
+          onClick={() => setLeftCollapsed(false)} title="展开素材" />
+      ) : (
+        <>
+          <div style={{ width: leftPanelW, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: S.border, overflow: 'hidden' }}>
+            <SourcePanel {...{ transcript, asrLoaded, asrGroups, asrStats, classifiedSegs, filterMode, setFilterMode, collapsedGroups, setCollapsedGroups, toggleGroup, searchInputRef, searchQuery, setSearchQuery, searchMode, setSearchMode, doSearch, searching, searchResults, setSearchResults, matchSet, isMatch, hl, segments, selectedIdx, addSegmentFromLine, onCollapse: () => setLeftCollapsed(true) }} />
+          </div>
+          <Divider onDrag={dragX(() => leftW, setLeftW, 360)} />
+        </>
+      )}
       <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON }} />
       </div>
       <Divider onDrag={dragX(() => rightW, setRightW, 360)} />
       <div style={{ width: rightW, flexShrink: 0, display: rightW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: S.border, overflow: 'hidden' }}>
-        <AIPanel report={report} genResult={genResult} segments={segments} asrStats={asrStats} setTopic={setTopic} genLog={genLog} generating={generating} generateScript={generateScript} topic={topic} />
+        <AIPanel report={report} genResult={genResult} segments={segments} asrStats={asrStats} setTopic={setTopic} genLog={genLog} generating={generating} generateScript={generateScript} topic={topic} refining={refining} refineResult={refineResult} handleRefine={handleRefine} />
       </div>
     </div>
   )

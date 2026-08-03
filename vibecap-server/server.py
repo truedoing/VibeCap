@@ -472,14 +472,23 @@ class Handler(SimpleHTTPRequestHandler):
                 task_obj = db.get_task(drama_id, task)
                 if task_obj:
                     segments = db.get_task_segments(task_obj["id"])
-                    self._json({"segments": segments, "total_segments": len(segments)})
-                    return
-            # fallback: 从文件读取
+                    if segments and len(segments) > 0:
+                        self._json({"segments": segments, "total_segments": len(segments)})
+                        return
+            # fallback: 从文件读取 (先查任务级 segments.json，再查项目级 文案脚本.json)
             seg_file = self._resolve_task_dir(task) / "segments.json"
             if seg_file.exists():
                 self._json(json.load(open(seg_file)))
             else:
-                self._json({"segments": [], "total_segments": 0})
+                # v0.11: 兜底 — 项目级 文案脚本.json 的 segments 字段
+                script_file = PROJECT_DIR / "tasks" / "文案脚本.json"
+                if script_file.exists():
+                    script_data = json.load(open(script_file))
+                    segs = script_data.get("segments", [])
+                    self._json({"segments": segs, "total_segments": len(segs),
+                                "source": "文案脚本.json (project-level)"})
+                else:
+                    self._json({"segments": [], "total_segments": 0})
         elif path == "/preview_video":
             task = req_task or _args.task
             end_str = params.get("end", [None])[0]
@@ -684,6 +693,8 @@ class Handler(SimpleHTTPRequestHandler):
             self._handle_generate_script_stream()
         elif path == "/script/generate_story_first":
             self._handle_generate_story_first()
+        elif path == "/script/refine":
+            self._handle_refine()
         elif path == "/asr/raw":
             self._handle_asr_raw()
         else:
@@ -2235,7 +2246,31 @@ class Handler(SimpleHTTPRequestHandler):
                 json.dump(save_data, open(script_file, "w"), ensure_ascii=False, indent=2)
                 result["script_file"] = str(script_file)
                 result["script_file_url"] = f"/tasks/文案脚本.json"
-                print(f"[pipeline] 文案脚本已保存: {script_file}")
+
+                # ── v0.11: 同步写入任务级 segments.json (VibeEdit 加载此文件) ──
+                task_dir = tasks_dir / (_args.task or "default")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                seg_file = task_dir / "segments.json"
+                hook_line = ""
+                closing_line = ""
+                for s in result["segments"]:
+                    t = s.get("topic", "")
+                    if ("hook" in t.lower() or "开场" in t) and not hook_line:
+                        hook_line = s.get("highlight_text", "")
+                    if ("收尾" in t or "洞察" in t or "closing" in t.lower()) and not closing_line:
+                        closing_line = s.get("highlight_text", "")
+                seg_data = {
+                    "task_type": "interview",
+                    "source": result.get("source", "学习新东方"),
+                    "total_segments": len(result["segments"]),
+                    "target_duration": result.get("time_estimate", {}).get("target", "~60s"),
+                    "hook_line": hook_line,
+                    "closing_line": closing_line,
+                    "audio_verified": False,
+                    "segments": result["segments"],
+                }
+                json.dump(seg_data, open(seg_file, "w"), ensure_ascii=False, indent=2)
+                print(f"[pipeline] segments.json 已同步到任务目录: {seg_file}")
 
                 emit("complete", result)
             else:
@@ -2325,6 +2360,31 @@ class Handler(SimpleHTTPRequestHandler):
                 result["script_file"] = str(script_file)
                 result["script_file_url"] = f"/tasks/文案脚本.json"
 
+                # ── v0.11: 同步写入任务级 segments.json (VibeEdit 加载此文件) ──
+                task_dir = tasks_dir / (_args.task or "default")
+                task_dir.mkdir(parents=True, exist_ok=True)
+                seg_file = task_dir / "segments.json"
+                hook_line = ""
+                closing_line = ""
+                for s in result["segments"]:
+                    t = s.get("topic", "")
+                    if "hook" in t.lower() and not hook_line:
+                        hook_line = s.get("highlight_text", "")
+                    if ("收尾" in t or "洞察" in t or "closing" in t.lower()) and not closing_line:
+                        closing_line = s.get("highlight_text", "")
+                seg_data = {
+                    "task_type": "interview",
+                    "source": result.get("source", "学习新东方"),
+                    "total_segments": len(result["segments"]),
+                    "target_duration": result.get("time_estimate", {}).get("target", "~60s"),
+                    "hook_line": hook_line,
+                    "closing_line": closing_line,
+                    "audio_verified": False,
+                    "segments": result["segments"],
+                }
+                json.dump(seg_data, open(seg_file, "w"), ensure_ascii=False, indent=2)
+                print(f"[story-first] segments.json 已同步到任务目录: {seg_file}")
+
                 # ── v0.11: 同步写入 SQLite ──
                 try:
                     drama_id = db.get_drama_id(_project_name)
@@ -2353,6 +2413,71 @@ class Handler(SimpleHTTPRequestHandler):
             try: emit("error", {"error": str(e)[:200]})
             except: pass
             heartbeat_active[0] = False
+
+    def _handle_refine(self):
+        """POST /script/refine — 从策划台手动触发精切 (SSE)"""
+        task_name = _args.task or "default"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        def emit(event, data):
+            self.wfile.write(f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
+            self.wfile.flush()
+
+        try:
+            emit("progress", {"step": "refine", "status": "running", "msg": "加载数据..."})
+
+            from refine_segments import refine, load_data
+            segs, utts = load_data(_project_name, task_name)
+
+            if not segs:
+                emit("error", {"error": "未找到粗剪 segments，请先生成脚本"})
+                return
+            if not utts:
+                emit("error", {"error": "未找到 classified_enhanced 数据，请先运行数据管线"})
+                return
+
+            emit("progress", {"step": "refine", "status": "running",
+                "msg": f"精切中... {len(segs)} 粗段, {len(utts)} 条标注"})
+
+            refined_segs = refine(segs, utts)
+
+            # 读回原文件、更新、写回
+            seg_file = PROJECT_DIR / "tasks" / task_name / "segments.json"
+            original = json.load(open(seg_file))
+            original["segments"] = refined_segs
+            original["refined"] = True
+
+            n_keep = sum(s["refine_stats"]["keep"] for s in refined_segs)
+            n_cut = sum(s["refine_stats"]["cut"] for s in refined_segs)
+            keep_dur = sum(s["refine_stats"]["keep_duration"] for s in refined_segs)
+            cut_dur = sum(s["refine_stats"]["cut_duration"] for s in refined_segs)
+            original["refine_summary"] = {
+                "total_sub_clips": n_keep + n_cut,
+                "keep": n_keep, "cut": n_cut,
+                "keep_duration": round(keep_dur, 1),
+                "cut_duration": round(cut_dur, 1),
+                "cut_pct": round(cut_dur / max(keep_dur + cut_dur, 1) * 100, 0),
+            }
+
+            json.dump(original, open(seg_file, "w"), ensure_ascii=False, indent=2)
+
+            emit("complete", {
+                "ok": True,
+                "summary": original["refine_summary"],
+                "msg": f"精切完成: {n_keep} 保留 + {n_cut} 删除 ({cut_dur:.0f}s 废料)",
+                "segments": refined_segs,  # 前端可直接更新
+            })
+            print(f"[refine] 精切完成: {n_keep}K + {n_cut}C → {seg_file}")
+
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            try: emit("error", {"error": str(e)[:200]})
+            except: pass
 
     def _resolve_sources_dir(self):
         """根据 ?project= 参数动态解析 sources 目录"""

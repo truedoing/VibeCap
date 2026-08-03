@@ -186,66 +186,128 @@ def build_draft(segments, source_video, materials_dir, draft_name="vibecap-auto"
 
     current_us = 0
 
+    # v0.11: 如果 segments 有 sub_clips（精切数据），按精切粒度导出
+    # 否则按粗段导出
+    has_sub_clips = any(s.get("sub_clips") for s in segments.get("segments", []))
+
     for seg in segments.get("segments", []):
-        start_s = seg.get("source_start", 0)
-        end_s = seg.get("source_end", start_s + 5)
-        # ★ 收紧：每段最多 15s raw，留够调整余量但不过分
-        dur_s = min(end_s - start_s, 15)
-        # 保留原始 end 作为 source 范围（可拉长）
-        source_dur_s = end_s - start_s
-        dur_us = int(dur_s * 1_000_000)
-        source_start_us = int(start_s * 1_000_000)
-        source_dur_us = int(source_dur_s * 1_000_000)
+        sub_clips = seg.get("sub_clips", [])
+        if sub_clips:
+            # ── 精切模式：每个 sub_clip 独立为一小段 ──
+            for sc in sub_clips:
+                start_s = sc["start"]
+                end_s = sc["end"]
+                dur_s = end_s - start_s
+                if dur_s <= 0.1:
+                    continue  # 跳过极短块
 
-        # Video segment
-        seg_obj = _make_segment(vmid, current_us, dur_us, source_start_us)
-        # source_timerange.duration 保持完整范围（允许拉长）
-        seg_obj["source_timerange"]["duration"] = source_dur_us
-        seg_obj["extra_material_refs"] = [amid]
-        vid_segments.append(seg_obj)
+                dur_us = int(dur_s * 1_000_000)
+                source_start_us = int(start_s * 1_000_000)
+                source_dur_us = int((end_s - start_s) * 1_000_000)
 
-        # Audio segment — 同样位置，引用音频素材
-        aud_seg = {
-            "id": _uid(), "material_id": amid, "render_index": 0,
-            "target_timerange": {"duration": dur_us, "start": current_us},
-            "source_timerange": {"duration": source_dur_us, "start": source_start_us},
-            "speed": 1.0, "volume": 1.0, "visible": True,
-            "cartoon": False, "reverse": False,
-            "is_placeholder": False, "is_tone_modify": False,
-            "intensifies_audio": False, "last_nonzero_volume": 1.0,
-            "group_id": "", "track_attribute": 0, "track_render_index": 0,
-            "template_id": "", "template_scene": "default",
-            "common_keyframes": [], "keyframe_refs": [], "extra_material_refs": [],
-            "uniform_scale": {"on": True, "value": 1.0},
-            "responsive_layout": {"enable": False, "horizontal_pos_layout": 0, "size_layout": 0, "target_follow": "", "vertical_pos_layout": 0},
-            "hdr_settings": {"intensity": 1.0, "mode": 1, "nits": 1000},
-            "clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False}, "rotation": 0.0, "scale": {"x": 1.0, "y": 1.0}, "transform": {"x": 0.0, "y": 0.0}},
-        }
-        aud_segments.append(aud_seg)
+                seg_obj = _make_segment(vmid, current_us, dur_us, source_start_us)
+                seg_obj["source_timerange"]["duration"] = source_dur_us
+                seg_obj["extra_material_refs"] = [amid]
+                vid_segments.append(seg_obj)
 
-        # 配套对象（每段一个）
-        vid_seg_id = seg_obj["id"]
-        vocal_seps.append({
-            "choice": 0, "id": vid_seg_id,
-            "production_path": "", "time_range": {"duration": dur_us, "start": current_us},
-            "type": "vocal_separation"
-        })
-        speeds.append({
-            "curve_speed": [], "id": vid_seg_id,
-            "mode": 0, "speed": 1.0, "type": "speed"
-        })
-        sound_mappings.append({
-            "audio_channel_mapping": 0, "id": vid_seg_id,
-            "is_config_open": False, "type": "none"
-        })
-        canvases.append({
-            "album_image": "", "blur": 0.0, "color": "", "id": vid_seg_id,
-            "image": "", "image_id": "", "image_name": "",
-            "source_platform": 0, "team_id": "", "type": "canvas_color"
-        })
+                aud_seg = {
+                    "id": _uid(), "material_id": amid, "render_index": 0,
+                    "target_timerange": {"duration": dur_us, "start": current_us},
+                    "source_timerange": {"duration": source_dur_us, "start": source_start_us},
+                    "speed": 1.0, "volume": 1.0 if sc["decision"] == "KEEP" else 0.05,
+                    "visible": True, "cartoon": False, "reverse": False,
+                    "is_placeholder": False, "is_tone_modify": False,
+                    "intensifies_audio": False, "last_nonzero_volume": 1.0,
+                    "group_id": "", "track_attribute": 0, "track_render_index": 0,
+                    "template_id": "", "template_scene": "default",
+                    "common_keyframes": [], "keyframe_refs": [], "extra_material_refs": [],
+                    "uniform_scale": {"on": True, "value": 1.0},
+                    "responsive_layout": {"enable": False, "horizontal_pos_layout": 0,
+                        "size_layout": 0, "target_follow": "", "vertical_pos_layout": 0},
+                    "hdr_settings": {"intensity": 1.0, "mode": 1, "nits": 1000},
+                    "clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False},
+                        "rotation": 0.0, "scale": {"x": 1.0, "y": 1.0},
+                        "transform": {"x": 0.0, "y": 0.0}},
+                }
+                aud_segments.append(aud_seg)
 
-        current_us += dur_us
-        print(f"  S{seg['seg_id']}: {start_s:.0f}s-{end_s:.0f}s ({dur_s:.0f}s) → 时间轴@{current_us/1_000_000:.1f}s")
+                # 配套对象
+                vid_seg_id = seg_obj["id"]
+                vocal_seps.append({"choice": 0, "id": vid_seg_id,
+                    "production_path": "", "time_range": {"duration": dur_us, "start": current_us},
+                    "type": "vocal_separation"})
+                speeds.append({"curve_speed": [], "id": vid_seg_id,
+                    "mode": 0, "speed": 1.0, "type": "speed"})
+                sound_mappings.append({"audio_channel_mapping": 0, "id": vid_seg_id,
+                    "is_config_open": False, "type": "none"})
+                canvases.append({"album_image": "", "blur": 0.0, "color": "",
+                    "id": vid_seg_id, "image": "", "image_id": "", "image_name": "",
+                    "source_platform": 0, "team_id": "", "type": "canvas_color"})
+
+                current_us += dur_us
+                tag = "✅" if sc["decision"] == "KEEP" else "❌"
+                print(f"  {tag} S{seg['seg_id']} {start_s:.1f}s-{end_s:.1f}s ({dur_s:.1f}s) → 时间轴@{current_us/1_000_000:.1f}s")
+        else:
+            # ── 粗段模式（兼容旧数据）──
+            start_s = seg.get("source_start", 0)
+            end_s = seg.get("source_end", start_s + 5)
+            # ★ 收紧：每段最多 15s raw，留够调整余量但不过分
+            dur_s = min(end_s - start_s, 15)
+            # 保留原始 end 作为 source 范围（可拉长）
+            source_dur_s = end_s - start_s
+            dur_us = int(dur_s * 1_000_000)
+            source_start_us = int(start_s * 1_000_000)
+            source_dur_us = int(source_dur_s * 1_000_000)
+
+            # Video segment
+            seg_obj = _make_segment(vmid, current_us, dur_us, source_start_us)
+            # source_timerange.duration 保持完整范围（允许拉长）
+            seg_obj["source_timerange"]["duration"] = source_dur_us
+            seg_obj["extra_material_refs"] = [amid]
+            vid_segments.append(seg_obj)
+
+            # Audio segment — 同样位置，引用音频素材
+            aud_seg = {
+                "id": _uid(), "material_id": amid, "render_index": 0,
+                "target_timerange": {"duration": dur_us, "start": current_us},
+                "source_timerange": {"duration": source_dur_us, "start": source_start_us},
+                "speed": 1.0, "volume": 1.0, "visible": True,
+                "cartoon": False, "reverse": False,
+                "is_placeholder": False, "is_tone_modify": False,
+                "intensifies_audio": False, "last_nonzero_volume": 1.0,
+                "group_id": "", "track_attribute": 0, "track_render_index": 0,
+                "template_id": "", "template_scene": "default",
+                "common_keyframes": [], "keyframe_refs": [], "extra_material_refs": [],
+                "uniform_scale": {"on": True, "value": 1.0},
+                "responsive_layout": {"enable": False, "horizontal_pos_layout": 0, "size_layout": 0, "target_follow": "", "vertical_pos_layout": 0},
+                "hdr_settings": {"intensity": 1.0, "mode": 1, "nits": 1000},
+                "clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False}, "rotation": 0.0, "scale": {"x": 1.0, "y": 1.0}, "transform": {"x": 0.0, "y": 0.0}},
+            }
+            aud_segments.append(aud_seg)
+
+            # 配套对象（每段一个）
+            vid_seg_id = seg_obj["id"]
+            vocal_seps.append({
+                "choice": 0, "id": vid_seg_id,
+                "production_path": "", "time_range": {"duration": dur_us, "start": current_us},
+                "type": "vocal_separation"
+            })
+            speeds.append({
+                "curve_speed": [], "id": vid_seg_id,
+                "mode": 0, "speed": 1.0, "type": "speed"
+            })
+            sound_mappings.append({
+                "audio_channel_mapping": 0, "id": vid_seg_id,
+                "is_config_open": False, "type": "none"
+            })
+            canvases.append({
+                "album_image": "", "blur": 0.0, "color": "", "id": vid_seg_id,
+                "image": "", "image_id": "", "image_name": "",
+                "source_platform": 0, "team_id": "", "type": "canvas_color"
+            })
+
+            current_us += dur_us
+            print(f"  S{seg['seg_id']}: {start_s:.0f}s-{end_s:.0f}s ({dur_s:.0f}s) → 时间轴@{current_us/1_000_000:.1f}s")
 
     # 轨道：只一条视频轨，音频随视频素材自带 (has_audio=true)
     tracks = [{

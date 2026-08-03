@@ -58,7 +58,7 @@ function TypingDots() {
   )
 }
 
-export default function ChatPanel({ context, onPreview, onPick, onSearch, onSuggestions, eps }) {
+export default function ChatPanel({ context, onPreview, onPick, onSearch, onSuggestions, eps, isInterview }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -203,12 +203,15 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
               <p className="text-sm font-semibold text-foreground">你好，我是小 V</p>
               <p className="text-xs text-muted-foreground mt-1">
                 {context.sid != null
-                  ? '描述你想找的画面，我帮你在原剧中搜索 ~'
+                  ? (isInterview ? '描述你想找的内容，我帮你在原视频中搜索 ~' : '描述你想找的画面，我帮你在原剧中搜索 ~')
                   : '先点击左侧一句解说词，然后告诉我你想找什么样的画面'}
               </p>
             </div>
             <div className="flex flex-wrap gap-1.5 justify-center mt-1">
-              {['苏大强在老宅翻存折', '蒙总和蒙太办公室争吵', '苏明玉冷漠表情特写'].map(hint => (
+              {(isInterview
+                ? ['找到开场hook的最佳片段', '搜索数据冲击力的短句', '查找收尾洞察的原话']
+                : ['苏大强在老宅翻存折', '蒙总和蒙太办公室争吵', '苏明玉冷漠表情特写']
+              ).map(hint => (
                 <button key={hint} onClick={() => { setInput(hint); inputRef.current?.focus() }}
                   className="text-[11px] px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground hover:border-purple/30 hover:text-purple transition-colors"
                 >{hint}</button>

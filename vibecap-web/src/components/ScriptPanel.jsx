@@ -1,7 +1,9 @@
 /**
- * 脚本段面板 — 标签式段落选择 + 展开句子明细
+ * 脚本段面板
+ * 口播: 如有精切 sub_clips → 直接显示精切结果 (KEEP/CUT)
+ * 影剧: 显示粗段脚本 + 展开句子明细
  */
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { cn } from '../lib/utils'
 
@@ -17,15 +19,85 @@ function Highlighted({ text, className }) {
   return <span className={className} dangerouslySetInnerHTML={{ __html: hh(text) }} />
 }
 
-export default function ScriptPanel({ segments, curSid, curSeq, onPickSentence, picks }) {
+/* ── 精切视图 (口播) ── */
+function RefineView({ segments, onPickSentence }) {
+  const allSubClips = useMemo(() => {
+    const result = []
+    for (const seg of segments) {
+      for (const sc of (seg.sub_clips || [])) {
+        result.push({ ...sc, seg_id: seg.seg_id, topic: seg.topic })
+      }
+    }
+    return result.sort((a, b) => a.start - b.start)
+  }, [segments])
+
+  const stats = useMemo(() => {
+    let keep = 0, cut = 0, keepDur = 0, cutDur = 0
+    for (const sc of allSubClips) {
+      if (sc.decision === 'KEEP') { keep++; keepDur += sc.end - sc.start }
+      else { cut++; cutDur += sc.end - sc.start }
+    }
+    return { keep, cut, keepDur, cutDur }
+  }, [allSubClips])
+
+  if (!allSubClips.length) return null
+
+  return (
+    <div className="overflow-y-auto flex-1">
+      <div className="px-2 py-1.5 flex items-center gap-3 text-[10px] border-b border-border/30 shrink-0 bg-emerald-500/5">
+        <span className="text-emerald-400 font-medium">{stats.keep} 保留</span>
+        <span className="text-red-400 font-medium">{stats.cut} 删除</span>
+        <span className="text-muted-foreground">保留 {stats.keepDur.toFixed(0)}s</span>
+        <span className="text-muted-foreground/50">删除 {stats.cutDur.toFixed(0)}s</span>
+      </div>
+      <div className="p-1 space-y-0.5">
+        {allSubClips.map((sc, idx) => {
+          const isKeep = sc.decision === 'KEEP'
+          const dur = sc.end - sc.start
+          return (
+            <button key={idx}
+              onClick={() => onPickSentence(sc.seg_id, 'D')}
+              className={cn(
+                'w-full text-left px-2 py-1.5 rounded-r border-l-[3px] transition-colors flex items-start gap-2',
+                isKeep
+                  ? 'border-emerald-500/60 bg-emerald-500/5 hover:bg-emerald-500/10'
+                  : 'border-red-500/40 bg-red-500/3 hover:bg-red-500/8 opacity-80'
+              )}>
+              <span className={cn('text-[10px] font-bold shrink-0 mt-0.5',
+                isKeep ? 'text-emerald-400' : 'text-red-400')}>
+                {isKeep ? '✅' : '❌'}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="text-[9px] text-muted-foreground/70 font-mono">
+                    S{sc.seg_id} {sc.start.toFixed(0)}s-{sc.end.toFixed(0)}s
+                  </span>
+                  <span className={cn('text-[9px] font-medium',
+                    isKeep ? 'text-emerald-500/70' : 'text-red-400/70')}>
+                    {dur.toFixed(1)}s
+                  </span>
+                  <span className="text-[9px] text-muted-foreground/50">{sc.speaker}</span>
+                </div>
+                <p className={cn('text-[10px] leading-snug',
+                  isKeep ? 'text-foreground/85' : 'text-foreground/50 line-through')}>
+                  {sc.text.length > 60 ? sc.text.substring(0, 60) + '...' : sc.text}
+                </p>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ── 粗段脚本视图 (影剧/通用) ── */
+function ScriptView({ segments, curSid, curSeq, onPickSentence, picks }) {
   const [openSeg, setOpenSeg] = useState(null)
-
-  if (!segments?.length) return null
-
   if (openSeg === null && segments.length > 0) setOpenSeg(segments[0].seg_id)
 
   return (
-    <div className="custom-scrollbar overflow-y-auto overflow-x-hidden h-full" style={{ flex:1, minHeight:0 }}>
+    <div className="overflow-y-auto flex-1">
       <div className="p-1.5 space-y-1">
         {segments.map(seg => {
           const isOpen = openSeg === seg.seg_id
@@ -71,6 +143,23 @@ export default function ScriptPanel({ segments, curSid, curSeq, onPickSentence, 
           )
         })}
       </div>
+    </div>
+  )
+}
+
+/* ── 主入口：有精切→精切视图，无→脚本视图 ── */
+export default function ScriptPanel(props) {
+  const { segments } = props
+  if (!segments?.length) return null
+
+  const hasRefine = segments.some(s => s.sub_clips?.length > 0)
+
+  return (
+    <div className="custom-scrollbar overflow-y-auto overflow-x-hidden h-full flex flex-col" style={{ flex:1, minHeight:0 }}>
+      {hasRefine
+        ? <RefineView {...props} />
+        : <ScriptView {...props} />
+      }
     </div>
   )
 }
