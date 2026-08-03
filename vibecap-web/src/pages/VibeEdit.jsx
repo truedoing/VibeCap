@@ -183,6 +183,18 @@ export default function VibeEdit() {
       else { const ss = (seg.narration_text || '').split(/[。！？]/).filter(s => s.trim()); ref = (ss[parseInt(seq) || 0] || '').trim() }
       setCurNarration(ref)
       setStorySuggestions(null)
+
+      // v0.11: 段直达 — 如果 segment 已有 source_start, 直接 seek 源检视器, 跳过 AI 搜索
+      const ss = seg.source_start
+      const se = seg.source_end
+      if (ss != null && ss > 0) {
+        const ep = seg.episode_marker?.episode || seg.video_episode || 1
+        const startSec = ss
+        const endSec = (se != null && se > ss) ? se : ss + 8
+        if (window.__sourceLoadEpisode) {
+          window.__sourceLoadEpisode(ep, startSec, endSec)
+        }
+      }
     }
   }, [segments])
 

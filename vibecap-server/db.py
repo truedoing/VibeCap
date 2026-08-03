@@ -92,10 +92,16 @@ CREATE TABLE IF NOT EXISTS task_segments (
     narration_text TEXT DEFAULT '',
     episode_marker_ep INTEGER,
     episode_marker_min REAL,
+    source_start REAL,                -- v0.11: 素材起始时间(秒), 口播直达用
+    source_end REAL,                  -- v0.11: 素材结束时间(秒)
+    section_role TEXT DEFAULT '',     -- v0.11: 叙事角色 (hook_tension/evidence/...)
+    note TEXT DEFAULT '',             -- v0.11: 注释
     mode TEXT DEFAULT 'A' CHECK(mode IN ('A','C')),
     sentences_json TEXT,
     UNIQUE(task_id, seg_id)
 );
+
+-- v0.11: 迁移由 Python 代码执行 (见 __init__ 中 MIGRATIONS)
 
 CREATE TABLE IF NOT EXISTS quality_reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,6 +124,14 @@ CREATE INDEX IF NOT EXISTS idx_task_segments_task ON task_segments(task_id, seg_
 CREATE INDEX IF NOT EXISTS idx_quality_reports_drama ON quality_reports(drama_id);
 """
 
+# v0.11 迁移: 为旧 task_segments 表补充时序列
+MIGRATIONS = [
+    "ALTER TABLE task_segments ADD COLUMN source_start REAL",
+    "ALTER TABLE task_segments ADD COLUMN source_end REAL",
+    "ALTER TABLE task_segments ADD COLUMN section_role TEXT DEFAULT ''",
+    "ALTER TABLE task_segments ADD COLUMN note TEXT DEFAULT ''",
+]
+
 
 class VibeCapDB:
     """SQLite 数据库访问层，线程安全"""
@@ -125,9 +139,14 @@ class VibeCapDB:
     def __init__(self, db_path: str):
         self._db_path = str(db_path)
         self._local = threading.local()
-        # 初始化连接以执行 schema
         conn = self._get_conn()
         conn.executescript(SCHEMA_SQL)
+        # v0.11: 执行增量迁移 (忽略已存在的列)
+        for sql in MIGRATIONS:
+            try:
+                conn.execute(sql)
+            except Exception:
+                pass  # 列已存在
         conn.commit()
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -433,8 +452,8 @@ class VibeCapDB:
             c.execute(
                 "INSERT OR REPLACE INTO task_segments "
                 "(task_id, seg_id, highlight_text, narration_text, episode_marker_ep, "
-                "episode_marker_min, mode, sentences_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "episode_marker_min, source_start, source_end, section_role, note, mode, sentences_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     task_id,
                     seg.get("seg_id", 0),
@@ -442,6 +461,10 @@ class VibeCapDB:
                     seg.get("narration_text", seg.get("narration", "")),
                     seg.get("episode_marker_ep"),
                     seg.get("episode_marker_min"),
+                    seg.get("source_start"),
+                    seg.get("source_end"),
+                    seg.get("section_role", seg.get("narrative_role", "")),
+                    seg.get("note", ""),
                     seg.get("mode", "A"),
                     seg.get("sentences_json"),
                 ),
@@ -471,6 +494,10 @@ class VibeCapDB:
                     if r["episode_marker_ep"] is not None
                     else None
                 ),
+                "source_start": r["source_start"],       # v0.11
+                "source_end": r["source_end"],             # v0.11
+                "section_role": r["section_role"] or "",   # v0.11
+                "note": r["note"] or "",                   # v0.11
                 "mode": r["mode"],
                 "sentences": (
                     __import__("json").loads(r["sentences_json"])
