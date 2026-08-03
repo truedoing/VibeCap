@@ -53,24 +53,28 @@ export function clearLinkedPairs() {
  *
  * clipRegistry 记录 clipId → {ep, sourceStartSec, sourceEndSec} 供导出阶段使用
  */
-export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = []) {
+export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [], options = {}) {
+  // v0.11: options.mode = 'drama' (4轨) | 'interview' (2轨)
+  const mode = options.mode || 'drama'
+  const isInterview = mode === 'interview'
+
   const tracks = []
   const clips = {}
   const mediaList = []
   const clipRegistry = {}
 
-  // 4 轨 ID
   const mainVideoId = generateId()
   const mainAudioId = generateId()
-  const suppId = generateId()
-  const narrId = generateId()
+  const suppId = isInterview ? null : generateId()
+  const narrId = isInterview ? null : generateId()
 
   const mainVideoClips = []
   const mainAudioClips = []
   const suppClips = []
   const narrClips = []
 
-  const NARR_DURATIONS = { 0: 26, 1: 24, 2: 12, 3: 5, 4: 15, 5: 56, 6: 18, 7: 18, 8: 45 }
+  // v0.11: NARR_DURATIONS 只用于 drama 模式
+  const NARR_DURATIONS = isInterview ? {} : {}
 
   const entries = Object.entries(picks).sort((a, b) => {
     const [sa] = a[0].split('_').map(Number)
@@ -221,8 +225,8 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
     })
   }
 
-  // ── 组装轨道 ──
-  if (suppClips.length > 0) {
+  // ── 组装轨道 (v0.11: interview模式仅主镜头+音频) ──
+  if (!isInterview && suppClips.length > 0) {
     tracks.push({ id: suppId, name: '补充镜头', kind: 'video', order: 0, height: 44, locked: false, disabled: false, muted: true, solo: false })
     clips[suppId] = suppClips
   }
@@ -234,7 +238,7 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
     tracks.push({ id: mainAudioId, name: '原声主镜头 音频', kind: 'audio', order: 0, height: 44, locked: false, disabled: false, muted: false, solo: false })
     clips[mainAudioId] = mainAudioClips
   }
-  if (narrClips.length > 0) {
+  if (!isInterview && narrClips.length > 0) {
     tracks.push({ id: narrId, name: '旁白 TTS', kind: 'audio', order: 1, height: 44, locked: false, disabled: false, muted: false, solo: false })
     clips[narrId] = narrClips
   }

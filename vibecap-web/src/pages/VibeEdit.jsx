@@ -77,7 +77,13 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady }) {
       return
     }
     clearLinkedPairs()
-    const t = [
+    // v0.11: 口播2轨, 电视剧4轨 (segments有source_start → interview)
+    const hasDirectSource = window.__vibe_segments?.some?.(s => s.source_start > 0)
+    const isInterview = hasDirectSource
+    const t = isInterview ? [
+      { id: generateId(), name: '原声主镜头', kind: 'video', order: 0, height: 52, locked: false, disabled: false, muted: false, solo: false, volume: 1 },
+      { id: generateId(), name: '原声主镜头 音频', kind: 'audio', order: 0, height: 44, locked: false, disabled: false, muted: false, solo: false },
+    ] : [
       { id: generateId(), name: '补充镜头', kind: 'video', order: 0, height: 44, locked: false, disabled: false, muted: true, solo: false },
       { id: generateId(), name: '原声主镜头', kind: 'video', order: 2, height: 52, locked: false, disabled: false, muted: false, solo: false, volume: 1 },
       { id: generateId(), name: '原声主镜头 音频', kind: 'audio', order: 1, height: 44, locked: false, disabled: false, muted: false, solo: false },
@@ -170,6 +176,7 @@ export default function VibeEdit() {
     if (!taskId) return
     fetch(`/segments.json?task=${taskId}`).then(r => r.json()).then(d => {
       setSegments(d.segments || [])
+      window.__vibe_segments = d.segments || []  // v0.11: 供 ProgramLoader 检测 interview mode
       if (d.segments?.length && curSid == null) setCurSid(d.segments[0].seg_id)
     }).catch(() => {})
   }, [taskId])

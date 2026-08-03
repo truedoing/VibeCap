@@ -749,10 +749,13 @@ class Handler(SimpleHTTPRequestHandler):
         if qlen > 1:
             kws[q_clean] = 81  # 完整 query 最高权重
 
-        # Search classified ASR
-        cf = PROJECT_DIR / "sources_clean" / "classified_学习新东方.json"
-        if cf.exists():
-            classified = json.load(open(cf))
+        # Search classified ASR (v0.11: 自动发现文件)
+        classified = []
+        for cf in (PROJECT_DIR / "sources_clean").glob("classified_*.json"):
+            if cf.name != "classified_enhanced.json":
+                classified = json.load(open(cf))
+                break
+        if classified:
             for s in classified:
                 text = _norm(s.get('text', ''))
                 score = sum(text.count(kw) * w for kw, w in kws.items())
