@@ -12,6 +12,52 @@ from db import VibeCapDB
 DB_PATH = Path(__file__).resolve().parent.parent / "vibecap.db"
 db = VibeCapDB(str(DB_PATH))
 
+# 注入语义搜索函数到 Agent 系统
+# v3: 强制离线模式, 模型已在本地缓存, 避免 HF mirror 超时
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+try:
+    from script_agents import set_search_fn
+    def _agent_search(query, limit=15):
+        """供 Agent 使用的语义搜索"""
+        if semantic_emb is None: return []
+        q_emb = _encode(query)
+        scores = np.dot(semantic_emb, q_emb)
+        top = np.argsort(scores)[-limit*2:][::-1]
+        results = []
+        metas = semantic_metas
+        for i in top:
+            if scores[i] <= 0.25: continue
+            m = metas[i]
+            # v3: 优先返回 original_text (ASR原文), fallback text (清洗后)
+            display_text = m.get("original_text", m.get("text", ""))
+            results.append({
+                "start": m.get("start", 0), "end": m.get("end", m.get("start", 0) + 4),
+                "description": display_text[:200], "asr": display_text[:200],
+                "cleaned_text": m.get("text", "")[:200],  # 清洗后文本(供后续处理)
+                "score": round(float(scores[i]) * 100, 1),
+            })
+        return sorted(results, key=lambda x: -x["score"])[:limit]
+    set_search_fn(_agent_search)
+    # 同步预热: 确保 pipeline 启动前模型已就绪
+    print("[agent] 预热 BGE 模型 (本地缓存, ~8s)...")
+    import threading
+    warm_ready = threading.Event()
+    def _warm():
+        try:
+            _agent_search("预热", limit=1)
+            print("[agent] BGE 模型预热完成 ✓")
+            warm_ready.set()
+        except Exception as e:
+            print(f"[agent] 预热失败: {e}")
+            warm_ready.set()
+    threading.Thread(target=_warm, daemon=True).start()
+    # 等最多 30 秒
+    if not warm_ready.wait(timeout=30):
+        print("[agent] ⚠️ 预热超时(30s), 搜索可能较慢")
+except Exception as e:
+    print(f"[agent] search injection failed: {e}")
+
 # ── 后台加工流水线 ──
 _process_tasks = {}  # {task_id: {episodes, steps, current}}
 _process_lock = threading.Lock()
@@ -119,6 +165,97 @@ def _run_pipeline(task_id, episodes, drama_name):
     # Step 5: 导入数据库
     _run_script(4, "migrate_db.py", [], 120, True)
 
+# ── 口播采访流水线 ──
+def _run_interview_pipeline(task_id, project_name, step="all"):
+    """后台执行口播采访数据加工流水线"""
+    server_dir = Path(__file__).resolve().parent
+    python_bin = "/opt/anaconda3/bin/python3"
+
+    steps = [
+        {"id": "classify", "label": "LLM 分类 (content/meta/guide/filler)", "status": "pending",
+         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
+        {"id": "segment", "label": "LLM 分段 (5-8个主题组)", "status": "pending",
+         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
+        {"id": "index",   "label": "语义索引 (BGE)", "status": "pending",
+         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
+        {"id": "report",  "label": "质量评分", "status": "pending",
+         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
+    ]
+
+    with _process_lock:
+        _process_tasks[task_id] = {"episodes": [], "steps": steps, "started_at": time.time()}
+
+    def _update(i, **kw):
+        with _process_lock:
+            t = _process_tasks.get(task_id)
+            if t: t["steps"][i].update(kw)
+
+    def _run(step_idx, script_name, args, timeout, progress_parser=True):
+        _update(step_idx, status="running", detail="启动中...")
+        t0 = time.time()
+        log_lines = []
+        try:
+            p = subprocess.Popen(
+                [python_bin, "-u", str(server_dir / script_name)] + args,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            )
+            for line in p.stdout:
+                line = line.rstrip()
+                if line:
+                    log_lines.append(line)
+                    if len(log_lines) > 8: log_lines = log_lines[-8:]
+                    elapsed = round(time.time() - t0, 1)
+                    detail = line[:80]
+                    m = re.search(r'\[?\s*(\d+)\s*/\s*(\d+)\s*\]?', line)
+                    if m and progress_parser:
+                        current, total = int(m.group(1)), int(m.group(2))
+                        pct = min(99, round(current / max(total, 1) * 100))
+                        _update(step_idx, progress=pct, detail=detail, elapsed=elapsed, log_lines=list(log_lines))
+                    else:
+                        _update(step_idx, detail=detail, elapsed=elapsed, log_lines=list(log_lines))
+            p.wait(timeout=timeout)
+            elapsed = round(time.time() - t0, 1)
+            if p.returncode == 0:
+                _update(step_idx, status="done", progress=100, elapsed=elapsed, log_lines=list(log_lines))
+                return True
+            else:
+                _update(step_idx, status="failed", detail=f"退出码 {p.returncode}", elapsed=elapsed, log_lines=list(log_lines))
+                return False
+        except subprocess.TimeoutExpired:
+            p.kill()
+            _update(step_idx, status="failed", detail="超时", elapsed=round(time.time() - t0, 1))
+            return False
+        except Exception as e:
+            _update(step_idx, status="failed", detail=str(e)[:80], elapsed=round(time.time() - t0, 1))
+            return False
+
+    # Step 1: LLM 分类
+    if step in ("all", "classify"):
+        _run(0, "classify_transcript.py", ["--project", project_name], 3600)
+
+    # Step 2: LLM 分段
+    if step in ("all", "segment"):
+        _run(1, "segment_transcript.py", ["--project", project_name], 600)
+
+    # Step 3: 语义索引
+    if step in ("all", "index"):
+        _run(2, "build_interview_index.py", ["--project", project_name], 600)
+
+    # Step 4: 质量评分 (调用 db.compute_quality_report)
+    if step in ("all", "report"):
+        _update(3, status="running", detail="计算中...")
+        t0 = time.time()
+        try:
+            drama_id = db.get_drama_id(project_name)
+            if not drama_id: drama_id = db.ensure_drama(project_name)
+            if drama_id:
+                report = db.compute_quality_report(drama_id, 1, str(BASE_DIR / project_name))
+                _update(3, status="done", progress=100, elapsed=round(time.time() - t0, 1),
+                        detail=f"综合: {report.get('overall_score', 0)}分")
+        except Exception as e:
+            _update(3, status="failed", detail=str(e)[:80])
+
 # 繁→简 转换
 try:
     from zhconv import convert as _zh_convert
@@ -141,78 +278,136 @@ if _ENV_FILE.exists():
             _line = _line.strip()
             if _line and not _line.startswith("#") and "=" in _line:
                 _k, _v = _line.split("=", 1)
-                if _k.strip() not in os.environ:
+                if not os.environ.get(_k.strip()):  # 未设置或为空 → 从.env加载
                     os.environ[_k.strip()] = _v.strip().strip('"').strip("'")
 
 # ── CLI 参数 ──
 import argparse as _argparse
 _parser = _argparse.ArgumentParser(description="VIBECAP 后端服务")
-_parser.add_argument("--drama", default=os.environ.get("VIBECAP_DRAMA", "都挺好"), help="电视剧名")
+_parser.add_argument("--project", default=os.environ.get("VIBECAP_PROJECT", ""), help="项目名")
+_parser.add_argument("--drama", default=os.environ.get("VIBECAP_DRAMA", ""), help="电视剧名 (兼容旧参数)")
 _parser.add_argument("--task", default=os.environ.get("VIBECAP_TASK", "Task7024"), help="任务名")
 _parser.add_argument("--port", type=int, default=8765, help="端口")
 _args = _parser.parse_args()
 
 BASE_DIR    = Path("/Users/zgl/VIBECAP")
-DRAMA_DIR   = BASE_DIR / _args.drama
-TASK_DIR    = DRAMA_DIR / "tasks" / _args.task
-SOURCES_DIR = DRAMA_DIR / "sources"
-WORK_DIR    = TASK_DIR / "work_dir"
-CLIP_DIR    = TASK_DIR / "素材clips"
-INDEX_FILE  = DRAMA_DIR / "semantic_index.pkl"
-FRONTEND_DIR = BASE_DIR / "vibecap-web" / "dist"  # 生产前端构建产物
+FRONTEND_DIR = BASE_DIR / "vibecap-web" / "dist"
 
-CLIP_DIR.mkdir(exist_ok=True)
-WORK_DIR.mkdir(exist_ok=True)
+# ── 项目配置加载 ──
+_project_name = _args.project or _args.drama or "都挺好"
+_project_config = {}
+_project_type = "drama"  # drama | interview
+PROJECT_DIR = BASE_DIR / _project_name
 
-PROXY_DIR = DRAMA_DIR / "proxies"
+# 尝试加载项目配置
+_cfg_path = BASE_DIR / "projects" / f"{_project_name}.json"
+if _cfg_path.exists():
+    _project_config = json.load(open(_cfg_path))
+    _project_type = _project_config.get("type", "drama")
+    print(f"[project] {_project_name} (type={_project_type})")
+else:
+    print(f"[project] {_project_name} (legacy mode, no project config)")
+
+# 通用路径
+SOURCES_DIR = PROJECT_DIR / "sources"
+PROXY_DIR   = PROJECT_DIR / "proxies"
 PROXY_DIR.mkdir(exist_ok=True)
 PROXY_MANIFEST = PROXY_DIR / ".proxies_manifest.json"
 
-VIDEO_DIR = Path("/Users/zgl/解说剪辑/都挺好原剧")
+# 任务目录: 支持 --task 参数动态切换
+def _resolve_task_dir(task_name=None):
+    name = task_name or _args.task
+    return PROJECT_DIR / "tasks" / name
+
+TASK_DIR    = _resolve_task_dir()
+WORK_DIR    = TASK_DIR / "work_dir"
+CLIP_DIR    = TASK_DIR / "素材clips"
+CLIP_DIR.mkdir(exist_ok=True)
+WORK_DIR.mkdir(exist_ok=True)
+
+# ── 源视频索引 ──
 SOURCE_VIDEOS = {}
-for ep in range(1, 47):  # EP1-46
-    p = VIDEO_DIR / f"都挺好 {ep:02d}_1080p.mp4"
-    if p.exists():
-        SOURCE_VIDEOS[f"ep{ep}"] = p
+if _project_type == "drama":
+    _video_dir = Path(_project_config.get("source_videos", f"/Users/zgl/解说剪辑/{_project_name}原剧"))
+    for ep in range(1, _project_config.get("episodes", 46) + 1):
+        p = _video_dir / f"{_project_name} {ep:02d}_1080p.mp4"
+        if p.exists():
+            SOURCE_VIDEOS[f"ep{ep}"] = p
+elif _project_type == "interview":
+    _video_dir = Path(_project_config.get("source_videos", ""))
+    if _video_dir.exists():
+        for f in sorted(_video_dir.glob("*.mp4")):
+            SOURCE_VIDEOS[f.stem] = f
+    print(f"[project] 口播素材: {len(SOURCE_VIDEOS)} 个视频")
 
 class ThreadingServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
-# ── 加载数据 ──
-semantic_index = None
-si_path = INDEX_FILE
-if si_path.exists():
-    semantic_index = pickle.load(open(si_path, "rb"))
-    print(f"[search] 语义索引: {semantic_index['embeddings'].shape[0]} 条")
-
-# 动态发现可用集数（ASR/VLM 数据 + 源视频）
-AVAILABLE_EPS = sorted(set(
-    int(d.name[2:]) for d in SOURCES_DIR.iterdir()
-    if d.is_dir() and d.name.startswith("ep") and d.name[2:].isdigit()
-    and ((d / "asr_result.json").exists() or (d / "vlm_analysis.json").exists())
-))
-print(f"[search] 可用集数: {AVAILABLE_EPS}")
-
+# ── 加载数据 (按项目类型) ──
+INDEX_FILE  = PROJECT_DIR / "semantic_index.pkl"  # drama only
+INDEX_NPY   = PROJECT_DIR / "semantic_embeddings.npy"
+INDEX_META  = PROJECT_DIR / "semantic_metas.json"
+semantic_emb = None
+semantic_metas = None
+AVAILABLE_EPS = []
 vlm_data = []
-for ep in AVAILABLE_EPS:
-    p = SOURCES_DIR / f"ep{ep}" / "vlm_analysis.json"
-    if p.exists():
-        for s in json.load(open(p)):
-            if s is None: continue  # 跳过未完成的场景
-            s["_ep"] = ep
-            vlm_data.append(s)
-print(f"[search] VLM 数据: {len(vlm_data)} 条")
-
 asr_data = {}
-for ep in AVAILABLE_EPS:
-    p = SOURCES_DIR / f"ep{ep}" / "asr_result.json"
-    if p.exists():
-        raw = json.load(open(p))
-        # ASR 文本统一转简体，确保与搜索 query 的字符集一致
-        for a in raw:
-            a["text"] = _norm(a["text"])
-        asr_data[ep] = raw
-print(f"[search] ASR 数据: {sum(len(v) for v in asr_data.values())} 条, 覆盖 EP {sorted(asr_data.keys())}")
+# interview 模式的 ASR 数据
+interview_asr = None
+
+if _project_type == "drama":
+    # 语义索引
+    if INDEX_NPY.exists() and INDEX_META.exists():
+        semantic_emb = np.load(str(INDEX_NPY), mmap_mode='r')
+        semantic_metas = json.load(open(INDEX_META))
+        print(f"[search] 语义索引 (mmap): {semantic_emb.shape[0]} 条, {semantic_emb.shape[1]}维")
+    elif INDEX_FILE.exists():
+        old = pickle.load(open(INDEX_FILE, "rb"))
+        semantic_emb = old["embeddings"]
+        semantic_metas = old["metas"]
+        print(f"[search] 语义索引 (pickle): {semantic_emb.shape[0]} 条")
+
+    # 动态发现可用集数
+    AVAILABLE_EPS = sorted(set(
+        int(d.name[2:]) for d in SOURCES_DIR.iterdir()
+        if d.is_dir() and d.name.startswith("ep") and d.name[2:].isdigit()
+        and ((d / "asr_result.json").exists() or (d / "vlm_analysis.json").exists())
+    ))
+    print(f"[search] 可用集数: {AVAILABLE_EPS}")
+
+    # VLM 数据
+    for ep in AVAILABLE_EPS:
+        p = SOURCES_DIR / f"ep{ep}" / "vlm_analysis.json"
+        if p.exists():
+            for s in json.load(open(p)):
+                if s is None: continue
+                s["_ep"] = ep
+                vlm_data.append(s)
+    print(f"[search] VLM 数据: {len(vlm_data)} 条")
+
+    # ASR 数据
+    for ep in AVAILABLE_EPS:
+        p = SOURCES_DIR / f"ep{ep}" / "asr_result.json"
+        if p.exists():
+            raw = json.load(open(p))
+            for a in raw:
+                a["text"] = _norm(a["text"])
+            asr_data[ep] = raw
+    print(f"[search] ASR 数据: {sum(len(v) for v in asr_data.values())} 条, 覆盖 EP {sorted(asr_data.keys())}")
+
+elif _project_type == "interview":
+    # 语义索引（ASR 文本）
+    if INDEX_NPY.exists() and INDEX_META.exists():
+        semantic_emb = np.load(str(INDEX_NPY), mmap_mode='r')
+        semantic_metas = json.load(open(INDEX_META))
+        print(f"[search] 口播语义索引: {semantic_emb.shape[0]} 条, {semantic_emb.shape[1]}维")
+
+    # 加载 ASR 转写（按文件）
+    interview_asr = {}
+    for f in SOURCES_DIR.glob("asr_*.json"):
+        key = f.stem.replace("asr_", "")
+        interview_asr[key] = json.load(open(f))
+    print(f"[search] 口播ASR: {sum(len(v) for v in interview_asr.values())} 条, {len(interview_asr)} 个素材")
 
 # ── Handler ──
 class Handler(SimpleHTTPRequestHandler):
@@ -223,7 +418,7 @@ class Handler(SimpleHTTPRequestHandler):
     def _resolve_task_dir(self, task_name=None):
         """解析任务目录：优先 ?task= 参数，否则用启动默认"""
         name = task_name or _args.task
-        return DRAMA_DIR / "tasks" / name
+        return PROJECT_DIR / "tasks" / name
 
     def _resolve_clip_dir(self, task_name=None):
         return self._resolve_task_dir(task_name) / "素材clips"
@@ -260,9 +455,19 @@ class Handler(SimpleHTTPRequestHandler):
             q = params.get("q", [""])[0]
             mode = params.get("mode", ["hybrid"])[0]
             self._json(self._search(q, mode=mode))
+        elif path == "/tasks/文案脚本.json":
+            task = req_task or _args.task
+            script_file = self._resolve_task_dir(task) / "文案脚本.json"
+            # also check project-level tasks dir
+            if not script_file.exists():
+                script_file = PROJECT_DIR / "tasks" / "文案脚本.json"
+            if script_file.exists():
+                self._json(json.load(open(script_file)))
+            else:
+                self._json({"ok": False, "error": "文案脚本尚未生成"}, 404)
         elif path == "/segments.json":
             task = req_task or _args.task
-            drama_id = db.get_drama_id(_args.drama)
+            drama_id = db.get_drama_id(_project_name)
             if drama_id:
                 task_obj = db.get_task(drama_id, task)
                 if task_obj:
@@ -281,29 +486,42 @@ class Handler(SimpleHTTPRequestHandler):
             end_t = float(end_str) if end_str else None
             self._serve_preview(params.get("ep",["1"])[0], float(params.get("t",["0"])[0]),
                                params.get("sid",["default"])[0], task=task, end_t=end_t)
+        elif path == "/asr/raw":
+            self._handle_asr_raw()
+        elif path == "/asr/classified":
+            self._handle_asr_classified()
+        elif path == "/data/segmented":
+            proj = params.get("project", [_project_name])[0]
+            seg_file = BASE_DIR / proj / "sources_clean" / "segmented.json"
+            if seg_file.exists():
+                self._json(json.load(open(seg_file)))
+            else:
+                self._json({}, 404)
         elif path == "/status":
             task = req_task or _args.task
-            self._json({"ok": True, "drama": _args.drama, "task": task})
+            self._json({"ok": True, "drama": _project_name, "task": task})
         elif path == "/picks":
             task = req_task or _args.task
-            drama_id = db.get_drama_id(_args.drama)
+            drama_id = db.get_drama_id(_project_name)
             if drama_id:
                 picks = db.get_picks(drama_id, task)
                 self._json({"picks": picks})
             else:
                 self._json({"picks": {}})
         elif path == "/data/quality":
-            drama_id = db.get_drama_id(_args.drama)
+            proj = params.get("project", [_project_name])[0]
+            drama_id = db.get_drama_id(proj)
             if drama_id:
                 eps = db.get_all_episodes(drama_id)
                 summary = db.get_episodes_summary(drama_id)
                 reports = db.get_all_quality_reports(drama_id)
-                self._json({"episodes": eps, "summary": summary, "reports": reports})
+                self._json({"episodes": eps, "summary": summary, "reports": reports, "project": proj})
             else:
-                self._json({"episodes": [], "summary": {}, "reports": []})
+                self._json({"episodes": [], "summary": {}, "reports": [], "project": proj})
         elif path == "/data/task_check":
             task = req_task or _args.task
-            drama_id = db.get_drama_id(_args.drama)
+            proj = params.get("project", [_project_name])[0]
+            drama_id = db.get_drama_id(proj)
             if drama_id:
                 task_obj = db.get_task(drama_id, task)
                 if task_obj:
@@ -322,7 +540,7 @@ class Handler(SimpleHTTPRequestHandler):
         elif path == "/dramas":
             self._json(self._list_dramas())
         elif path == "/tasks":
-            drama = params.get("drama", [_args.drama])[0]
+            drama = params.get("drama", [_project_name])[0]
             self._json(self._list_tasks(drama))
         elif path == "/download":
             # 轮询提取状态
@@ -418,6 +636,23 @@ class Handler(SimpleHTTPRequestHandler):
             self._create_task()
         elif path == "/data/process":
             data = json.loads(self._read_body())
+            proj = data.get("project", _project_name)
+            # 检查项目类型
+            proj_type = _project_type
+            cfg_path = BASE_DIR / "projects" / f"{proj}.json"
+            if cfg_path.exists():
+                proj_type = json.load(open(cfg_path)).get("type", "drama")
+            # 口播采访流水线
+            if proj_type == "interview":
+                task_id = f"intv_{int(time.time())}"
+                threading.Thread(
+                    target=_run_interview_pipeline,
+                    args=(task_id, proj, data.get("step", "all")),
+                    daemon=True,
+                ).start()
+                self._json({"ok": True, "task_id": task_id})
+                return
+            # 电视剧流水线
             episodes = data.get("episodes", [])
             if not episodes:
                 self._json({"ok": False, "error": "请指定集数"}, 400)
@@ -425,13 +660,13 @@ class Handler(SimpleHTTPRequestHandler):
             task_id = f"proc_{int(time.time())}"
             threading.Thread(
                 target=_run_pipeline,
-                args=(task_id, episodes, _args.drama),
+                args=(task_id, episodes, proj),
                 daemon=True,
             ).start()
             self._json({"ok": True, "task_id": task_id})
         elif path == "/picks":
             data = json.loads(self._read_body())
-            drama_id = db.get_drama_id(_args.drama)
+            drama_id = db.get_drama_id(_project_name)
             if drama_id:
                 db.save_picks(drama_id, req_task, data.get("picks", {}))
                 self._json({"ok": True})
@@ -439,6 +674,18 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json({"ok": False, "error": "drama not found"}, 404)
         elif path == "/export/extract_clips":
             self._handle_export_extract(req_task)
+        elif path == "/script/analyze_transcript":
+            self._handle_analyze_transcript()
+        elif path == "/script/generate_from_outline":
+            self._handle_generate_from_outline()
+        elif path == "/script/generate_script":
+            self._handle_generate_script()
+        elif path == "/script/generate_script_stream":
+            self._handle_generate_script_stream()
+        elif path == "/script/generate_story_first":
+            self._handle_generate_story_first()
+        elif path == "/asr/raw":
+            self._handle_asr_raw()
         else:
             self.send_error(404)
 
@@ -451,6 +698,16 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _search(self, query, limit=10, mode="hybrid", eps=None, boost_eps=None):
         if not query: return []
+
+        # 口播项目: 添加基于 classified ASR 的关键词搜索
+        if _project_type == "interview" and mode in ("keyword", "hybrid"):
+            kw_results = self._interview_keyword_search(query, limit)
+            if mode == "keyword":
+                return kw_results
+            # hybrid: 合并关键词+语义
+            sem_results = self._semantic_search(query, limit)
+            return self._merge_results(kw_results, sem_results, limit)
+
         if mode == "keyword":
             results = self._keyword_search(query, limit)
         elif mode == "semantic":
@@ -472,6 +729,64 @@ class Handler(SimpleHTTPRequestHandler):
                 others = [r for r in results if r.get("ep") not in ep_set]
                 results = priority + others
         return results
+
+    def _interview_keyword_search(self, query, limit=10):
+        '''口播项目: 在 classified ASR 中做纯关键词搜索'''
+        results = {}
+        q_clean = _norm(query)
+        qlen = len(q_clean)
+
+        # n-gram scoring
+        kws = {}
+        for n in range(2, min(qlen + 1, 9)):
+            w = 3 ** (n - 2) if n <= 5 else 27
+            seen = set()
+            for i in range(qlen - n + 1):
+                kw = q_clean[i:i+n]
+                if kw not in seen:
+                    seen.add(kw)
+                    kws[kw] = max(kws.get(kw, 0), w)
+        if qlen > 1:
+            kws[q_clean] = 81  # 完整 query 最高权重
+
+        # Search classified ASR
+        cf = PROJECT_DIR / "sources_clean" / "classified_学习新东方.json"
+        if cf.exists():
+            classified = json.load(open(cf))
+            for s in classified:
+                text = _norm(s.get('text', ''))
+                score = sum(text.count(kw) * w for kw, w in kws.items())
+                if score <= 0: continue
+                k = f"{s.get('start_sec',0):.0f}"
+                r = {
+                    "ep": 0, "start": s.get('start_sec', 0), "end": s.get('start_sec', 0) + 3,
+                    "scene_id": 0, "description": text[:200], "asr": text[:200],
+                    "score": round(score * 1.5, 1),
+                    "duration": 3, "source": "学习新东方",
+                }
+                if k not in results or r["score"] > results[k]["score"]:
+                    results[k] = r
+
+        return sorted(results.values(), key=lambda x: -x["score"])[:limit]
+
+    def _merge_results(self, kw_results, sem_results, limit=10):
+        '''合并关键词和语义搜索结果'''
+        merged = {}
+        max_kw = max((r["score"] for r in kw_results), default=1)
+        for r in kw_results:
+            k = f"{r.get('source','')}_{r['start']:.0f}"
+            merged[k] = {**r, "score": r["score"] / max_kw * 40}  # 关键词 0-40
+
+        max_sem = max((r["score"] for r in sem_results), default=1)
+        for r in sem_results:
+            k = f"{r.get('source','')}_{r['start']:.0f}"
+            sem_score = r["score"] / max_sem * 60  # 语义 0-60
+            if k in merged:
+                merged[k]["score"] += sem_score
+            else:
+                merged[k] = {**r, "score": sem_score}
+
+        return sorted(merged.values(), key=lambda x: -x["score"])[:limit]
 
     def _asr_first_search(self, query, limit=10):
         '''ASR优先匹配：纯 ASR 关键词搜索 + 语义兜底，结果展示 ASR 台词'''
@@ -540,14 +855,32 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _semantic_search(self, query, limit=10):
         '''纯语义搜索（BGE embedding + 余弦相似度）'''
-        if not semantic_index: return []
-        emb = semantic_index["embeddings"]
-        metas = semantic_index["metas"]
+        if semantic_emb is None: return []
+        emb = semantic_emb
+        metas = semantic_metas
         q_emb = _encode(query)
-        # BGE 已做 L2 normalize，点积 = 余弦相似度
         scores = np.dot(emb, q_emb)
         top = np.argsort(scores)[-30:][::-1]
         results = {}
+
+        # 口播模式
+        if _project_type == "interview":
+            for i in top:
+                if scores[i] <= 0.30: continue
+                m = metas[i]
+                r = {
+                    "ep": 0, "start": m["start"], "end": m["end"],
+                    "scene_id": 0, "description": m["text"][:200], "asr": m["text"][:200],
+                    "source": m.get("source", ""),
+                    "score": round(float(scores[i]) * 100, 1),
+                    "duration": round(m["end"] - m["start"], 1),
+                }
+                k = f"{m['source']}_{m['start']:.0f}"
+                if k not in results or r["score"] > results[k]["score"]:
+                    results[k] = r
+            return sorted(results.values(), key=lambda x: -x["score"])[:limit]
+
+        # 电视剧模式
         for i in top:
             if scores[i] <= 0.35: continue
             m = metas[i]
@@ -667,7 +1000,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _expand_query(self, query):
         '''LLM 扩展查询：生成2-3个不同角度的搜索词'''
-        import urllib.request
+        import urllib.request as _ur
         api_key = os.environ.get("MIMO_API_KEY", "")
         api_url = os.environ.get("MIMO_API_URL", "https://api.xiaomimimo.com/v1")
         payload = json.dumps({
@@ -681,12 +1014,12 @@ class Handler(SimpleHTTPRequestHandler):
             }],
             "max_tokens": 200,
         }).encode("utf-8")
-        req = urllib.request.Request(
+        req = _ur.Request(
             f"{api_url}/chat/completions", data=payload,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with _ur.urlopen(req, timeout=15) as resp:
                 result = json.loads(resp.read())
             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
             return [l.strip().lstrip("- 123456789.）)") for l in text.strip().split("\n") if l.strip()][:3]
@@ -696,7 +1029,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _llm_rerank(self, query, candidates, top_n=10):
         '''LLM 对候选画面重排序'''
-        import urllib.request
+        import urllib.request as _ur
         api_key = os.environ.get("MIMO_API_KEY", "")
         api_url = os.environ.get("MIMO_API_URL", "https://api.xiaomimimo.com/v1")
         
@@ -716,12 +1049,12 @@ class Handler(SimpleHTTPRequestHandler):
             }],
             "max_tokens": 100,
         }).encode("utf-8")
-        req = urllib.request.Request(
+        req = _ur.Request(
             f"{api_url}/chat/completions", data=payload,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with _ur.urlopen(req, timeout=15) as resp:
                 result = json.loads(resp.read())
             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
             # 解析编号
@@ -847,7 +1180,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(PROXY_MANIFEST.read_bytes())
         else:
-            self._json({"drama": _args.drama, "proxies": [], "note": "无代理文件，请先运行 generate_proxies.py"})
+            self._json({"drama": _project_name, "proxies": [], "note": "无代理文件，请先运行 generate_proxies.py"})
 
     def _serve_proxy(self, path):
         """Serve 代理视频文件，支持 HTTP Range 请求"""
@@ -1022,7 +1355,7 @@ class Handler(SimpleHTTPRequestHandler):
                     fm = _re.search(r'filename="([^"]+)"', header)
                     if fm: audio_name = fm.group(1)
 
-        drama_name = data.get("drama", _args.drama)
+        drama_name = data.get("drama", _project_name)
         task_name = data.get("name", "").strip()
         local_path = data.get("local_path", "").strip()
 
@@ -1107,15 +1440,52 @@ class Handler(SimpleHTTPRequestHandler):
             self._json({"ok": False, "error": str(e)}, 500)
 
     def _list_dramas(self):
-        """列出所有电视剧（从 SQLite 读取）"""
-        return db.list_dramas()
+        """列出所有项目（SQLite + 文件系统 projects/*.json）"""
+        dramas = db.list_dramas()
+        seen = {d["name"] for d in dramas}
+        projects_dir = BASE_DIR / "projects"
+        if projects_dir.exists():
+            for cfg_file in sorted(projects_dir.glob("*.json")):
+                name = cfg_file.stem
+                if name in seen: continue
+                try:
+                    cfg = json.load(open(cfg_file))
+                    dramas.append({
+                        "name": name,
+                        "type": cfg.get("type", "drama"),
+                        "description": cfg.get("description", ""),
+                        "task_count": 0,
+                    })
+                except Exception: pass
+        return dramas
 
     def _list_tasks(self, drama_name):
-        """列出电视剧的所有任务（从 SQLite 读取）"""
+        """列出项目的所有任务（SQLite + 文件系统扫描）"""
+        tasks = []
+        # 1. SQLite
         drama_id = db.get_drama_id(drama_name)
-        if not drama_id:
-            return []
-        return db.list_tasks(drama_id)
+        if drama_id:
+            tasks = db.list_tasks(drama_id)
+        seen = {t.get("name", "") for t in tasks}
+        # 2. 文件系统
+        tasks_dir = BASE_DIR / drama_name / "tasks"
+        if tasks_dir.exists():
+            for task_dir in sorted(tasks_dir.iterdir()):
+                if not task_dir.is_dir(): continue
+                name = task_dir.name
+                if name in seen: continue
+                # 读取 segments.json 获取段数
+                seg_count = 0
+                seg_file = task_dir / "segments.json"
+                if seg_file.exists():
+                    try:
+                        seg_count = len(json.load(open(seg_file)).get("segments", []))
+                    except Exception: pass
+                tasks.append({
+                    "name": name, "status": "editing",
+                    "segments": seg_count, "duration": 0,
+                })
+        return tasks
 
     # ── 台词匹配 ──
 
@@ -1234,8 +1604,8 @@ class Handler(SimpleHTTPRequestHandler):
                     results[k] = r
 
         # 搜字幕数据（从 VLM 提取的硬字幕，权重 x2）
-        if semantic_index:
-            for i, m in enumerate(semantic_index["metas"]):
+        if semantic_metas:
+            for i, m in enumerate(semantic_metas):
                 if m.get("type") != "sub": continue
                 text = m["text"]
                 score = sum((text.count(k) * 6) for k in kws)  # 字幕权重 x2
@@ -1392,12 +1762,12 @@ class Handler(SimpleHTTPRequestHandler):
         '''将解说词转写为1-3个视觉搜索描述，每个从不同角度匹配原剧镜头'''
         if not narration or not narration.strip():
             return []
-        import urllib.request
+        import urllib.request as _ur
 
         # 加载角色信息
         char_ctx = ""
         try:
-            char_file = DRAMA_DIR / "characters.json"
+            char_file = PROJECT_DIR / "characters.json"
             if char_file.exists():
                 chars = json.load(open(char_file)).get("characters", {})
                 parts = []
@@ -1442,13 +1812,13 @@ class Handler(SimpleHTTPRequestHandler):
             "temperature": 0.6,
             "max_tokens": 1500,
         }).encode("utf-8")
-        req = urllib.request.Request(
+        req = _ur.Request(
             f"{api_url}/chat/completions",
             data=payload,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with _ur.urlopen(req, timeout=30) as resp:
                 result = json.loads(resp.read())
             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
             lines = [l.strip() for l in text.strip().split("\n") if l.strip() and len(l.strip()) > 15]
@@ -1456,6 +1826,550 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"[storyboard_suggest] LLM call failed: {e}")
             return []
+
+    # ── 策划台: 转写分析 ──
+    def _handle_analyze_transcript(self):
+        """POST /script/analyze_transcript — LLM 分析采访转写，标注金句+识别结构"""
+        import urllib.request as _ur
+        data = json.loads(self._read_body())
+        transcript = data.get("transcript", "").strip()
+        if not transcript:
+            self._json({"ok": False, "error": "请提供转写文本"}, 400)
+            return
+
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        if not api_key:
+            self._json({"ok": False, "error": "未配置 DEEPSEEK_API_KEY"}, 500)
+            return
+
+        payload = json.dumps({
+            "model": "deepseek-chat",
+            "messages": [{
+                "role": "system",
+                "content": (
+                    "你是短视频口播剪辑策划助手。分析引导式采访转写，找到最有价值的内容。\n\n"
+                    "素材特征：引导式聊天中有两层——内容层(正式讲述，可入正片)和元讨论层(商量怎么讲/自我评价/重述尝试，不入正片)。主持人的短问句和肯定词也不入正片。\n\n"
+                    "标注每句：\n"
+                    "  speaker: guest/host\n"
+                    "  layer: content(正式讲述)/meta(元讨论)/guide(主持人引导)\n"
+                    "  importance: 1-5 (5=金句hook, 4=核心观点/数据, 3=细节, 2=过渡, 1=冗余。meta/guide类默认-2)\n"
+                    "  narrative_role: hook_tension(激将式)/hook_promise(价值承诺)/personal_reveal(个人揭示)/empathy(共情)/evidence(方法论)/bridge(过桥)/turn(反转)/proof(案例)/insight(洞见)\n"
+                    "  is_golden: 适合做hook或收尾的标题级金句\n\n"
+                    "识别：\n"
+                    "  hook_candidates: 可重复锚定2-4次的核心金句列表\n"
+                    "  opening_strategy: tension_first或promise_first\n"
+                    "  empathy_moment: 共情句(如'爱学习但别乱学')或null\n"
+                    "  exclusive_moment: 独家揭示句(如'从没对外分享过')或null\n\n"
+                    "输出严格JSON(无markdown代码块):\n"
+                    '{"sentences":[{"index":0,"text":"原文","start_sec":0,"end_sec":2,"speaker":"guest","layer":"content","importance":5,"narrative_role":"hook_tension","is_golden":true,"topic":"开场","redundancy":null}],"hook_candidates":[],"structure":{"title_suggestion":"标题","opening_strategy":"tension_first","hook_line":"核心金句","empathy_moment":null,"exclusive_moment":null,"outline":[{"label":"段落","narrative_role":"hook_tension","sentence_indices":[0]}]}}'
+                )
+            }, {
+                "role": "user",
+                "content": f"采访转写文本：\n{transcript}"
+            }],
+            "temperature": 0.3,
+            "max_tokens": 8000,
+        }).encode("utf-8")
+
+        try:
+            req = _ur.Request(
+                "https://api.deepseek.com/v1/chat/completions",
+                data=payload,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+            )
+            with _ur.urlopen(req, timeout=120) as resp:
+                result = json.loads(resp.read())
+            text = result["choices"][0]["message"]["content"].strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].split("```")[0].strip()
+            # 修复常见 JSON 错误
+            parsed = None
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                # 尝试修复截断的 JSON
+                # 1. 移除末尾不完整的行
+                lines = text.split("\n")
+                for trim in range(1, min(20, len(lines))):
+                    fixed = "\n".join(lines[:-trim])
+                    if fixed.rstrip().endswith("}") or fixed.rstrip().endswith("]"):
+                        try:
+                            parsed = json.loads(fixed + ("}" if fixed.count("{") > fixed.count("}") else "") + ("]" if fixed.count("[") > fixed.count("]") else ""))
+                            break
+                        except json.JSONDecodeError:
+                            continue
+            if not parsed:
+                self._json({"ok": False, "error": "AI 返回格式异常，请重试", "raw": text[:500]}, 500)
+                return
+            self._json({"ok": True, **parsed})
+        except Exception as e:
+            print(f"[analyze_transcript] failed: {e}")
+            self._json({"ok": False, "error": str(e)[:200]}, 500)
+
+    # ── 策划台: 主题+结构 → 文案生成 ──
+    def _handle_generate_from_outline(self):
+        """POST /script/generate_from_outline — 根据主题和结构大纲生成 segments"""
+        import urllib.request as _ur
+        data = json.loads(self._read_body())
+        topic = data.get("topic", "").strip()
+        outline = data.get("outline", [])  # [{label: "开场hook", narrative_role: "hook_tension"}]
+        transcript = data.get("transcript", "").strip()
+
+        if not topic or not outline:
+            self._json({"ok": False, "error": "请提供 topic 和 outline"}, 400)
+            return
+
+        # 构建大纲描述
+        outline_desc = "\n".join(f"{i+1}. [{o.get('narrative_role','?')}] {o.get('label','')}" for i, o in enumerate(outline))
+
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        payload = json.dumps({
+            "model": "deepseek-chat",
+            "messages": [{
+                "role": "system",
+                "content": (
+                    "你是短视频口播剪辑的文案助手。根据剪辑师确定的主题和大纲，从采访转写中提取最合适的原话，生成 segments.json。\n\n"
+                    "规则：\n"
+                    "1. 每段 highlight_text 必须是转写中真实存在的原话（可做最小限度的去口头禅），不要自己编造\n"
+                    "2. 每段标注 source_start / source_end（从转写时间戳中取）\n"
+                    "3. 根据 narrative_role 选择合适的表达力度：\n"
+                    "   hook_tension: 挑衅/激将式，短而有力（5-10字）\n"
+                    "   hook_promise: 价值承诺式，一句话说清收益（10-20字）\n"
+                    "   personal_reveal: 个人揭示，用\"我\"开头（10-20字）\n"
+                    "   empathy: 共情，理解观众痛点（10-20字）\n"
+                    "   evidence: 方法论/数据，具体可执行（15-40字）\n"
+                    "   bridge: 情绪过桥，一句话（5-10字）\n"
+                    "   turn: 反转，孤句成段（2-5字）\n"
+                    "   proof: 亲身案例，数据支撑（15-30字）\n"
+                    "   insight: 深层洞见（10-25字）\n"
+                    "4. 每段 edit_type: 短句用trim, 多句合并用merge\n"
+                    "5. topic 标签用于分段组织\n\n"
+                    "输出严格JSON:\n"
+                    '{"segments":[{"seg_id":0,"highlight_text":"原话","source_start":63.0,"source_end":67.0,"topic":"开场hook","edit_type":"trim","narration_text":"","note":"为什么选这句"}]}'
+                )
+            }, {
+                "role": "user",
+                "content": (
+                    f"视频主题：{topic}\n\n"
+                    f"结构大纲：\n{outline_desc}\n\n"
+                    f"采访转写（带时间戳）：\n{transcript[:4000]}"
+                )
+            }],
+            "temperature": 0.4,
+            "max_tokens": 4000,
+        }).encode("utf-8")
+
+        try:
+            req = _ur.Request(
+                "https://api.deepseek.com/v1/chat/completions",
+                data=payload,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+            )
+            with _ur.urlopen(req, timeout=120) as resp:
+                result = json.loads(resp.read())
+            text = result["choices"][0]["message"]["content"].strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].split("```")[0].strip()
+            parsed = json.loads(text)
+            self._json({"ok": True, "topic": topic, "segments": parsed.get("segments", [])})
+        except Exception as e:
+            print(f"[generate_from_outline] failed: {e}")
+            self._json({"ok": False, "error": str(e)[:200]}, 500)
+
+    # ── 三步文案生成 ──
+    def _handle_generate_script(self):
+        """POST /script/generate_script — 三步混编算法生成完整 segments"""
+        import urllib.request as _ur
+        data = json.loads(self._read_body())
+        topic = data.get("topic", "").strip()
+        if not topic:
+            self._json({"ok": False, "error": "请提供视频主题"}, 400)
+            return
+
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        if not api_key:
+            self._json({"ok": False, "error": "未配置 DEEPSEEK_API_KEY"}, 500)
+            return
+
+        # 加载分类数据
+        classified = []
+        cf = PROJECT_DIR / "sources_clean" / "classified_学习新东方.json"
+        if cf.exists():
+            classified = json.load(open(cf))
+        content_only = [s for s in classified if s.get('layer') == 'content']
+        content_text = '\n'.join(
+            f"[{s['start_sec']:.0f}s|imp={s.get('importance',3)}] {s['text']}"
+            for s in content_only
+        )
+
+        def _call_llm(system_prompt, user_content, temp=0.4, label="?"):
+            payload = json.dumps({
+                "model": "deepseek-chat",
+                "messages": [{"role": "system", "content": system_prompt},
+                             {"role": "user", "content": user_content}],
+                "temperature": temp, "max_tokens": 3000,
+            }).encode()
+            for attempt in range(3):
+                try:
+                    req = _ur.Request(
+                        "https://api.deepseek.com/v1/chat/completions",
+                        data=payload,
+                        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+                    )
+                    with _ur.urlopen(req, timeout=180) as resp:
+                        result = json.loads(resp.read())
+                    text = result["choices"][0]["message"]["content"].strip()
+                    if text.startswith("```"): text = text.split("\n", 1)[1].split("```")[0].strip()
+                    return json.loads(text)
+                except Exception as e:
+                    print(f"  [{label}] attempt {attempt+1}/3 failed: {e}")
+                    if attempt == 2: raise
+                    time.sleep(3)
+            return {}
+
+        try:
+            # ═══ Step 1: 大结构 ═══
+            print("[gen_script] Step 1: 大结构")
+            structure = _call_llm(  # Step 1
+                "你是短视频策划导演。根据采访内容精华，设计一个60-90秒短视频的5-8段叙事结构。\n\n"
+                "★ 硬约束: 各段duration之和必须≤100秒(预留10-20秒缓冲)。\n"
+                "★ 每段duration根据内容重要性分配,核心方法论段可15-20秒,过渡段3-5秒。\n\n"
+                "要求:\n"
+                "1. 确定核心主题(≤15字)\n"
+                "2. 每段标注: narrative_role + 核心论点(一句话) + 目标时长(秒)\n"
+                "3. narrative_role: hook_tension/hook_promise/personal_reveal/empathy/evidence/bridge/turn/proof/insight\n"
+                "4. 结构必须有起伏: 开头激将+个人揭示→方法论→反转→案例→洞察收尾\n"
+                "5. 共情层放在方法论之前\n\n"
+                "输出JSON: {\"topic\":\"主题\",\"sections\":[{\"role\":\"hook_tension\",\"point\":\"论点\",\"duration\":5}]}",
+                f"视频主题方向: {topic}\n\n采访内容精华:\n{content_text[:4000]}"
+            )
+            total_budget = sum(s.get('duration', 0) for s in structure.get('sections', []))
+            print(f"  → {structure.get('topic','?')}, {len(structure.get('sections',[]))} 段, 预算{total_budget}s")
+
+            # ═══ Step 2: 组织语句（混编） ═══
+            print("[gen_script] Step 2: 混编选句")
+            all_selected = []
+            total_src_dur = 0  # 源素材总时长
+            for i, sec in enumerate(structure.get('sections', [])):
+                result = _call_llm(
+                    "你是短视频精编师。从完整采访ASR中为指定段落选出最合适的原话。\n\n"
+                    "★ 硬约束: 选句总源时长控制在目标时长的1.3倍以内(留30%精剪余量)。\n"
+                    "★ 60-90秒成片 ≈ 需要120-160秒源素材。\n\n"
+                    "规则:\n"
+                    "1. 跨时间选择（不按ASR顺序,按叙事逻辑）\n"
+                    "2. 优先选 importance≥4 的句子\n"
+                    "3. 同义句只选最精炼的一句\n"
+                    "4. 选3-8句,总源时长控制在目标时长的80-130%\n"
+                    "5. 选句需覆盖论点不同维度\n\n"
+                    "输出JSON: {\"sentences\":[{\"text\":\"原话\",\"source_start\":63.0,\"source_end\":67.0,\"reason\":\"为何选\"}]}",
+                    f"段落角色: {sec['role']}\n核心论点: {sec['point']}\n目标时长: ~{sec['duration']}s\n\n"
+                    f"采访ASR:\n{content_text[:5000]}",
+                    label=f"Step2-{i}"
+                )
+                sentences = result.get('sentences', [])
+                sec_dur = sum(s.get('source_end', s.get('source_start',0)+3) - s.get('source_start',0) for s in sentences)
+                total_src_dur += sec_dur
+                for s in sentences:
+                    s['topic'] = sec['point'][:20]
+                    s['section_role'] = sec['role']
+                all_selected.extend(sentences)
+                print(f"  Section {i} ({sec['role']}): {len(sentences)}句, 源{sec_dur:.0f}s")
+                time.sleep(0.3)
+
+            # 合并+去重（同位置+同文本）
+            seen = set()
+            merged = []
+            for s in all_selected:
+                key = f"{s.get('source_start',0):.0f}_{s['text'][:20]}"
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(s)
+            print(f"  合并去重: {len(all_selected)} → {len(merged)} 句")
+
+            # ═══ Step 3: 精细化 ═══
+            print("[gen_script] Step 3: 精细化")
+            script_preview = '\n'.join(
+                f"[{i}] [{s.get('section_role','?')}] {s['text'][:80]}"
+                for i, s in enumerate(merged)
+            )
+            refinement = _call_llm(
+                "你是短视频精编师。审核下面的脚本，完成三件事:\n\n"
+                "1. 检查段落间是否有逻辑断裂，是否需要过渡句\n"
+                "2. 检查是否有连续3句以上来自同一时间段（产生堆砌感）\n"
+                "3. 在必要处补写过渡句(≤15字)，标注 source: 'ai_generated'\n"
+                "   每段之间最多补1句，整片最多补3句\n\n"
+                "输出JSON: {\"checks\":{\"logic_gaps\":[],\"rhythm_issues\":[]},"
+                "\"bridges\":[{\"after_index\":2,\"text\":\"过渡句\",\"topic\":\"过渡\"}],"
+                "\"notes\":\"其他建议\"}",
+                f"脚本(按叙事顺序排列):\n{script_preview}",
+                label="Step3"
+            )
+
+            # 组装最终 segments
+            segments = []
+            seg_id = 0
+            bridges = refinement.get('bridges', [])
+            bridge_map = {b['after_index']: b for b in bridges}
+
+            for i, s in enumerate(merged):
+                segments.append({
+                    "seg_id": seg_id,
+                    "highlight_text": s['text'],
+                    "source_start": s.get('source_start', 0),
+                    "source_end": s.get('source_end', s.get('source_start', 0) + 5),
+                    "topic": s.get('topic', ''),
+                    "section_role": s.get('section_role', ''),
+                    "edit_type": "trim",
+                    "narration_text": "",
+                    "note": s.get('reason', ''),
+                })
+                seg_id += 1
+
+                # 插入 AI 过渡句
+                if i in bridge_map:
+                    b = bridge_map[i]
+                    segments.append({
+                        "seg_id": seg_id,
+                        "highlight_text": b['text'],
+                        "source_start": 0, "source_end": 0,
+                        "topic": b.get('topic', '过渡'),
+                        "section_role": "bridge",
+                        "edit_type": "ai_generated",
+                        "narration_text": "",
+                        "note": "⚠️ AI补写,需人工配音或从素材补充",
+                    })
+                    seg_id += 1
+
+            # 计算时间估计
+            src_total = sum(
+                (s.get('source_end', s.get('source_start',0)+3) - s.get('source_start',0))
+                for s in segments if s.get('edit_type') != 'ai_generated'
+            )
+            est_final = src_total * 0.5  # 精剪约保留50%
+
+            result = {
+                "ok": True,
+                "topic": structure.get('topic', topic),
+                "sections": structure.get('sections', []),
+                "segments": segments,
+                "checks": refinement.get('checks', {}),
+                "bridges": bridges,
+                "notes": refinement.get('notes', ''),
+                "total": len(segments),
+                "ai_generated_count": len(bridges),
+                "time_estimate": {
+                    "budget": total_budget,
+                    "source_total": round(src_total, 1),
+                    "estimated_final": round(est_final, 1),
+                    "target": "60-90s",
+                    "status": "ok" if 50 <= est_final <= 110 else ("over" if est_final > 110 else "under"),
+                }
+            }
+            self._json(result)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._json({"ok": False, "error": str(e)[:200]}, 500)
+
+    def _handle_generate_script_stream(self):
+        """POST /script/generate_script_stream — SSE 流式 Agent 流水线"""
+        data = json.loads(self._read_body())
+        topic = data.get("topic", "").strip()
+        if not topic:
+            self._json({"ok": False, "error": "请提供视频主题"}, 400); return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        def emit(event, data):
+            self.wfile.write(f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
+            self.wfile.flush()
+        # 心跳: 每15s发送一次,防止连接超时
+        import threading
+        heartbeat_active = [True]
+        def heartbeat():
+            while heartbeat_active[0]:
+                time.sleep(15)
+                try: emit("heartbeat", {"ts": time.time()})
+                except: break
+        threading.Thread(target=heartbeat, daemon=True).start()
+
+        try:
+            from script_agents import run_pipeline
+
+            # 加载 ASR (动态发现 classified 文件)
+            clean_dir = PROJECT_DIR / "sources_clean"
+            classified_files = list(clean_dir.glob("classified_*.json"))
+            classified = []
+            if classified_files:
+                classified = json.load(open(classified_files[0]))
+            content = [s for s in classified if s.get('layer') == 'content']
+            ctx = '\n'.join(f"[{s['start_sec']:.0f}s|{s.get('importance',3)}] {s['text']}" for s in content)
+
+            # 运行 Agent 流水线
+            result = run_pipeline(topic, ctx, emit_progress=lambda step, msg, data=None:
+                emit("progress", {"step": step, "status": "running", "msg": msg, **(data or {})}))
+
+            if result.get('segments') and len(result['segments']) > 0:
+                # ── 保存文案脚本到文件 ──
+                tasks_dir = PROJECT_DIR / "tasks"
+                tasks_dir.mkdir(parents=True, exist_ok=True)
+                script_file = tasks_dir / "文案脚本.json"
+                save_data = {
+                    "topic": result.get("topic", topic),
+                    "sections": result.get("sections", []),
+                    "segments": result["segments"],
+                    "total": result.get("total", len(result["segments"])),
+                    "time_estimate": result.get("time_estimate", {}),
+                    "review_issues": result.get("review_issues", []),
+                    "review_verdict": result.get("review_verdict", "?"),
+                }
+                json.dump(save_data, open(script_file, "w"), ensure_ascii=False, indent=2)
+                result["script_file"] = str(script_file)
+                result["script_file_url"] = f"/tasks/文案脚本.json"
+                print(f"[pipeline] 文案脚本已保存: {script_file}")
+
+                emit("complete", result)
+            else:
+                emit("error", {"error": result.get('error', '生成失败: 未产出有效文案'), "detail": str(result.get('edit_notes',''))[:200]})
+            time.sleep(0.5)  # 确保 complete 事件被客户端收到
+            heartbeat_active[0] = False
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            try: emit("error", {"error": str(e)[:200]})
+            except: pass
+            heartbeat_active[0] = False
+
+    def _handle_generate_story_first(self):
+        """POST /script/generate_story_first — v4 故事优先流水线 (口播采访专用)"""
+        data = json.loads(self._read_body())
+        topic = data.get("topic", "").strip()
+        if not topic:
+            self._json({"ok": False, "error": "请提供视频主题"}, 400); return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        def emit(event, data):
+            self.wfile.write(f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
+            self.wfile.flush()
+
+        import threading
+        heartbeat_active = [True]
+        def heartbeat():
+            while heartbeat_active[0]:
+                time.sleep(15)
+                try: emit("heartbeat", {"ts": time.time()})
+                except: break
+        threading.Thread(target=heartbeat, daemon=True).start()
+
+        try:
+            from script_agents import story_first_pipeline
+
+            # 加载完整 ASR (优先使用 enhanced 数据)
+            clean_dir = PROJECT_DIR / "sources_clean"
+            enhanced_file = clean_dir / "classified_enhanced.json"
+            if enhanced_file.exists():
+                enhanced = json.load(open(enhanced_file))
+                # 用 guest content, 保留 original_text
+                content = [s for s in enhanced
+                          if s.get('speaker') == 'guest'
+                          and s.get('layer') in ('content', 'guide')]
+                ctx = '\n'.join(
+                    f"[{s['start_sec']:.0f}s|{s.get('importance',3)}] {s.get('text', s.get('cleaned_text',''))}"
+                    for s in content
+                )
+                emit("progress", {"step": "story", "status": "running",
+                     "msg": f"📖 故事师: 加载{len(content)}句guest ASR (enhanced)..."})
+            else:
+                classified_files = list(clean_dir.glob("classified_*.json"))
+                classified = json.load(open(classified_files[0])) if classified_files else []
+                content = [s for s in classified if s.get('layer') == 'content']
+                ctx = '\n'.join(
+                    f"[{s['start_sec']:.0f}s|{s.get('importance',3)}] {s['text']}"
+                    for s in content
+                )
+                emit("progress", {"step": "story", "status": "running",
+                     "msg": f"📖 故事师: 加载{len(content)}句ASR..."})
+
+            # 运行 v4 流水线 (单次 LLM 调用)
+            result = story_first_pipeline(topic, ctx, emit_progress=lambda step, msg, data=None:
+                emit("progress", {"step": step, "status": "running", "msg": msg, **(data or {})}))
+
+            if result.get('segments') and len(result['segments']) > 0:
+                # 保存文案脚本
+                tasks_dir = PROJECT_DIR / "tasks"
+                tasks_dir.mkdir(parents=True, exist_ok=True)
+                script_file = tasks_dir / "文案脚本.json"
+                save_data = {
+                    "topic": topic,
+                    "story": result.get("story", ""),
+                    "pipeline": "story-first-v4",
+                    "segments": result["segments"],
+                    "total": result.get("total", len(result["segments"])),
+                    "time_estimate": result.get("time_estimate", {}),
+                }
+                json.dump(save_data, open(script_file, "w"), ensure_ascii=False, indent=2)
+                result["script_file"] = str(script_file)
+                result["script_file_url"] = f"/tasks/文案脚本.json"
+                print(f"[story-first] 文案脚本已保存: {script_file}")
+
+                emit("complete", result)
+            else:
+                emit("error", {"error": result.get('error', '生成失败')})
+            time.sleep(0.5)
+            heartbeat_active[0] = False
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            try: emit("error", {"error": str(e)[:200]})
+            except: pass
+            heartbeat_active[0] = False
+
+    def _resolve_sources_dir(self):
+        """根据 ?project= 参数动态解析 sources 目录"""
+        params = parse_qs(urlparse(self.path).query)
+        proj = params.get("project", [_project_name])[0]
+        return BASE_DIR / proj / "sources"
+
+    def _handle_asr_raw(self):
+        """GET /asr/raw — 返回项目所有 ASR 转写文本"""
+        src_dir = self._resolve_sources_dir()
+        lines = []
+        for f in sorted(src_dir.glob("asr_*.json")) if src_dir.exists() else []:
+            for s in json.load(open(f)):
+                text = s.get("text", "").strip()
+                if len(text) > 1:
+                    lines.append(f"[{s.get('start', s.get('start_sec', 0)):.1f}s] {text}")
+        self._json({"ok": True, "transcript": "\n".join(lines), "lines": len(lines)})
+
+    def _handle_asr_classified(self):
+        """GET /asr/classified — 返回 LLM 分类后的 ASR"""
+        params = parse_qs(urlparse(self.path).query)
+        proj = params.get("project", [_project_name])[0]
+        src_dir = BASE_DIR / proj / "sources"
+        clean_dir = BASE_DIR / proj / "sources_clean"
+
+        # 优先读 sources_clean, 回退到 sources
+        classified_files = list(clean_dir.glob("classified_*.json"))
+        if not classified_files:
+            classified_files = list(src_dir.glob("asr_*_classified.json"))
+        if not classified_files:
+            self._json({"ok": False, "error": f"未找到分类数据 ({proj})"}, 404)
+            return
+
+        data = json.load(open(classified_files[0]))
+        stats = {}
+        for s in data: stats[s.get('layer','?')] = stats.get(s.get('layer','?'), 0) + 1
+        self._json({"ok": True, "segments": data, "stats": stats})
 
     def _serve_clip(self, req_task=None):
         # 从 URL query 或参数获取任务名
@@ -1582,7 +2496,7 @@ def _encode(text):
 # ── 启动 ──
 if __name__ == "__main__":
     port = _args.port
-    print(f"VIBECAP 后端: drama={_args.drama}  task={_args.task}")
+    print(f"VIBECAP 后端: project={_project_name} (type={_project_type})  task={_args.task}")
     print(f"  索引: {INDEX_FILE} ({'✓' if INDEX_FILE.exists() else '✗'})")
     print(f"  源视频: {sum(1 for v in SOURCE_VIDEOS.values() if v.exists())}/{len(SOURCE_VIDEOS)} 集")
     print(f"  监听: http://localhost:{port}/")

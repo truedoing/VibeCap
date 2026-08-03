@@ -92,10 +92,20 @@ def build_index():
         "metas": metas,
         "texts": texts
     }
+    # pickle 格式 (兼容)
     with open(INDEX_FILE, "wb") as f:
         pickle.dump(data, f)
 
-    print(f"✅ 新索引: {INDEX_FILE} ({len(texts)} 条, {embeddings.shape[1]}维)")
+    # npy + json 格式 (mmap 零拷贝)
+    npy_path = ROOT_DIR / DRAMA / "semantic_embeddings.npy"
+    meta_path = ROOT_DIR / DRAMA / "semantic_metas.json"
+    np.save(npy_path, embeddings.astype(np.float32))
+    with open(meta_path, "w") as f:
+        json.dump(metas, f, ensure_ascii=False)
+
+    print(f"✅ 索引: {INDEX_FILE} + {npy_path.name} ({len(texts)} 条, {embeddings.shape[1]}维)")
+    print(f"   pickle: {INDEX_FILE.stat().st_size/1024/1024:.0f}MB")
+    print(f"   mmap:   {npy_path.stat().st_size/1024/1024:.0f}MB + {meta_path.stat().st_size/1024/1024:.0f}MB")
 
 if __name__ == "__main__":
     build_index()
