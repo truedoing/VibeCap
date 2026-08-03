@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
+import { useParams } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 import { BarChart3, Database, Shield, TrendingUp, Tv, Loader2, Play, CheckCircle2, XCircle, Search, Brush, Cpu, HardDrive } from 'lucide-react'
+import { colors, font } from '../styles/theme'
+import { btn, card, flexRow, panelHeader, title } from '../styles/mixins'
 
 // ── 质量色 ──
 function qualityColor(score) {
@@ -72,6 +75,8 @@ function EpQualityBar({ ep, report, indexed }) {
 }
 
 export default function DataDesk() {
+  const { seriesId } = useParams()
+  const projectName = seriesId === 'doutinghao' ? '都挺好' : seriesId === 'yanglaoshi' ? '杨老师教育' : decodeURIComponent(seriesId || '')
   const { taskId } = useProject()
   const [quality, setQuality] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -96,7 +101,7 @@ export default function DataDesk() {
   }
 
   useEffect(() => {
-    fetch('/data/quality')
+    fetch(`/data/quality?project=${encodeURIComponent(projectName)}`)
       .then(r => r.json())
       .then(setQuality)
       .catch(console.error)
@@ -134,7 +139,7 @@ export default function DataDesk() {
     fetch('/data/process', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ episodes: eps }),
+      body: JSON.stringify({ episodes: eps, project: projectName }),
     })
       .then(r => r.json())
       .then(data => {

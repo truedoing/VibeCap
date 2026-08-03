@@ -1,6 +1,17 @@
-# 数据目录（不提交）
+# 本地数据库
+vibecap.db
+*.db-shm
+*.db-wal
+
+# 项目数据目录（不提交）
 都挺好/
 解说剪辑/
+杨老师教育/
+
+# 前端测试数据
+vibecap-web/public/asr_groups.json
+vibecap-web/public/content_report.json
+vibecap-web/public/transcript.txt
 
 # 依赖
 vibecap-web/node_modules/

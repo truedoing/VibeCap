@@ -78,8 +78,8 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
   )
 }
 
-const SLUG_MAP = { '都挺好': 'doutinghao' }
-function toSlug(name) { return SLUG_MAP[name] || name }
+const SLUG_MAP = { '都挺好': 'doutinghao', '杨老师教育': 'yanglaoshi' }
+function toSlug(name) { return SLUG_MAP[name] || encodeURIComponent(name) }
 
 export default function Home() {
   const nav = useNavigate()

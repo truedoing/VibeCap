@@ -1,15 +1,15 @@
-# VIBECAP — 影视解说素材匹配系统 (React 版)
+# VibeCut — 影视解说素材匹配系统 (React 版)
 
 ## 启动
 ```bash
-cd /Users/zgl/剪辑/Task/VIBECAP
+cd /Users/zgl/剪辑/Task/VibeCut
 npm install   # 首次
 npm run dev   # → http://localhost:3000
 ```
 
 ## 架构
 ```
-VIBECAP/ (React 前端 :3000)
+VibeCut/ (React 前端 :3000)
   │
   ├─ Vite proxy → Task7024 Python API (:8765)
   │     ├── /search?q=&mode=

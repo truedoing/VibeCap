@@ -18,6 +18,8 @@ import {
 import ScriptPanel from '../components/ScriptPanel'
 import StoryboardPanel from '../components/StoryboardPanel'
 import ChatPanel from '../components/ChatPanel'
+import { colors } from '../styles/theme'
+import { divider as dividerStyle } from '../styles/mixins'
 import SourceInspector from '../components/SourceInspector'
 import TimelineControls from '../components/TimelineControls'
 import ClipLinker from '../hooks/useLinkedClips'
@@ -28,7 +30,7 @@ import { migratePicks } from '../model/migrate'
 const FPS = 25
 const STAGE = { width: 1920, height: 1080 }
 const programEngineRef = { current: null }
-const T = { border: '#232938', borderSubtle: '#1A1F2B', bgPanel: '#121722', bgSecondary: '#0D1017' }
+const T = { border: colors.border, borderSubtle: colors.borderSubtle, bgPanel: colors.bg, bgSecondary: '#0D1017' }
 
 // ═══════════════════════════════════
 // 可拖拽分隔条

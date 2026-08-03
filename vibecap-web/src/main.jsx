@@ -5,9 +5,8 @@ import './index.css'
 import { TaskProvider, EmptyProjectProvider } from './context/ProjectContext'
 import Home from './pages/Home'
 import SeriesPage from './pages/Series'
-import MatchingDesk from './pages/MatchingDesk'
-import Timeline from './pages/Timeline'
 import VibeEdit from './pages/VibeEdit'
+import PlanningDesk from './pages/PlanningDesk'
 import DataDesk from './pages/DataDesk'
 import { loadSeriesList, loadTask } from './model/series'
 
@@ -22,7 +21,8 @@ function AppLayout() {
         {/* 第一行：品牌 + 面包屑 */}
         <div className="flex items-center gap-2 h-10 px-4">
           <NavLink to="/" className="flex items-center gap-2 shrink-0">
-            <span className="text-primary font-bold text-sm tracking-tight">VIBECAP</span>
+            <svg width="20" height="20" viewBox="0 0 48 48" style={{ marginRight: 4 }}><polygon points="6,6 24,42 24,42" fill="#a78bfa"/><path d="M 14 18 L 24 42 L 34 18" stroke="#a78bfa" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" fill="none"/><line x1="2" y1="2" x2="16" y2="16" stroke="#22c55e" strokeWidth="3" strokeLinecap="round"/><line x1="46" y1="2" x2="32" y2="16" stroke="#22c55e" strokeWidth="3" strokeLinecap="round"/></svg>
+            <span className="text-primary font-extrabold text-base tracking-tight">VibeCut</span>
           </NavLink>
 
           {seriesId && (
@@ -73,15 +73,6 @@ function AppLayout() {
           )}
 
           {isTaskPage ? (
-            <NavLink to={`/${seriesId}/${taskId}/timeline`}
-              className={({ isActive }) =>
-                `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
-              }>剪辑台</NavLink>
-          ) : (
-            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">剪辑台</span>
-          )}
-
-          {isTaskPage ? (
             <NavLink to={`/${seriesId}/${taskId}/vibe`}
               className={({ isActive }) =>
                 `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm ring-1 ring-purple/30' : 'text-purple/80 hover:text-purple hover:bg-background/50'}`
@@ -126,8 +117,8 @@ function App() {
             <Route path=":seriesId/:taskId" element={<TaskLayout />}>
               <Route index element={<Navigate to="data" replace />} />
               <Route path="data" element={<DataDesk />} />
-              <Route path="planning" element={<MatchingDesk />} />
-              <Route path="timeline" element={<Timeline />} />
+              <Route path="planning" element={<PlanningDesk />} />
+              <Route path="timeline" element={<Navigate to="vibe" replace />} />
               <Route path="vibe" element={<VibeEdit />} />
             </Route>
           </Route>
