@@ -2306,7 +2306,7 @@ class Handler(SimpleHTTPRequestHandler):
                 emit("progress", {"step": step, "status": "running", "msg": msg, **(data or {})}))
 
             if result.get('segments') and len(result['segments']) > 0:
-                # 保存文案脚本
+                # ── 保存到文件 ──
                 tasks_dir = PROJECT_DIR / "tasks"
                 tasks_dir.mkdir(parents=True, exist_ok=True)
                 script_file = tasks_dir / "文案脚本.json"
@@ -2321,7 +2321,24 @@ class Handler(SimpleHTTPRequestHandler):
                 json.dump(save_data, open(script_file, "w"), ensure_ascii=False, indent=2)
                 result["script_file"] = str(script_file)
                 result["script_file_url"] = f"/tasks/文案脚本.json"
-                print(f"[story-first] 文案脚本已保存: {script_file}")
+
+                # ── v0.11: 同步写入 SQLite ──
+                try:
+                    drama_id = db.get_drama_id(_project_name)
+                    if drama_id:
+                        task_name = _args.task or f"story_{int(time.time())}"
+                        # 查找或创建 task
+                        existing = db.get_task(drama_id, task_name)
+                        if existing:
+                            task_id = existing["id"]
+                            db.save_task_segments(task_id, result["segments"])
+                        else:
+                            task_id = db.create_task(drama_id, task_name)
+                            db.save_task_segments(task_id, result["segments"])
+                        print(f"[story-first] DB: task={task_name} task_id={task_id} segs={len(result['segments'])}")
+                        result["task_id"] = task_id
+                except Exception as e:
+                    print(f"[story-first] DB save failed (non-critical): {e}")
 
                 emit("complete", result)
             else:

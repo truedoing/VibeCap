@@ -1,17 +1,25 @@
 /**
  * 从 proxy picks 构建 Elah Project
  * 替代 Timeline.jsx 中的 buildProjectFromPicks，使用代理视频 + 时间引用
+ *
+ * v0.11: proxy 命名由 manifest 统一管理, 不再硬编码文件名
  */
 import { generateId, secondsToFrames } from '@elah/editor'
-import { resolveClipSource } from './proxyEngine'
+import { resolveClipSource, proxyUrlForEpisode } from './proxyEngine'
 
 const FPS = 25
 const STAGE = { width: 1920, height: 1080 }
 
 function thumbnailUrl(filePath) {
   if (!filePath) return undefined
-  // 代理模式下暂不生成缩略图，返回 undefined 即可
   return undefined
+}
+
+/** 从 manifest 查找 proxy 文件名 (v0.11: 替代硬编码 proxyFileName) */
+function proxyFileForEp(ep, manifest) {
+  if (!manifest?.proxies) return null
+  const p = manifest.proxies.find(x => x.ep === ep)
+  return p?.file || null
 }
 
 // 视频/音频 clipId 配对（联动编辑）
@@ -127,8 +135,8 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
       p.main.forEach((m, mi) => {
         const resolved = resolveClipSource(m)
         const durFrames = resolved.sourceDurationFrames
-        const proxyFile = proxyFileName(m.ep)
-        const src = `/proxies/${proxyFile}`
+        const proxyFile = proxyFileForEp(m.ep, proxyManifest)
+        const src = proxyFile ? `/proxies/${proxyFile}` : (m.src || '')
 
         const vClipId = generateId(); const vAssetId = generateId()
         mediaList.push({
@@ -169,8 +177,8 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
       p.supp.forEach((s, si) => {
         const resolved = resolveClipSource(s)
         const durFrames = resolved.sourceDurationFrames
-        const proxyFile = proxyFileName(s.ep)
-        const src = `/proxies/${proxyFile}`
+        const proxyFile = proxyFileForEp(s.ep, proxyManifest)
+        const src = proxyFile ? `/proxies/${proxyFile}` : (s.src || '')
 
         const clipId = generateId(); const assetId = generateId()
         mediaList.push({
@@ -256,8 +264,5 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
 }
 
 /**
- * 代理文件名格式
+ * v0.11: proxy 文件名统一由 manifest 管理, 客户端不再硬编码
  */
-function proxyFileName(ep) {
-  return `都挺好_${String(ep).padStart(2, '0')}_540p.mp4`
-}
