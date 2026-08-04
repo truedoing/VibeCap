@@ -49,7 +49,7 @@ function HBar({ onMouseDown }) {
 // ═══════════════════════════════════
 // 程序引擎数据加载
 // ═══════════════════════════════════
-function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments }) {
+function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
   const engine = useTimelineEngine()
   const { project, saveTimelineCache } = useProject()
   const didInit = useRef(false)
@@ -314,6 +314,10 @@ export default function VibeEdit() {
     }).catch(() => {})
   }, [taskId])
 
+  // v0.13: 从 segments 响应推断 project_type
+  const projectType = segments?.project_type || (segments?.length > 0 && segments.some(s => s.source_start > 0) ? 'interview' : 'drama')
+  const isInterview = projectType === 'interview'
+
   const handleSelectSegment = useCallback((sid, seq) => {
     setCurSid(sid); setCurSeq(seq || '0')
     const seg = segments.find(s => s.seg_id === sid)
@@ -417,7 +421,7 @@ export default function VibeEdit() {
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* ── 节目引擎 ── */}
       <EditorProvider fps={FPS} defaultTrackHeight={36} stage={STAGE}>
-        <ProgramLoader prgTLRef={prgTLRef} proxyManifest={proxyManifest} onReady={() => setPrgReady(true)} segments={segments} />
+        <ProgramLoader prgTLRef={prgTLRef} proxyManifest={proxyManifest} onReady={() => setPrgReady(true)} segments={segments} taskId={taskId} />
         <ClipLinker />
 
         <div className="elah-root" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
