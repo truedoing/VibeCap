@@ -113,7 +113,11 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
 
   const add = () => {
     const io = window.__sourceIO; const s = io?.in ?? 0; const o = io?.out ?? s + 10
-    if (ep && o > s) onAddToProgram(ep, Math.round(s * FPS), Math.round(o * FPS))
+    if (ep && o > s) onAddToProgram(ep, Math.round(s * FPS), Math.round(o * FPS), 'main')
+  }
+  const addSupp = () => {
+    const io = window.__sourceIO; const s = io?.in ?? 0; const o = io?.out ?? s + 10
+    if (ep && o > s) onAddToProgram(ep, Math.round(s * FPS), Math.round(o * FPS), 'supp')
   }
 
   const viewStart = offset
@@ -216,9 +220,13 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
             🔊
           </button>
           <span style={{ color:'#374151', margin:'0 2px', fontSize:14, lineHeight:'22px' }}>|</span>
-          <button onClick={add} title="插入片段到主时间轴"
+          <button onClick={add} title="插入片段到主镜头轨道"
             style={{ padding:'0 10px', height:22, fontSize:10, borderRadius:3, background:'rgba(34,197,94,0.18)', color:'#22c55e', border:'none', cursor:'pointer', fontWeight:500 }}>
             ↓ 插入clip
+          </button>
+          <button onClick={addSupp} title="插入片段到补充镜头轨道"
+            style={{ padding:'0 10px', height:22, fontSize:10, borderRadius:3, background:'rgba(168,85,247,0.18)', color:'#a855f7', border:'none', cursor:'pointer', fontWeight:500 }}>
+            ↓ 补
           </button>
           <div style={{ flex:1 }} />
           <span style={{ fontFamily:'monospace', color:'#e5e7eb', fontSize:11 }}>{tc(pos)}{dur>0?` / ${tc(dur)}`:''}</span>

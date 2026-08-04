@@ -207,6 +207,17 @@ export default function Home() {
                           delivered: { label: '已交付', cls: 'bg-green-500/10 text-green-400 border-green-500/20' },
                         }
                         const st = statusConfig[t.status] || statusConfig.editing
+                        const cycleStatus = () => {
+                          const order = ['editing', 'reviewing', 'delivered']
+                          const next = order[(order.indexOf(t.status || 'editing') + 1) % 3]
+                          fetch('/tasks/status', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ drama: d.name, name: t.name, status: next })
+                          }).then(r => r.json()).then(j => {
+                            if (j.ok) syncFromBackend()
+                          })
+                        }
                         return (
                           <button
                             key={t.name}
@@ -219,7 +230,7 @@ export default function Home() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <p className="text-sm font-medium text-foreground">{t.name}</p>
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${st.cls}`}>{st.label}</span>
+                                <span onClick={(e) => { e.stopPropagation(); cycleStatus() }} className={`text-[10px] px-1.5 py-0.5 rounded border cursor-pointer hover:opacity-80 ${st.cls}`}>{st.label}</span>
                               </div>
                               <p className="text-[11px] text-muted-foreground">
                                 {t.segments} 段解说

@@ -465,6 +465,13 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json(json.load(open(script_file)))
             else:
                 self._json({"ok": False, "error": "文案脚本尚未生成"}, 404)
+        elif path == "/narration.json":
+            task = req_task or _args.task
+            narr_file = self._resolve_work_dir(task) / "narration.json"
+            if narr_file.exists():
+                self._json(json.load(open(narr_file)))
+            else:
+                self._json({}, 404)
         elif path == "/segments.json":
             task = req_task or _args.task
             drama_id = db.get_drama_id(_project_name)
@@ -473,12 +480,58 @@ class Handler(SimpleHTTPRequestHandler):
                 if task_obj:
                     segments = db.get_task_segments(task_obj["id"])
                     if segments and len(segments) > 0:
-                        self._json({"segments": segments, "total_segments": len(segments)})
+                        # v0.13: DB 返回的 segments 也注入 project_type
+                        result = {"segments": segments, "total_segments": len(segments), "project_type": _project_type}
+                        # v0.13: DB segments 已有 source_start/end，但也合并 located 数据
+                        located_file = self._resolve_task_dir(task) / "segments_located.json"
+                        if located_file.exists():
+                            try:
+                                located_data = json.load(open(located_file))
+                                located_map = {s.get("seg_id"): s for s in located_data.get("segments", [])}
+                                for seg in result["segments"]:
+                                    loc = located_map.get(seg.get("seg_id"))
+                                    if loc:
+                                        for k in ("video_episode", "video_start", "video_end",
+                                                  "clip_start", "clip_end", "match_score", "matched_text"):
+                                            if k in loc and k not in seg:
+                                                seg[k] = loc[k]
+                                        if "video_start" in loc and (not seg.get("source_start") or seg.get("source_start") == 0):
+                                            seg["source_start"] = loc["video_start"]
+                                        if "video_end" in loc and (not seg.get("source_end") or seg.get("source_end") == 0):
+                                            seg["source_end"] = loc["video_end"]
+                                result["_located"] = True
+                            except Exception as e:
+                                print(f"[segments] 合并 segments_located.json 失败: {e}")
+                        self._json(result)
                         return
             # fallback: 从文件读取 (先查任务级 segments.json，再查项目级 文案脚本.json)
             seg_file = self._resolve_task_dir(task) / "segments.json"
             if seg_file.exists():
-                self._json(json.load(open(seg_file)))
+                seg_data = json.load(open(seg_file))
+                # v0.13: 注入 project_type，前端据此切换 drama/interview 模式
+                seg_data["project_type"] = _project_type
+                # v0.13: 合并 segments_located.json 的视频定位数据
+                located_file = self._resolve_task_dir(task) / "segments_located.json"
+                if located_file.exists():
+                    try:
+                        located_data = json.load(open(located_file))
+                        located_map = {s.get("seg_id"): s for s in located_data.get("segments", [])}
+                        for seg in seg_data.get("segments", []):
+                            loc = located_map.get(seg.get("seg_id"))
+                            if loc:
+                                for k in ("video_episode", "video_start", "video_end",
+                                          "clip_start", "clip_end", "match_score", "matched_text"):
+                                    if k in loc and k not in seg:
+                                        seg[k] = loc[k]
+                                # 统一字段名：video_start → source_start, video_end → source_end
+                                if "video_start" in loc and "source_start" not in seg:
+                                    seg["source_start"] = loc["video_start"]
+                                if "video_end" in loc and "source_end" not in seg:
+                                    seg["source_end"] = loc["video_end"]
+                        seg_data["_located"] = True
+                    except Exception as e:
+                        print(f"[segments] 合并 segments_located.json 失败: {e}")
+                self._json(seg_data)
             else:
                 # v0.11: 兜底 — 项目级 文案脚本.json 的 segments 字段
                 script_file = PROJECT_DIR / "tasks" / "文案脚本.json"
@@ -643,6 +696,8 @@ class Handler(SimpleHTTPRequestHandler):
             self._json({"suggestions": suggestions})
         elif path == "/tasks/create":
             self._create_task()
+        elif path == "/tasks/status":
+            self._update_task_status()
         elif path == "/data/process":
             data = json.loads(self._read_body())
             proj = data.get("project", _project_name)
@@ -1337,8 +1392,9 @@ class Handler(SimpleHTTPRequestHandler):
         if "application/json" in content_type:
             data = json.loads(self._read_body())
         elif "multipart/form-data" in content_type:
-            # 简单 multipart 解析
-            body = self._read_body()
+            # v0.13: 读原始字节（二进制音频文件不能 decode）
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            import re as _re
             boundary = content_type.split("boundary=")[1].strip()
             parts = body.split(("--" + boundary).encode())
             for part in parts:
@@ -1357,15 +1413,12 @@ class Handler(SimpleHTTPRequestHandler):
                     data["name"] = content.decode("utf-8", errors="ignore").strip()
                 elif 'name="local_path"' in header:
                     data["local_path"] = content.decode("utf-8", errors="ignore").strip()
-                elif 'name="docx"' in header or 'filename="' in header and '.docx' in header:
+                elif 'name="docx"' in header or ('filename="' in header and '.docx' in header):
                     docx_bytes = content
-                    # extract filename
-                    import re as _re
                     fm = _re.search(r'filename="([^"]+)"', header)
                     if fm: docx_name = fm.group(1)
                 elif 'name="audio"' in header or ('filename="' in header and ('.wav' in header or '.mp3' in header)):
                     audio_bytes = content
-                    import re as _re
                     fm = _re.search(r'filename="([^"]+)"', header)
                     if fm: audio_name = fm.group(1)
 
@@ -1452,6 +1505,22 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             traceback.print_exc()
             self._json({"ok": False, "error": str(e)}, 500)
+
+    def _update_task_status(self):
+        """POST /tasks/status — 更新任务状态 (editing/reviewing/delivered)"""
+        data = json.loads(self._read_body())
+        drama_name = data.get("drama", _project_name)
+        task_name = data.get("name", "")
+        status = data.get("status", "")
+        if not task_name or status not in ("editing", "reviewing", "delivered"):
+            self._json({"ok": False, "error": "缺少参数或状态无效"}, 400)
+            return
+        drama_id = db.get_drama_id(drama_name)
+        if not drama_id:
+            self._json({"ok": False, "error": f"项目不存在: {drama_name}"}, 404)
+            return
+        db.update_task_status(drama_id, task_name, status)
+        self._json({"ok": True})
 
     def _list_dramas(self):
         """列出所有项目（SQLite + 文件系统 projects/*.json）"""
@@ -2568,7 +2637,8 @@ class Handler(SimpleHTTPRequestHandler):
         clean = path.lstrip("/")
         # API 路由不走这里
         api_routes = {"/search", "/chat", "/segments.json", "/preview_video", "/status",
-                       "/dramas", "/tasks", "/assign", "/copy", "/thumb", "/storyboard_suggest"}
+                       "/dramas", "/tasks", "/assign", "/copy", "/thumb", "/storyboard_suggest",
+                       "/narration.json", "/tasks/status"}
         if path in api_routes:
             return False
         # 排除 API 前缀

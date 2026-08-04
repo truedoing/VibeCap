@@ -55,8 +55,9 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments }) {
   const didInit = useRef(false)
   const saveTimer = useRef(null)
 
-  // v0.11: 从 segments 检测是否为口播 interview 模式
-  const isInterview = segments?.length > 0 && segments.some(s => s.source_start > 0)
+  // v0.13: 从 segments 响应中读取 project_type (drama/interview)，不再从 source_start 推断
+  const projectType = segments?.project_type || (segments?.length > 0 && segments.some(s => s.source_start > 0) ? 'interview' : 'drama')
+  const isInterview = projectType === 'interview'
 
   // 初始化：口播2轨 / 电视剧4轨
   // 依赖 isInterview：segments 异步到达后触发重初始化切换到 interview 模式
@@ -127,59 +128,90 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments }) {
     } catch(e) { console.error('[prg] init error:', e) }
   }, [engine, isInterview])
 
-  // v0.11: 口播自动建轨 — segments + proxy 就绪后，一键铺满时间轴
+  // v0.13: 自动建轨 — interview 和 drama 各自逻辑
   const didAutoBuild = useRef(false)
+  const [narrationMeta, setNarrationMeta] = useState(null)
+  // 加载 narration 数据（drama 自动建轨用）
   useEffect(() => {
-    // 重置标记：缓存被清除时（rebuild），允许重新 auto-build
-    if (!project?.vibe_timeline) didAutoBuild.current = false
-  }, [project?.vibe_timeline])
+    if (!taskId || isInterview) return
+    fetch(`/narration.json?task=${taskId}`)
+      .then(r => r.json())
+      .then(d => setNarrationMeta(d))
+      .catch(() => setNarrationMeta(null))
+  }, [taskId, isInterview])
 
   useEffect(() => {
-    if (!isInterview || !didInit.current || didAutoBuild.current) return
-    if (!segments?.length || !proxyManifest?.proxies?.length) return
+    if (!proxyManifest?.proxies?.length || !didInit.current || didAutoBuild.current) return
+    if (!segments?.length) return
     // 已有缓存 timeline → 保留用户手动编辑成果
     if (project?.vibe_timeline) return
 
     try {
-      // 1. segments → picks（有精切 sub_clips 则只用 KEEP，否则用粗段边界）
-      const hasSubClips = segments.some(s => s.sub_clips?.length > 0)
-      const picks = {}
+      let picks = {}
 
-      if (hasSubClips) {
-        // ── 精切模式：每个 KEEP sub_clip 独立为一段 ──
-        let idx = 0
-        for (const seg of segments) {
-          for (const sc of (seg.sub_clips || [])) {
-            if (sc.decision !== 'KEEP') continue
-            const ep = seg.episode_marker?.episode || seg.video_episode || 1
-            const key = `${seg.seg_id ?? 0}_${idx++}`
-            picks[key] = { main: [{ ep, sourceStartSec: sc.start, sourceEndSec: sc.end }] }
+      if (isInterview) {
+        // ── 口播自动建轨 ──
+        const hasSubClips = segments.some(s => s.sub_clips?.length > 0)
+        if (hasSubClips) {
+          let idx = 0
+          for (const seg of segments) {
+            for (const sc of (seg.sub_clips || [])) {
+              if (sc.decision !== 'KEEP') continue
+              const ep = seg.episode_marker?.episode || seg.video_episode || 1
+              const key = `${seg.seg_id ?? 0}_${idx++}`
+              picks[key] = { main: [{ ep, sourceStartSec: sc.start, sourceEndSec: sc.end }] }
+            }
           }
+        } else {
+          const sorted = [...segments].sort((a, b) => (a.seg_id ?? 0) - (b.seg_id ?? 0))
+          sorted.forEach(s => {
+            const ep = s.episode_marker?.episode || s.video_episode || 1
+            const startSec = s.source_start ?? 0
+            const endSec = s.source_end ?? (startSec + 5)
+            if (startSec <= 0 && endSec <= 0) return
+            const key = `${s.seg_id ?? 0}_0`
+            picks[key] = { main: [{ ep, sourceStartSec: startSec, sourceEndSec: endSec }] }
+          })
         }
       } else {
-        // ── 粗段模式：逐段用 source_start/end ──
+        // ── Drama 自动建轨 ──
+        // 1. segments_located 定位 → main clips
+        // 2. narration.json → NARR_DURATIONS + tts_segments
         const sorted = [...segments].sort((a, b) => (a.seg_id ?? 0) - (b.seg_id ?? 0))
         sorted.forEach(s => {
-          const ep = s.episode_marker?.episode || s.video_episode || 1
-          const startSec = s.source_start ?? 0
-          const endSec = s.source_end ?? (startSec + 5)
-          if (startSec <= 0 && endSec <= 0) return
-          const key = `${s.seg_id ?? 0}_0`
-          picks[key] = { main: [{ ep, sourceStartSec: startSec, sourceEndSec: endSec }] }
+          const ep = s.video_episode || s.episode_marker?.episode
+          const startSec = s.source_start
+          const endSec = s.source_end
+          if (ep && startSec != null && startSec > 0) {
+            const key = `${s.seg_id ?? 0}_0`
+            const marginStart = Math.max(0, startSec - 2)
+            const marginEnd = (endSec && endSec > startSec) ? endSec + 2 : startSec + 8
+            picks[key] = { main: [{ ep, sourceStartSec: marginStart, sourceEndSec: marginEnd }] }
+          }
         })
       }
 
       if (Object.keys(picks).length === 0) return
 
-      // 2. build project（复用 timelineBuilder 的 interview 模式）
+      // 2. 构建旁白时长（drama 模式）
+      const narrDurations = {}
+      if (!isInterview && narrationMeta?.segments) {
+        for (const ns of narrationMeta.segments) {
+          const dur = (ns.end || 0) - (ns.start || 0)
+          if (dur > 0) narrDurations[ns.index] = dur
+        }
+      }
+
+      // 3. build project
+      const mode = isInterview ? 'interview' : 'drama'
       const { project: elahProject, mediaList } = buildProjectFromProxyPicks(
-        picks, proxyManifest, [], { mode: 'interview' }
+        picks, proxyManifest, [], { mode, narrDurations }
       )
 
-      // 3. 加载到 engine（替换空轨道）
+      // 4. 加载到 engine
       engine.loadProject(elahProject)
 
-      // 4. 注册媒体资源到 MediaLibrary
+      // 5. 注册媒体资源
       const store = useMediaLibraryStore.getState()
       const order = []
       for (const m of mediaList) {
@@ -187,16 +219,17 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments }) {
         order.push(m.assetId)
       }
 
-      // 5. 持久化缓存
+      // 6. 持久化缓存
       saveTimelineCache(elahProject, { assets: { ...store.assets }, order }, 'vibe')
 
       didAutoBuild.current = true
       if (onReady) setTimeout(onReady, 50)
       setTimeout(() => prgTLRef?.current?.fitToWindow(), 100)
 
-      console.log(`[prg] 🎬 口播自动建轨: ${Object.keys(picks).length} clips → 时间轴${hasSubClips ? ' (精切)' : ' (粗段)'}`)
+      const modeLabel = isInterview ? (segments.some(s => s.sub_clips?.length > 0) ? '口播 精切' : '口播 粗段') : 'Drama'
+      console.log(`[prg] 🎬 ${modeLabel} 自动建轨: ${Object.keys(picks).length} segments → 时间轴`)
     } catch (e) { console.error('[prg] auto-build error:', e) }
-  }, [isInterview, didInit.current, segments, proxyManifest, project?.vibe_timeline])
+  }, [isInterview, didInit.current, segments, proxyManifest, narrationMeta, project?.vibe_timeline])
 
   // proxyManifest 就绪 → 给空轨道加占位 clip（确保轨道显示）
   const didPlaceholders = useRef(false)
@@ -322,7 +355,8 @@ export default function VibeEdit() {
   }, [])
 
   // 添加到节目引擎（inFrames, outFrames 由源检视器传入）
-  const handleAddToProgram = useCallback((ep, inFrames, outFrames) => {
+  // trackType: 'main' (原声主镜头) | 'supp' (补充镜头)
+  const handleAddToProgram = useCallback((ep, inFrames, outFrames, trackType = 'main') => {
     const engine = programEngineRef.current
     if (!engine) return
     const proxy = proxyUrlForEpisode(ep, proxyManifest)
@@ -332,22 +366,29 @@ export default function VibeEdit() {
     const df = of - sf
     const insertFrame = usePlaybackStore.getState().currentFrame || 0
     const prj = engine.getProject()
-    const prgVid = prj.tracks.find(t => t.name === '原声主镜头')
-    const prgAud = prj.tracks.find(t => t.name === '原声主镜头 音频')
-    if (!prgVid || !prgAud) return
+    // v0.13: 支持主镜头/补充镜头双轨
+    const isSupp = trackType === 'supp'
+    const vidTrackName = isSupp ? '补充镜头' : '原声主镜头'
+    const audTrackName = isSupp ? null : '原声主镜头 音频'  // 补充镜头不加音频轨
+    const prgVid = prj.tracks.find(t => t.name === vidTrackName)
+    const prgAud = audTrackName ? prj.tracks.find(t => t.name === audTrackName) : null
+    if (!prgVid) return
 
     engine.batch(() => {
       // 移除占位 clip
       for (const [tid, tClips] of Object.entries(prj.clips)) {
         for (const c of tClips) { if (c.name === '·') engine.removeClip(c.id, tid) }
       }
-      const v = engine.addClip({ type: 'video', trackId: prgVid.id, name: `S${curSid ?? '?'} EP${ep}`, src: proxy, startFrame: insertFrame, durationFrames: df, sourceStartFrame: sf, sourceDurationFrames: df, volume: 1, opacity: 1 })
-      const a = engine.addClip({ type: 'audio', trackId: prgAud.id, name: `S${curSid ?? '?'} EP${ep}`, src: proxy, startFrame: insertFrame, durationFrames: df, sourceStartFrame: sf, sourceDurationFrames: df, volume: 1 })
-      linkClipPair(v.id, a.id)
+      const v = engine.addClip({ type: 'video', trackId: prgVid.id, name: `S${curSid ?? '?'} EP${ep}${isSupp ? ' 补' : ''}`, src: proxy, startFrame: insertFrame, durationFrames: df, sourceStartFrame: sf, sourceDurationFrames: df, volume: isSupp ? 0 : 1, opacity: 1 })
+      let a = null
+      if (prgAud) {
+        a = engine.addClip({ type: 'audio', trackId: prgAud.id, name: `S${curSid ?? '?'} EP${ep}`, src: proxy, startFrame: insertFrame, durationFrames: df, sourceStartFrame: sf, sourceDurationFrames: df, volume: 1 })
+        linkClipPair(v.id, a.id)
+      }
     }, 'src→prg')
 
     if (curSid != null && curSeq != null) {
-      addPick(curSid, curSeq, 'main', { ep, sourceStartSec: sf / FPS, sourceEndSec: of / FPS })
+      addPick(curSid, curSeq, trackType, { ep, sourceStartSec: sf / FPS, sourceEndSec: of / FPS })
     }
   }, [proxyManifest, curSid, curSeq, addPick])
 
@@ -368,7 +409,6 @@ export default function VibeEdit() {
   }
 
   const chatCtx = { sid: curSid, seq: curSeq, narration: curNarration, taskId }
-  const isInterview = segments?.length > 0 && segments.some(s => s.source_start > 0)
   const proxyEps = proxyManifest?.proxies?.map(p => p.ep)?.join(",") || ""
   const leftW = scriptCollapsed ? 0 : scriptW
   const rightW = aiCollapsed ? 0 : aiW

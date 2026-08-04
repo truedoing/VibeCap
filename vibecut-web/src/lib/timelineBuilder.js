@@ -73,8 +73,8 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
   const suppClips = []
   const narrClips = []
 
-  // v0.11: NARR_DURATIONS 只用于 drama 模式
-  const NARR_DURATIONS = isInterview ? {} : {}
+  // v0.13: narrDurations 支持外部注入（Drama 自动建轨）
+  const NARR_DURATIONS = options.narrDurations || (isInterview ? {} : {})
 
   const entries = Object.entries(picks).sort((a, b) => {
     const [sa] = a[0].split('_').map(Number)

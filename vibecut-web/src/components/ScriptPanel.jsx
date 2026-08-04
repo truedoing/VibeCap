@@ -9,6 +9,23 @@ import { cn } from '../lib/utils'
 
 const CHARS = ["苏大强", "苏明哲", "苏明成", "苏明玉", "明玉", "朱丽", "吴非", "石天冬", "蒙总", "老蒙", "蒙太", "沈浩", "柳青", "赵美兰", "小咪"]
 
+function getSegStatus(seg, picks) {
+  // 统计该 segment 下所有 sentence 的 picks 数
+  let mainCnt = 0, suppCnt = 0
+  const ns = (seg.narration_text || '').split(/[。！？]/).filter(s => s.trim())
+  // 台词
+  const dp = picks?.[`${seg.seg_id}_D`]
+  mainCnt += (dp?.main?.length || 0) + (dp?.supp?.length || 0)
+  // 解说句
+  ns.forEach((_, i) => {
+    const p = picks?.[`${seg.seg_id}_${i}`]
+    mainCnt += (p?.main?.length || 0)
+    suppCnt += (p?.supp?.length || 0)
+  })
+  const hasVideo = seg.source_start > 0 || seg.video_start > 0
+  return { mainCnt, suppCnt, hasVideo, total: mainCnt + suppCnt }
+}
+
 function hh(text) {
   if (!text) return ''
   let s = text
@@ -102,6 +119,14 @@ function ScriptView({ segments, curSid, curSeq, onPickSentence, picks }) {
         {segments.map(seg => {
           const isOpen = openSeg === seg.seg_id
           const sentences = (seg.narration_text || '').split(/[。！？]/).filter(s => s.trim())
+          const status = getSegStatus(seg, picks)
+          // 段状态标记
+          let statusBadge = null
+          if (status.total > 0) {
+            statusBadge = <span className="text-[9px] text-emerald-400 font-medium shrink-0 ml-1">✓{status.mainCnt}主{status.suppCnt > 0 ? `+${status.suppCnt}补` : ''}</span>
+          } else if (status.hasVideo) {
+            statusBadge = <span className="text-[9px] text-amber-400 font-medium shrink-0 ml-1">📍已定位</span>
+          }
           return (
             <div key={seg.seg_id}>
               <button
@@ -110,6 +135,7 @@ function ScriptView({ segments, curSid, curSeq, onPickSentence, picks }) {
                 <span className="text-[10px] text-muted-foreground/50">🔊</span>
                 <span className="text-xs font-semibold text-warning">S{seg.seg_id}</span>
                 <span className="text-[10px] text-muted-foreground truncate flex-1">{(seg.narration_text||'').substring(0, 30)}</span>
+                {statusBadge}
                 {isOpen ? <ChevronDown className="size-3 text-muted-foreground shrink-0" /> : <ChevronRight className="size-3 text-muted-foreground shrink-0" />}
               </button>
               {isOpen && (
@@ -133,7 +159,7 @@ function ScriptView({ segments, curSid, curSeq, onPickSentence, picks }) {
                           <Highlighted text={s.trim()+'。'} />
                         </button>
                         <button onClick={() => onPickSentence(seg.seg_id, i)} className="p-0.5 opacity-0 group-hover:opacity-100 text-purple shrink-0"><Search className="size-2.5" /></button>
-                        {cnt>0 && <span className="text-[9px] text-success font-medium shrink-0">{cnt}主</span>}
+                        {cnt>0 && <span className="text-[9px] text-success font-medium shrink-0">{mainCnt}{suppCnt>0 ? `+${suppCnt}` : ''}</span>}
                       </div>
                     )
                   })}

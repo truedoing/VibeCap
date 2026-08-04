@@ -195,11 +195,22 @@ def main():
         else:
             fail += 1
 
-    # 写入 manifest
+    # 写入 manifest（增量更新：先读取已有 manifest，合并后写回）
     manifest_path = output_dir / ".proxies_manifest.json"
-    manifest.sort(key=lambda m: m["ep"])
+    existing = {}
+    if manifest_path.exists():
+        try:
+            old = json.loads(manifest_path.read_text())
+            for p in old.get("proxies", []):
+                existing[p["ep"]] = p
+        except Exception:
+            pass
+    # 合并：新数据覆盖同集号的旧条目
+    for m in manifest:
+        existing[m["ep"]] = m
+    merged = sorted(existing.values(), key=lambda x: x["ep"])
     manifest_path.write_text(
-        json.dumps({"drama": args.drama, "proxies": manifest, "generated_at": time.time()},
+        json.dumps({"drama": args.drama, "proxies": merged, "generated_at": time.time()},
                    ensure_ascii=False, indent=2)
     )
 
