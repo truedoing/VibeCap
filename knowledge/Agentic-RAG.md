@@ -3,189 +3,167 @@ title: Agentic-RAG
 type: topic
 tags: [technique, concept, frontier]
 difficulty: 前沿
-prerequisites: ["RAG核心概念", "Agent核心概念", "LangGraph框架"]
-status: planned
+prerequisites: ["RAG核心概念", "Agent核心概念", "混合搜索策略"]
+status: frontier
 created: 2026-08-04
 ---
 
 # Agentic RAG
 
-> 当 RAG 的"检索"不是固定算法，而是 Agent 的自主决策时，你就得到了 Agentic RAG。
+> Agentic RAG = Agent + RAG：不是"一次检索→喂给 LLM"，而是"Agent 自主决定怎么搜、搜几次、搜完要不要修正 query 再来一次"。
 
 ## 是什么
 
-Naive RAG：搜索一次，找到 Top-K，喂给 LLM，生成答案。整个流程是固定的、线性的。
-
-Agentic RAG：**Agent 自己决定搜什么、搜几次、怎么筛选、要不要换个策略再搜。**
+**Agentic RAG** 是 RAG 和 Agent 的结合：用一个 Agent 来控制整个检索-生成流程，而非固定的一次性管线。
 
 ```
 Naive RAG:                          Agentic RAG:
-
-用户: "苏大强的家庭悲剧"              用户: "剪一个苏大强家庭悲剧的解说"
-  │                                    │
-  ▼                                    ▼
-encode("苏大强的家庭悲剧")             Agent: "这个任务需要展现苏大强
-  │                                       如何被家庭矛盾逐步压垮。
-  ▼                                       我先拆成几个子主题——"
-cosine_sim(所有文档)                        │
-  │                                    ┌────┼────┐
-  ▼                                    ▼    ▼    ▼
-Top-K 结果 → Prompt → LLM 回答       冲突   要钱   独处
-                                      │     │     │
-                                      ▼     ▼     ▼
-                                   各搜 3-5 条，评估质量
-                                      │
-                                      ▼
-                                   Agent: "冲突 3 条 + 独处 2 条
-                                           够了，要钱那条疑似台词
-                                           不准确，删掉。"
-                                      │
-                                      ▼
-                                   选 5 条最佳 → 生成脚本
+用户问 → 检索一次 → LLM 回答       用户问 → Agent 分析问题
+                                          → 制定搜索策略
+                                          → 执行搜索（可能多次）
+                                          → 评估结果质量
+                                          → 不够好 → 改写 query 再搜
+                                          → 够了 → 综合多轮结果 → 回答
 ```
 
-区别的核心：**谁决定"接下来搜什么"**。Naive RAG 是代码决定的（一次性编码 + 一次性搜索）。Agentic RAG 是 Agent 决定的（多轮搜索 + 评估 + 调整策略）。
+传统的 RAG 把检索当作一个"黑盒步骤"—query 进去，文档出来，LLM 看着文档回答。Agentic RAG 把检索变成 Agent 的一个**工具**——Agent 可以决定什么时候搜、搜什么、搜多少次、搜完要不要换策略。
 
 ## 为什么需要 Agentic RAG
 
-VibeCut 的当前搜索（`_hybrid_search`）有三个局限，Agentic RAG 正好解决：
+VibeCut 当前的搜索流程暴露了 Naive RAG 的问题：
 
-| 当前局限 | Agentic RAG 如何解决 |
-|---------|---------------------|
-| 搜索一次，结果取 or 舍 | Agent 多轮搜索，逐轮精化 |
-| 不知道"搜够了没" | Agent 评估结果质量，不够就换策略 |
-| 无法理解"叙事连贯性" | Agent 搜 A → 发现 B 也相关 → 搜 B → 两个结果搭配使用 |
-| 对抽象主题（"家庭悲剧"）只会字面搜索 | Agent 拆解为"冲突""冷战""子女""经济"等子主题，每个找最佳镜头 |
+1. **一次搜索不够**：用户搜"苏大强家庭矛盾"，命中的是分散的片段。Agent 需要先搜"苏大强"，再针对热点片段搜"矛盾"、"吵架"等关联词，才能拼出完整的叙事弧线。
 
-## Naive RAG vs Advanced RAG vs Agentic RAG
+2. **固定策略不灵活**：当前 `run_pipeline()` 用的是硬编码策略——搜索一次 → 压缩 → 审核。但当搜索结果质量差时（很多低分片段），Agent 应该自动改写 query 再试。
 
-| | Naive RAG | Advanced RAG | Agentic RAG |
-|---|---|---|---|
-| 检索次数 | 1 次 | 1-2 次 | Agent 决定 (1-N 次) |
-| 查询策略 | 用户给什么搜什么 | Query 改写 | Agent 拆分、组合、调整 |
-| 结果评估 | 按相似度排序 | + 重排 (reranker) | Agent 评估相关性 + 信息完整性 |
-| 搜索模式 | 固定 (向量 or 混合) | 多模式融合 | Agent 选择最合适的模式 |
-| 是否迭代 | 否 | 否 | 是 — "不够好就换方向再搜" |
-| 决策权 | 代码 | 代码 | Agent |
+3. **Agent 应该有检索的自主权**：一个真正的策划 Agent 不会满足于"用户说了什么就搜什么"。它会主动搜相关概念、验证素材是否足够、发现遗漏的角度。
 
 ## 关键概念
 
-### 1. SearchAgent 的 StateGraph
+### 1. 从"查询精炼"到"搜索 Agent"
 
-VibeCut 规划中的 SearchAgent 架构：
+VibeCut ChatPanel 的升级路径：
+
+```
+当前（v0.12）:
+  ChatPanel 发 query → server.py BGE 搜索 → 返回结果
+  问题: 一次性，无反馈循环
+
+升级后（Agentic RAG）:
+  ChatPanel 发 "策划一个关于 X 的视频"
+    → SearchAgent 启动
+    → plan_search: "需要搜 X 的核心内容 + 情感高光 + 冲突场景"
+    → execute: 并行搜索 3 个 query
+    → evaluate: "第一个 query 命中 15 条高质量，后两个不足"
+    → decide: "用第一条的结果继续，改写第二条 query"
+    → synthesize: 综合所有结果，生成策划方案
+```
+
+### 2. SearchAgent StateGraph
+
+用 LangGraph 构建的搜索 Agent 状态图：
+
+```
+                    ┌─────────────┐
+                    │ plan_search │ ← 分析需求，生成搜索计划
+                    └──────┬──────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+              ┌────→│  execute    │ ← 执行一条或多条搜索
+              │     └──────┬──────┘
+              │            │
+              │            ▼
+              │     ┌─────────────┐
+              │     │  evaluate   │ ← 评估结果质量（相关性、覆盖度）
+              │     └──────┬──────┘
+              │            │
+              │     ┌──────▼──────┐
+              │     │   decide    │ ← 决定: continue / rewrite / stop / ask_user
+              │     └──────┬──────┘
+              │            │
+              │  continue  │  stop
+              └────────────┘   │
+                               ▼
+                        ┌─────────────┐
+                        │ synthesize  │ ← 综合所有结果，生成回答
+                        └─────────────┘
+```
+
+`decide` 节点的判断逻辑：
+- 所有 query 都有高质量命中 → stop，进入 synthesize
+- 部分 query 命中不足 → rewrite 低分 query，回到 execute
+- 连续 3 轮改写仍然不够 → ask_user（请求人类补充搜索词）
+- 完全没有命中 → ask_user（告知用户，请求换个方向）
+
+### 3. 反馈循环（Feedback Loop）
+
+Agentic RAG 的核心创新是**检索结果的自我评估**：
 
 ```python
-from langgraph.graph import StateGraph
-from typing import TypedDict, List
-
-class SearchState(TypedDict):
-    user_query: str           # "苏大强家庭悲剧"
-    sub_queries: List[str]   # ["苏大强 冲突", "苏大强 子女", ...]
-    search_results: dict     # {sub_query: [results]}
-    selected_clips: List     # 最终选中的镜头
-    iteration: int           # 搜索轮次（上限 3）
-    done: bool
-
-workflow = StateGraph(SearchState)
-
-# Node 1: 分析查询 → LLM 拆分成子查询
-def analyze_query(state):
-    sub_queries = llm.decompose(state["user_query"])
-    # "家庭悲剧" → ["冲突", "子女", "独处", "经济"]
-    return {"sub_queries": sub_queries}
-
-# Node 2: 对每个子查询执行 BGE 搜索
-def search(state):
-    results = {}
-    for q in state["sub_queries"]:
-        results[q] = bge_search(q, limit=5)
-    return {"search_results": results}
-
-# Node 3: 评估覆盖度 → 决定是否继续
-def evaluate(state):
-    if enough_coverage(state["search_results"]):
-        return {"done": True}
-    elif state["iteration"] >= 3:
-        return {"done": True}  # 上限，不无限搜
-    else:
-        # LLM 建议新搜索方向
-        new_subs = llm.suggest_new_angles(state)
-        return {"sub_queries": state["sub_queries"] + new_subs,
-                "iteration": state["iteration"] + 1}
-
-# Node 4: LLM 从候选镜头中挑选最佳组合
-def select(state):
-    clips = llm.select_best_clips(
-        state["search_results"],
-        criteria=["多样性", "叙事连贯", "时长匹配"]
-    )
-    return {"selected_clips": clips, "done": True}
-
-# 条件路由
-workflow.add_conditional_edges("evaluate",
-    lambda s: "select" if s["done"] else "search")
+def evaluate_node(state):
+    results = state["search_results"]
+    evaluation = {
+        "coverage": 0.0,     # 覆盖了用户需求的多少
+        "quality": 0.0,      # 结果的平均相关性
+        "diversity": 0.0,    # 结果的多样性
+        "gaps": [],          # 缺失的角度
+    }
+    # ... 评估逻辑
+    return {"evaluation": evaluation}
 ```
 
-### 2. 与当前 ChatPanel 的关系
-
-当前 `ChatPanel.jsx` 的多轮对话是**手动版的** Agentic RAG：
-
-```
-用户: "搜苏大强发怒的镜头"
-ChatPanel → /search → 10 条结果
-
-用户: "不要 EP3 的，找后面的"
-ChatPanel → /search → 手动过滤
-
-用户: "换方向，搜苏大强哭的"
-ChatPanel → /search → 新搜索
-```
-
-升级后的 SearchAgent 把这个过程自动化：Agent 自己判断是否需要"换方向"，自己决定怎么过滤和组合。人类只在最终选择时介入。
-
-### 3. Agentic RAG 不等于 Agent + RAG
-
-```
-Agent + RAG:                       Agentic RAG:
-Agent 把 RAG 当作一个"工具"调用   Agent 把检索作为决策循环的一部分
-→ Tool Use 级别的集成              → 策略级别的集成
-
-比喻：
-超市自助结账（用户扫描商品）       专业采购员（主动判断"这个菜不新鲜，
-                                      换个摊位""这样搭更便宜"）
-```
+Agent 不只"搜"，还会"判断搜得好不好"——这是 Agentic RAG 和 Naive RAG 的本质区别。
 
 ## 在 VibeCut 中的应用（规划）
 
-**当前状态（v0.12）：**
-- `ChatPanel.jsx` 提供多轮手动对话
-- `server.py` 的 `_deep_search()` 是初级的"多轮搜索 + LLM 重排"
-- `_expand_query()` 是初级的"子查询生成"
+当前 `ChatPanel.jsx` 搜索流程：
 
-**规划升级（v2.0）：**
-- LangGraph SearchAgent 替代 ChatPanel 的单轮搜索模式
-- Agent 自主评估搜索结果质量，决定是否需要额外搜索
-- Agent 从搜索结果中理解内容，而非仅返回列表
-- 人类可以随时介入，修正 Agent 的搜索策略
+```
+用户输入 → POST /search → BGE 语义搜索 → 渲染结果
+```
 
-**为什么这对视频剪辑特别重要：**
+规划升级后的 Agentic 搜索流程：
 
-视频剪辑搜索天然是多轮、多角度的。比如"搜苏大强家庭矛盾"是一个主题，但它包含多个子场景（争吵、冷战、爆发、后果）。用户通常不知道所有子场景，需要 Agent 帮他们发现"你还可以看看这个角度"。Agent 还需要在"搜得太多"（不精确）和"搜得太少"（覆盖面不够）之间找到平衡。
+```
+用户输入 "策划一个关于 X 的视频"
+  → SearchAgent 启动
+  → plan_search: LLM 分析需求，生成 3-5 个搜索角度
+  → execute: 每个角度 → BGE 语义搜索 → 收集结果
+  → evaluate: LLM 评估每个角度的覆盖度
+  → decide: 不够的角度改写 query 再来
+  → synthesize: LLM 综合所有命中片段，生成脚本大纲
+  → 前端 ChatPanel 展示搜索过程和结果
+```
 
 ## 前置知识
 
-- [[RAG核心概念]] — 从 Naive RAG 到 Advanced RAG 的演进
-- [[Agent核心概念]] — Agent 的自主决策循环
-- [[LangGraph框架]] — StateGraph 构建 Agent 流程的基础设施
-- [[混合搜索策略]] — Agentic RAG 中 Agent 可以自主选择不同搜索策略
+- [[RAG核心概念]] — Naive RAG 的基本流程
+- [[Agent核心概念]] — Agent Loop 是 Agentic RAG 的决策基础
+- [[混合搜索策略]] — 多 query 搜索的底层实现
+- [[向量检索与索引]] — 每次搜索的底层索引查询
 
 ## 延伸
 
-- [[Agent-First方法论]] — Agentic RAG 是 AFDD 在 RAG 领域的应用
-- [[人机协作HITL]] — Agentic RAG 中人类可以修正 Agent 的搜索策略
+- [[Agent-First方法论]] — Agentic RAG 是 Agent-First 在检索场景的应用
+- [[人机协作HITL]] — evaluate 阶段的 ask_user 就是一种 HITL
+- [[多Agent协作]] — 多个搜索 Agent 并行搜索不同角度
+
+## 动手实验
+
+用自己的话描述一次"搜索失败→改写→成功"的案例：
+
+```
+原始 query: "学习方法"
+  → 第 1 次搜索: BGE 返回 20 条，前 5 条分数 < 0.3（太泛）
+  → Agent 分析: "学习方法"覆盖面太广，需要具体化
+  → 改写 query: "高效学习方法 时间管理 记忆技巧"
+  → 第 2 次搜索: BGE 返回 20 条，前 8 条分数 > 0.7（优秀！）
+  → Agent 决定: 停止搜索，用这 8 条高质量结果生成回答
+```
 
 ## 学习资源
 
-- LangGraph 官方 Tutorial: Agentic RAG — 基础 SearchAgent 的 StateGraph 实现
-- `docs/tech/AGENT_ARCHITECTURE.md` — VibeCut 的 SearchAgent 详细设计
-- `docs/tech/RAG_KNOWLEDGE.md` — RAG 进化路线详解
+- LangGraph 官方教程: Agentic RAG — 完整的 SearchAgent 示例
+- Anthropic: "Building Effective Agents" (2024.12) — Agent+RAG 设计原则
+- `docs/tech/AGENT_ARCHITECTURE.md` — VibeCut Agentic RAG 详细设计
