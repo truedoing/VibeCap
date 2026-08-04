@@ -1,5 +1,26 @@
 # VibeCut 更新日志
 
+## v1.0.0 — 正式命名 + Agent 架构升级 (2026-08-04)
+
+### 产品
+- 正式命名 VibeCut（原 VIBECAP），统一品牌标识
+- 目录重构: vibecap-server/web → vibecut-server/web
+- 版本从 v0.13 直接跳至 v1.0，标志产品进入正式阶段
+
+### 技术架构设计（本版本完成方案论证）
+- **Agent 化架构**: 从 LLM 辅助工具 → 全应用 Agent 自主运行的设计方案
+- **RAG 体系**: Naive RAG → Agentic RAG 的升级路径
+- **框架选型**: LangGraph + langchain-core 作为 Agent 基础设施
+- **BGE 索引**: 双模式（电视剧/口播）构建与查询全链路文档化
+
+### 新增文档
+- docs/tech/TECH_STACK.md — 全栈技术架构
+- docs/tech/BGE_INDEX.md — BGE 索引构建+查询深度剖析
+- docs/tech/EVOLUTION_ANALYSIS.md — AI 应用层框架演进分析
+- docs/tech/RAG_KNOWLEDGE.md — RAG 概念体系 + 框架选型
+
+---
+
 ## v0.11.0 — 数据增强管线 + 故事优先流水线 (2026-08-03)
 
 ### 数据台

@@ -1,9 +1,9 @@
 ---
 name: vibecut-web
-description: VibeCut React 前端 — 策划台(粗剪+精剪) + 沉浸剪辑台(自动建轨) v0.12
+description: VibeCut React 前端 — 策划台(粗剪+精剪) + 沉浸剪辑台(自动建轨) v1.0
 ---
 
-## VibeCut Web v0.12
+## VibeCut Web v1.0
 
 ### 架构
 ```
@@ -45,7 +45,7 @@ npm run dev
 - `/:project/:task/vibe` — 沉浸剪辑台
 - `/data` — 数据台
 
-### 策划台 (PlanningDesk) v0.12
+### 策划台 (PlanningDesk) v1.0
 
 三栏布局: **口播素材** | **剪辑脚本** | **AI 助手**
 
@@ -57,7 +57,7 @@ npm run dev
 
 流程: 输入主题 → AI生成粗段 → 审核 → 精剪 → 切精切页签查看 → 导出
 
-### 剪辑台 (VibeEdit) v0.12
+### 剪辑台 (VibeEdit) v1.0
 
 - **口播自动建轨**: segments有sub_clips → 仅KEEP sub_clips铺时间轴
 - **粗段模式**: 无sub_clips → 用source_start/end建轨

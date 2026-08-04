@@ -3,7 +3,7 @@ name: vibecut-server
 description: VibeCut Python 后端 — 统一数据管线 + 策划台AI + 精切引擎 + BGE索引
 ---
 
-## VibeCut Server v0.12
+## VibeCut Server v1.0
 
 ### 架构
 ```

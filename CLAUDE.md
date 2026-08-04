@@ -1,4 +1,4 @@
-# VibeCut — AI 影视解说/口播剪辑台 v0.12
+# VibeCut — AI 影视解说/口播剪辑台 v1.0
 
 ## 项目类型
 
@@ -85,7 +85,7 @@ cd vibecut-web && npm run dev
 - `/:project/:task/vibe` — 沉浸剪辑台 (VibeEdit)
 - `/data` — 数据台 (DataDesk)
 
-## 口播工作流 (v0.12)
+## 口播工作流 (v1.0)
 
 ```
 策划台:
