@@ -1,7 +1,85 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { loadSeriesList, createSeries, createTask, loadTasks, saveTask } from '../model/series'
-import { Plus, Tv, FolderOpen, RefreshCw, Upload, X, ChevronRight } from 'lucide-react'
+import { Plus, Tv, FolderOpen, RefreshCw, Upload, X, ChevronRight, AlertTriangle, CheckCircle, XCircle, Info } from 'lucide-react'
+
+// ── Toast 通知系统 ──
+const TOAST_ICONS = { ok: CheckCircle, error: XCircle, info: Info }
+const TOAST_CLASSES = {
+  ok: 'border-green-500/20 bg-green-500/5 text-green-400',
+  error: 'border-red-500/20 bg-red-500/5 text-red-400',
+  info: 'border-blue-500/20 bg-blue-500/5 text-blue-400',
+}
+function ToastItem({ id, type, message, onDismiss }) {
+  const Icon = TOAST_ICONS[type] || Info
+  useEffect(() => {
+    const t = setTimeout(() => onDismiss(id), 3500)
+    return () => clearTimeout(t)
+  }, [id, onDismiss])
+  return (
+    <div className={`flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg backdrop-blur-sm animate-in fade-in slide-in-from-top-2 duration-200 ${TOAST_CLASSES[type]}`}>
+      <Icon size={14} className="shrink-0" />
+      <span className="text-xs">{message}</span>
+      <button onClick={() => onDismiss(id)} className="ml-auto shrink-0 opacity-60 hover:opacity-100"><X size={12} /></button>
+    </div>
+  )
+}
+
+let _toastId = 0
+let _globalAddToast = null
+export function showToast(type, message) {
+  if (_globalAddToast) _globalAddToast({ id: ++_toastId, type, message })
+}
+function ToastContainer() {
+  const [toasts, setToasts] = useState([])
+  _globalAddToast = useCallback((t) => setToasts(prev => [...prev, t]), [])
+  const dismiss = useCallback((id) => setToasts(prev => prev.filter(t => t.id !== id)), [])
+  return (
+    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
+      {toasts.map(t => (
+        <div key={t.id} className="pointer-events-auto">
+          <ToastItem {...t} onDismiss={dismiss} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── 删除确认弹窗 ──
+function DeleteConfirmModal({ taskName, onConfirm, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}>
+      <div className="bg-card border border-border rounded-xl p-6 w-[380px] shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+            <AlertTriangle size={20} className="text-red-400" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">删除任务</h3>
+            <p className="text-[11px] text-muted-foreground">此操作不可撤销</p>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground mb-1">将永久删除任务及所有关联数据：</p>
+        <div className="p-3 rounded-lg bg-secondary/30 border border-border mb-5">
+          <p className="text-sm font-medium text-foreground">{taskName}</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">分段 · 时间轴缓存 · picks</p>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button onClick={onClose}
+            className="px-4 py-2 rounded-lg border border-border text-xs text-muted-foreground hover:bg-accent transition-colors">
+            取消
+          </button>
+          <button onClick={onConfirm}
+            className="px-4 py-2 rounded-lg bg-red-500/15 border border-red-500/20 text-xs text-red-400 hover:bg-red-500/25 transition-colors font-medium">
+            确认删除
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // ── 新建任务内联表单 ──
 function NewTaskForm({ dramaName, onCreated, onClose }) {
@@ -15,6 +93,10 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
 
   const handleCreate = async () => {
     if (!name.trim()) return
+    if (!docxFile && !audioFile && !useLocalPath) {
+      setResult({ ok: false, error: '请至少上传解说文案或音频' })
+      return
+    }
     setCreating(true)
     try {
       const fd = new FormData()
@@ -67,7 +149,7 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
       )}
       {result && (
         <p className={`text-[10px] ${result.ok ? 'text-green-400' : 'text-red-400'}`}>
-          {result.ok ? '✅ 创建成功' : `❌ ${result.error || '失败'}`}
+          {result.ok ? '✅ 创建成功' : result.error || '失败'}
         </p>
       )}
       <button onClick={handleCreate} disabled={!name.trim() || creating}
@@ -86,6 +168,7 @@ export default function Home() {
   const [dramas, setDramas] = useState([])
   const [syncing, setSyncing] = useState(false)
   const [showNewTask, setShowNewTask] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)  // { drama, name }
 
   const syncFromBackend = async () => {
     setSyncing(true)
@@ -122,6 +205,24 @@ export default function Home() {
       console.error('同步失败', e)
     }
     setSyncing(false)
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return
+    const resp = await fetch('/tasks/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ drama: deleteTarget.drama, name: deleteTarget.name })
+    })
+    const j = await resp.json()
+    if (j.ok) {
+      syncFromBackend()
+      setDeleteTarget(null)
+      showToast('ok', `任务「${deleteTarget.name}」已删除`)
+    } else {
+      setDeleteTarget(null)
+      showToast('error', j.error || '删除失败')
+    }
   }
 
   useEffect(() => { syncFromBackend() }, [])
@@ -215,14 +316,20 @@ export default function Home() {
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ drama: d.name, name: t.name, status: next })
                           }).then(r => r.json()).then(j => {
-                            if (j.ok) syncFromBackend()
+                            if (!j.ok) showToast('error', j.error || '状态更新失败')
+                            else syncFromBackend()
                           })
                         }
+                        const deleteTask = (e) => {
+                          e.stopPropagation()
+                          e.preventDefault()
+                          setDeleteTarget({ drama: d.name, name: t.name })
+                        }
                         return (
-                          <button
+                          <div
                             key={t.name}
                             onClick={() => nav(`/${toSlug(d.name)}/${t.name}`)}
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-accent transition-colors border-b border-border last:border-b-0"
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-accent transition-colors border-b border-border last:border-b-0 cursor-pointer"
                           >
                             <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
                               <FolderOpen size={13} className="text-primary" />
@@ -238,7 +345,14 @@ export default function Home() {
                               </p>
                             </div>
                             <ChevronRight size={14} className="text-muted-foreground/30" />
-                          </button>
+                            <button
+                              onClick={deleteTask}
+                              className="flex items-center justify-center w-6 h-6 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors shrink-0"
+                              title="删除任务"
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
                         )
                       })}
                     </div>
@@ -249,6 +363,18 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* 删除确认弹窗 */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          taskName={deleteTarget.name}
+          onConfirm={handleDeleteConfirm}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {/* Toast 通知容器 */}
+      <ToastContainer />
     </div>
   )
 }

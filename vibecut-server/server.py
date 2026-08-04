@@ -698,6 +698,8 @@ class Handler(SimpleHTTPRequestHandler):
             self._create_task()
         elif path == "/tasks/status":
             self._update_task_status()
+        elif path == "/tasks/delete":
+            self._delete_task()
         elif path == "/data/process":
             data = json.loads(self._read_body())
             proj = data.get("project", _project_name)
@@ -1452,12 +1454,13 @@ class Handler(SimpleHTTPRequestHandler):
                         shutil.copy(f, task_dir / "解说文案.docx")
                     elif f.suffix in (".wav", ".mp3"):
                         shutil.copy(f, task_dir / f"解说音频{f.suffix}")
-            # 模式2: 上传文件
+            # 模式2: 上传文件 — 标准化命名为 解说文案.docx / 解说音频.ext
             else:
                 if docx_bytes:
-                    (task_dir / docx_name).write_bytes(docx_bytes)
+                    (task_dir / "解说文案.docx").write_bytes(docx_bytes)
                 if audio_bytes:
-                    (task_dir / audio_name).write_bytes(audio_bytes)
+                    ext = Path(audio_name).suffix or ".wav"
+                    (task_dir / f"解说音频{ext}").write_bytes(audio_bytes)
 
             # 检查是否有解说文案
             docx_file = task_dir / "解说文案.docx"
@@ -1521,6 +1524,30 @@ class Handler(SimpleHTTPRequestHandler):
             return
         db.update_task_status(drama_id, task_name, status)
         self._json({"ok": True})
+
+    def _delete_task(self):
+        """POST /tasks/delete — 删除任务（DB记录 + 磁盘目录）"""
+        import shutil
+        data = json.loads(self._read_body())
+        drama_name = data.get("drama", _project_name)
+        task_name = data.get("name", "")
+        if not task_name:
+            self._json({"ok": False, "error": "缺少任务名称"}, 400)
+            return
+        drama_id = db.get_drama_id(drama_name)
+        if not drama_id:
+            self._json({"ok": False, "error": f"项目不存在: {drama_name}"}, 404)
+            return
+        ok = db.delete_task(drama_id, task_name)
+        # 同时清理磁盘目录（处理 DB 无记录但目录存在的情况）
+        task_dir = BASE_DIR / drama_name / "tasks" / task_name
+        if task_dir.exists():
+            shutil.rmtree(task_dir)
+            ok = True  # 即使 DB 里没有，至少清理了磁盘
+        if ok:
+            self._json({"ok": True})
+        else:
+            self._json({"ok": False, "error": "任务不存在"}, 404)
 
     def _list_dramas(self):
         """列出所有项目（SQLite + 文件系统 projects/*.json）"""
@@ -2638,7 +2665,7 @@ class Handler(SimpleHTTPRequestHandler):
         # API 路由不走这里
         api_routes = {"/search", "/chat", "/segments.json", "/preview_video", "/status",
                        "/dramas", "/tasks", "/assign", "/copy", "/thumb", "/storyboard_suggest",
-                       "/narration.json", "/tasks/status"}
+                       "/narration.json", "/tasks/status", "/tasks/delete"}
         if path in api_routes:
             return False
         # 排除 API 前缀

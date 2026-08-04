@@ -424,6 +424,19 @@ class VibeCutDB:
         )
         self.commit()
 
+    def delete_task(self, drama_id: int, name: str) -> bool:
+        """删除任务及其分段数据，返回是否成功"""
+        c = self._cursor()
+        task = self.get_task(drama_id, name)
+        if not task:
+            return False
+        # 先删分段
+        c.execute("DELETE FROM task_segments WHERE task_id = ?", (task["id"],))
+        # 再删任务
+        c.execute("DELETE FROM tasks WHERE id = ?", (task["id"],))
+        self.commit()
+        return True
+
     def update_task_meta(self, task_id: int, segments_count: int = None, duration: float = None) -> None:
         """更新任务元信息"""
         c = self._cursor()

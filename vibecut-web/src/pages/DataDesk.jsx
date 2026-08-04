@@ -88,6 +88,7 @@ export default function DataDesk() {
     { id: 'clean',     label: '数据清洗', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
     { id: 'build',     label: '重建索引', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
     { id: 'migrate',   label: '导入数据库', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
+    { id: 'rescore',   label: '质量重打分', status: 'pending', progress: 0, detail: '', elapsed: 0, log_lines: [] },
   ]
   const [selectedEps, setSelectedEps] = useState([])
   const [procTaskId, setProcTaskId] = useState(null)
@@ -178,7 +179,7 @@ export default function DataDesk() {
             数据台
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {summary.total_eps || 0} 集 · {summary.total_indexed || 0} 条索引 · 平均质量 {avgScore} 分
+            {summary.total_eps || 0} 集 · {summary.total_vlm_scenes?.toLocaleString() || 0} VLM场景 · {summary.total_indexed?.toLocaleString() || 0} 条索引 · 平均质量 {avgScore} 分
           </p>
         </div>
 
