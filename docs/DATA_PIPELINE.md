@@ -1,4 +1,4 @@
-# VIBECAP 数据加工流程 v2
+# VibeCut 数据加工流程 v2
 
 ## 概述
 
@@ -241,7 +241,7 @@ python3 migrate_db.py --force
 ## 文件路径约定
 
 ```
-VIBECAP/
+VibeCut/
 ├── {电视剧}/
 │   ├── sources/epN/              ← 原始分析产出
 │   │   ├── scenes.json
@@ -259,7 +259,7 @@ VIBECAP/
 │   ├── characters.json
 │   └── tasks/{任务}/             ← 剪辑任务
 │
-├── vibecap-server/
+├── vibecut-server/
 │   ├── analyze_episodes.py       ← Step 1: 场景+ASR+VLM
 │   ├── cross_calibrate.py        ← Step 2: ASR↔VLM校准 ⭐
 │   ├── clean_data.py             ← Step 3: 清洗+字幕提取
@@ -267,7 +267,7 @@ VIBECAP/
 │   ├── migrate_db.py             ← Step 5: SQLite导入
 │   └── server.py                 ← 搜索服务 (+ 加工API)
 │
-└── vibecap-web/                  ← 前端 (React + Vite)
+└── vibecut-web/                  ← 前端 (React + Vite)
 ```
 
 ## 质量评分体系

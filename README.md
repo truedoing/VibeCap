@@ -1,4 +1,4 @@
-# VIBECAP — AI 影视解说剪辑台
+# VibeCut — AI 影视解说剪辑台
 
 对原剧进行 VLM 画面分析 + ASR 台词转写，构建 BGE 语义索引，然后根据解说词自动搜索匹配原剧镜头，完成解说短视频的策划与剪辑。
 
@@ -11,8 +11,8 @@
 ## 项目结构
 
 ```
-VIBECAP/
-├── vibecap-server/       ← Python 后端 (8765)
+VibeCut/
+├── vibecut-server/       ← Python 后端 (8765)
 │   ├── server.py             主服务 (搜索/预览/分镜/任务管理)
 │   ├── analyze_episodes.py   剧集分析 (场景切分/ASR/VLM)
 │   ├── build_index.py        构建 BGE 语义索引
@@ -21,7 +21,7 @@ VIBECAP/
 │   ├── match_split.py        解说词 ↔ ASR 对齐 + 音频切分
 │   └── sentence_clip_builder.py  解说 ↔ 原剧匹配引擎
 │
-├── vibecap-web/          ← React 前端 (Vite, 3000)
+├── vibecut-web/          ← React 前端 (Vite, 3000)
 │   └── src/pages/
 │       ├── Home.jsx           项目选择页
 │       ├── MatchingDesk.jsx   分镜策划台
@@ -38,8 +38,8 @@ VIBECAP/
 
 ```bash
 # 1. 克隆
-git clone git@github.com:truedoing/VibeCap.git
-cd VIBECAP
+git clone git@github.com:truedoing/VibeCut.git
+cd VibeCut
 
 # 2. 配置 API Key
 cp .env.example .env
@@ -48,7 +48,7 @@ cp .env.example .env
 #   DEEPSEEK_API_KEY=sk-xxx    (分镜方案生成)
 
 # 3. 安装依赖
-cd vibecap-web && npm install && cd ..
+cd vibecut-web && npm install && cd ..
 pip install faster-whisper sentence-transformers python-docx numpy
 
 # 4. 准备数据
@@ -56,13 +56,13 @@ pip install faster-whisper sentence-transformers python-docx numpy
 #   - 角色肖像放入 {电视剧}/character_portraits/
 
 # 5. 分析剧集
-cd vibecap-server
+cd vibecut-server
 python3 analyze_episodes.py --ep 1,2,3
 python3 build_index.py
 
 # 6. 启动
 ./start.sh 都挺好 Task7029 &    # 后端
-cd ../vibecap-web && npm run dev # 前端
+cd ../vibecut-web && npm run dev # 前端
 # 打开 http://localhost:3000
 ```
 

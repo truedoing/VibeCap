@@ -95,32 +95,32 @@ VibeEdit 使用 `vibe_timeline`/`vibe_mediaCache` 独立缓存键，与老剪辑
 
 | 文件 | 用途 |
 |------|------|
-| `vibecap-server/generate_proxies.py` | 代理视频批量生成脚本 |
-| `vibecap-server/server.py` | 后端，新增 `eps` 搜索过滤 |
-| `vibecap-web/src/pages/VibeEdit.jsx` | Vibe 剪辑台主页面 |
-| `vibecap-web/src/components/ScriptPanel.jsx` | 脚本段面板（标签式） |
-| `vibecap-web/src/components/StoryboardPanel.jsx` | 分镜推荐面板 |
-| `vibecap-web/src/components/SourceInspector.jsx` | 源检视器（PR 风格） |
-| `vibecap-web/src/components/TimelineControls.jsx` | 共享时间轴控制栏 |
-| `vibecap-web/src/components/ChatPanel.jsx` | AI 聊天面板（支持 eps） |
-| `vibecap-web/src/hooks/useLinkedClips.js` | 视频/音频联动 hook |
-| `vibecap-web/src/lib/proxyEngine.js` | 代理 URL 解析 + 时间引用转换 |
-| `vibecap-web/src/lib/timelineBuilder.js` | 从 proxy picks 构建 Elah Project |
-| `vibecap-web/src/model/migrate.js` | 旧 picks 迁移工具 |
-| `vibecap-web/src/context/ProjectContext.jsx` | 状态管理（双缓存键） |
+| `vibecut-server/generate_proxies.py` | 代理视频批量生成脚本 |
+| `vibecut-server/server.py` | 后端，新增 `eps` 搜索过滤 |
+| `vibecut-web/src/pages/VibeEdit.jsx` | Vibe 剪辑台主页面 |
+| `vibecut-web/src/components/ScriptPanel.jsx` | 脚本段面板（标签式） |
+| `vibecut-web/src/components/StoryboardPanel.jsx` | 分镜推荐面板 |
+| `vibecut-web/src/components/SourceInspector.jsx` | 源检视器（PR 风格） |
+| `vibecut-web/src/components/TimelineControls.jsx` | 共享时间轴控制栏 |
+| `vibecut-web/src/components/ChatPanel.jsx` | AI 聊天面板（支持 eps） |
+| `vibecut-web/src/hooks/useLinkedClips.js` | 视频/音频联动 hook |
+| `vibecut-web/src/lib/proxyEngine.js` | 代理 URL 解析 + 时间引用转换 |
+| `vibecut-web/src/lib/timelineBuilder.js` | 从 proxy picks 构建 Elah Project |
+| `vibecut-web/src/model/migrate.js` | 旧 picks 迁移工具 |
+| `vibecut-web/src/context/ProjectContext.jsx` | 状态管理（双缓存键） |
 
 ## 启动命令
 
 ```bash
 # 生成代理视频
-cd vibecap-server
+cd vibecut-server
 python3 generate_proxies.py --drama 都挺好 --ep 1-5
 
 # 启动后端
 python3 server.py --drama 都挺好 --task Task7029 --port 8766
 
 # 启动前端
-cd vibecap-web && npm run dev
+cd vibecut-web && npm run dev
 
 # 访问
 open http://localhost:3000/都挺好/Task7029/vibe

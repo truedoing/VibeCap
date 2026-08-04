@@ -1,4 +1,4 @@
-# VIBECAP — AI 影视解说/口播剪辑台 v0.12
+# VibeCut — AI 影视解说/口播剪辑台 v0.12
 
 ## 项目类型
 
@@ -10,8 +10,8 @@
 ## 目录
 
 ```
-VIBECAP/
-├── vibecap-server/            ← Python 后端 (端口8765)
+VibeCut/
+├── vibecut-server/            ← Python 后端 (端口8765)
 │   ├── server.py              ← 主服务 + API
 │   ├── db.py                  ← SQLite (dramas/episodes/tasks/task_segments/index_entries)
 │   ├── script_agents.py       ← 策划台 AI: v3搜索流水线 + v4故事优先
@@ -23,7 +23,7 @@ VIBECAP/
 │   ├── generate_proxies.py    ← 540p代理视频
 │   └── (analyze_episodes/cross_calibrate/clean_data — 电视剧管线)
 │
-├── vibecap-web/               ← React 前端 (Vite, 端口3000)
+├── vibecut-web/               ← React 前端 (Vite, 端口3000)
 │   └── src/
 │       ├── pages/
 │       │   ├── PlanningDesk.jsx  ← 策划台: 粗剪→精剪→导出
@@ -52,18 +52,18 @@ VIBECAP/
 │   ├── semantic_embeddings.npy ← BGE索引 (guest-only)
 │   └── tasks/                 ← 任务数据 (segments.json 含 sub_clips)
 │
-└── vibecap.db                 ← SQLite (不提交git)
+└── vibecut.db                 ← SQLite (不提交git)
 ```
 
 ## 启动
 
 ```bash
 # 后端
-cd vibecap-server
+cd vibecut-server
 /opt/anaconda3/bin/python3 server.py --project 杨老师教育 --task 0801学习新东方 --port 8765
 
 # 前端
-cd vibecap-web && npm run dev
+cd vibecut-web && npm run dev
 ```
 
 ## 后端 API

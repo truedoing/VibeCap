@@ -1,5 +1,5 @@
 # 本地数据库
-vibecap.db
+vibecut.db
 *.db-shm
 *.db-wal
 
@@ -9,12 +9,12 @@ vibecap.db
 杨老师教育/
 
 # 前端测试数据
-vibecap-web/public/asr_groups.json
-vibecap-web/public/content_report.json
-vibecap-web/public/transcript.txt
+vibecut-web/public/asr_groups.json
+vibecut-web/public/content_report.json
+vibecut-web/public/transcript.txt
 
 # 依赖
-vibecap-web/node_modules/
+vibecut-web/node_modules/
 __pycache__/
 *.pyc
 
