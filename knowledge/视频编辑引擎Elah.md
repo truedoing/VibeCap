@@ -3,198 +3,175 @@ title: 视频编辑引擎Elah
 type: topic
 tags: [framework, technique, implemented]
 difficulty: 中等
-prerequisites: ["React与Vite", "JavaScript与React生态"]
+prerequisites: ["React与Vite", "ffmpeg媒体处理"]
 status: implemented
 created: 2026-08-04
 ---
 
 # 视频编辑引擎 Elah
 
-> `@elah/editor` 是一个浏览器端的视频编辑 SDK，提供多轨时间轴、WebGL2 预览、媒体管理等能力。VibeCut 用它来在浏览器里做一个轻量级剪辑台。
+> `@elah/editor`：一个运行在浏览器里的 NLE（非线性编辑）引擎。VibeCut 用它在网页里实现多轨时间轴、预览播放和素材管理。
 
 ## 是什么
 
-Elah 是一个 **NLE（Non-Linear Editor，非线性编辑器）** SDK —— 相当于一个运行在浏览器里的 Premiere 引擎。它不是给用户用的桌面软件，而是给开发者用的 JS 库，让你在自己的 Web 应用中嵌入视频编辑功能。
+**Elah** 是一套浏览器端视频编辑 SDK，核心包包括：
 
-Elah 提供三个核心能力：
+| 包 | 功能 |
+|---|---|
+| `@elah/editor` | 主入口：EditorProvider、Preview、Timeline、MediaLibrary |
+| `@elah/core` | 核心引擎：时间轴模型、导出管线 |
+| `@elah/timeline` | 时间轴 UI 组件 |
 
-```
-@elah/editor
-  ├── EditorProvider    ← React Context，管理编辑器状态
-  ├── Preview           ← WebGL2 视频预览窗口
-  ├── Timeline          ← 多轨时间轴 UI
-  ├── createDefaultDemuxerFactory  ← 视频文件解码器工厂
-  └── Hooks:
-        useTimelineEngine()    ← 时间轴引擎
-        useTracksStore()       ← 轨道状态 (Zustand)
-        usePlaybackStore()     ← 播放状态 (Zustand)
-        useMediaLibraryStore() ← 媒体文件管理 (Zustand)
-```
+它不是传统桌面软件（如 Premiere、剪映），而是一个**纯浏览器的 NLE 引擎**——所有渲染在 WebGL2 上完成，不需要安装任何软件。
 
-一句话总结：**Elah 让你在浏览器里加载视频文件、拖到时间轴上、加特效、预览、导出，就像在用一个精简版的专业剪辑软件。**
+## 为什么用浏览器 NLE
 
-## 为什么要在浏览器里做视频编辑
+| 传统桌面剪辑 | 浏览器 NLE (Elah) |
+|---|---|
+| 安装软件 + 学习成本 | 打开网页即用 |
+| 剪辑结果本地文件 | 数据随时同步到后端 |
+| AI 集成困难（插件机制） | AI 原生集成（API 直连） |
+| 文件管理手动 | 代理视频自动从服务端拉取 |
+| 无法远程协作 | 同一份数据多人查看 |
 
-几个不合直觉但实际上很好的理由：
-
-1. **本地视频文件不需要上传**。浏览器可以直接读本地文件（`URL.createObjectURL(file)`），不用先上传到服务器再下载回来。
-
-2. **用户不需要装任何软件**。分享链接就能协作。
-
-3. **代理视频方案**。1080p 原片太大，VibeCut 用 ffmpeg 预生成 540p 代理视频（`generate_proxies.py`，CRF=28, preset=fast），浏览器加载 540p 用于快速编辑，导出时用原始 1080p。代理视频约为原视频的 1/10 大小，但视觉上足够判断镜头好坏。
-
-4. **WebGL2 硬解加速**。现代浏览器的 WebGL2 可以直接在 GPU 上解码视频和渲染特效，流畅度接近原生软件。
+对于 VibeCut 的场景——AI 搜索素材 → 自动建轨 → 人类微调 → 导出——浏览器 NLE 是最自然的形态：AI 生成的剪辑数据直接喂给时间轴，人类在网页上审核和微调。
 
 ## 关键概念
 
-### 1. Project 和 Track
+### 1. 核心 API
 
-Elah 的数据模型：
-
-```
-Project (项目)
-  └── Track 1 (轨道 1: 视频)
-  │     ├── Clip A (ep1, 10s-15s, 主视频)
-  │     └── Clip B (ep3, 45s-50s, 主视频)
-  ├── Track 2 (轨道 2: 视频)
-  │     ├── Clip C (ep5, 30s-33s, 辅助镜头)
-  │     └── Clip D (ep7, 22s-25s, 辅助镜头)
-  └── Track 3 (轨道 3: 音频)
-        └── Clip E (音轨)
-```
-
-每个 Clip 有精确的时间引用：`sourceStartSec` 和 `sourceEndSec`，指向代理视频文件中的具体位置。Elah 基于帧（而非秒）作为基本单位。VibeCut 使用 25 FPS，所以 `secondsToFrames(t)` = `t * 25`。
-
-### 2. Drama 4轨 vs Interview 2轨
-
-`timelineBuilder.js` 的 `buildProjectFromProxyPicks` 支持两种轨道模式：
-
-```javascript
-// drama (电视剧): 4 轨
-Track 1: main video    ← 主要视频片段
-Track 2: supp video    ← 辅助视频片段（B-roll）
-Track 3: main audio    ← 主视频的音频
-Track 4: supp audio    ← 辅助的音频
-
-// interview (口播): 2 轨
-Track 1: main video    ← KEEP sub_clips 构成的视频轨
-Track 2: main audio    ← 对应音频
+```jsx
+import {
+  EditorProvider,     // 编辑器上下文（包裹所有子组件）
+  Preview,            // WebGL2 视频预览画布
+  Timeline,           // 多轨时间轴 UI
+  createDefaultDemuxerFactory,  // 解封装器工厂（解析视频文件）
+  useTimelineEngine,  // 引擎 hook：loadProject / addClip / removeClip
+  useTracksStore,     // 轨道状态
+  usePlaybackStore,   // 播放状态
+  useMediaLibraryStore, // 素材库状态
+  secondsToFrames,    // 时间转换工具
+  generateId,         // ID 生成
+} from '@elah/editor'
 ```
 
-电视剧需要 4 轨（因为有主视频和辅助镜头，视频和音频分离），口播只需要 2 轨（单人口播，直接连起来即可）。
+### 2. Project 数据结构
 
-轨道数量的检测是自动的：`VibeEdit.jsx` 在加载缓存时比对轨道数，不匹配就触发重建。
+每个 Elah 项目是一个 JSON 对象：
 
-### 3. 代理视频 (Proxy) 方案
-
-```
-原始视频                              代理视频
-1080p, ~400MB/集                      540p, ~40MB/集
-完整画质                               轻量预览
-                                     ↓
-                              generate_proxies.py
-                              CRF=28, preset=fast
-                              GOP=50（2秒关键帧）
-                              Audio=64k mono
-                              → proxies/*_540p.mp4
-                              → .proxies_manifest.json
-```
-
-`proxyEngine.js` 负责解析代理视频路径：
-
-```javascript
-// 从 manifest 查找 proxy 文件名
-function proxyFileForEp(ep, manifest) {
-  const p = manifest.proxies.find(x => x.ep === ep)
-  return p?.file || null
-}
-
-// 构建 proxy 的完整 URL
-export function proxyUrlForEpisode(ep, manifest) {
-  return `/proxies/${proxyFileForEp(ep, manifest)}`
+```js
+{
+  id: 'vibecut-prg',
+  fps: 25,
+  stage: { width: 1920, height: 1080 },
+  tracks: [
+    { id: 'track-1', name: '原声主镜头', kind: 'video', order: 2, height: 52 },
+    { id: 'track-2', name: '原声主镜头 音频', kind: 'audio', order: 0, height: 44 },
+  ],
+  clips: {
+    'track-1': [
+      { id: 'clip-1', trackId: 'track-1', type: 'video',
+        src: '/proxies/file.mp4', startFrame: 0, durationFrames: 250,
+        sourceStartFrame: 125, sourceDurationFrames: 250 }
+    ],
+    'track-2': [...]
+  },
+  transitions: [],
+  version: 1,
+  masterVolume: 1,
 }
 ```
 
-工作流：用户操作 540p 代理视频（流畅）→ 导出时 `export_capcut.py` 引用原始 1080p 路径 → 剪映输出最终成片。
+关键点：`startFrame` 是时间轴上的位置，`sourceStartFrame` 是源视频中的起始位置。通过这两个值，同一段源素材可以出现在时间轴的不同位置。
 
-### 4. 口播自动建轨
+### 3. Demuxer 工厂
 
-VibeCut 的口播自动建轨逻辑（`timelineBuilder.js`）：
-
-```javascript
-if (segments have sub_clips) {
-  // 精切模式：只铺 KEEP 的 sub_clips
-  for each segment:
-    for each sub_clip where decision === "KEEP":
-      create Clip(sourceStart, sourceEnd)
-      place on Track 1 sequentially
-} else {
-  // 粗段模式：铺整个 segment
-  for each segment:
-    create Clip(source_start, source_end)
-    place on Track 1 sequentially
-}
+```jsx
+const demuxRef = useRef(createDefaultDemuxerFactory())
+// 传给 EditorProvider，用于解析代理视频文件
 ```
 
-用户从策划台切到剪辑台，时间轴自动铺好 —— 不需要手动拖拽。
+Demuxer（解封装器）负责解析视频文件的容器格式（MP4），分离出视频流和音频流。`createDefaultDemuxerFactory` 会在后台创建 Web Worker 线程来解码，不阻塞 UI。
 
-### 5. Demuxer — 视频解复用器
+### 4. 双轨道模式
 
-`createDefaultDemuxerFactory()` 是 Elah 的视频文件解码器。它让浏览器能高效地从 MP4 文件中随机提取指定帧，而不需要加载整个文件。对于代理视频剪辑（需要在 30 分钟视频中精确提取第 12'34" 的帧），这个随机访问能力至关重要。
+VibeCut 根据项目类型使用不同的轨道布局：
+
+```
+口播 (interview):                     电视剧 (drama):
+┌─────────────────────┐              ┌─────────────────────┐
+│ 原声主镜头 (video)   │              │ 补充镜头 (video)    │ ← 静音
+├─────────────────────┤              ├─────────────────────┤
+│ 原声 音频 (audio)    │              │ 原声主镜头 (video)   │
+└─────────────────────┘              ├─────────────────────┤
+                                     │ 原声 音频 (audio)    │
+                                     ├─────────────────────┤
+                                     │ 旁白 TTS (audio)    │
+                                     └─────────────────────┘
+```
+
+口播只有 2 轨（主镜头 + 音频），因为口播素材是单一视频源、无需补充镜头和旁白。电视剧有 4 轨，完整支持解说视频的剪辑需求。
+
+### 5. 媒体库与资产注册
+
+```js
+// 注册媒体资产（必须先注册才能加到时间轴）
+const store = useMediaLibraryStore.getState()
+store.addAsset({
+  assetId: 'asset-1',
+  src: '/proxies/file.mp4',
+  name: 'S1 EP01 主',
+  kind: 'video',
+  durationSec: 12.5,
+})
+```
+
+流程：加载代理视频 URL → 注册到 MediaLibrary → 创建 clip 加到时间轴轨道。缺少任何一步，时间轴上都会显示空白。
 
 ## 在 VibeCut 中的应用
 
-| 文件 | 作用 |
-|------|------|
-| `vibecut-web/src/pages/VibeEdit.jsx` | 剪辑台主页面，Elah EditorProvider 的宿主 |
-| `vibecut-web/src/lib/timelineBuilder.js` | `buildProjectFromProxyPicks()` — 从 picks 构建 Elah Project |
-| `vibecut-web/src/lib/proxyEngine.js` | `fetchProxyManifest()` + `proxyUrlForEpisode()` — 代理视频路径解析 |
-| `vibecut-web/src/components/ScriptPanel.jsx` | 精切预览面板（绿 KEEP / 红 CUT） |
-| `vibecut-web/src/components/TimelineControls.jsx` | 播放控制栏 |
-| `vibecut-web/src/components/SourceInspector.jsx` | PR 风格源检视器 |
-| `vibecut-server/generate_proxies.py` | 代理视频生成（540p, CRF=28, GOP=50） |
+**`VibeEdit.jsx`**（沉浸剪辑台）是 Elah 的主要消费者：
 
-## 动手实验
+1. **初始化**：检测项目类型（口播/电视剧）→ 创建对应轨道布局 → `engine.loadProject()`
+2. **自动建轨**（口播）：`segments` 到达后 → `buildProjectFromProxyPicks()` 构建项目 → 加载到 engine → 持久化缓存
+3. **缓存恢复**：刷新页面 → 加载 `vibe_timeline` 缓存 → 比对 track 数是否匹配 → 匹配则直接恢复
+4. **自动保存**：监听 `engine.on('change')` → 300ms 防抖 → 保存到 `vibe_timeline`
 
-1. **安装 Elah 并运行最小示例**
+**`timelineBuilder.js`**：从 picks 数据构建 Elah project，是 VibeCut 业务逻辑和 Elah 数据格式之间的桥梁。
 
-```bash
-npm install @elah/editor
-```
-
-```jsx
-import { EditorProvider, Preview, Timeline } from '@elah/editor'
-import '@elah/editor/styles.css'
-
-function App() {
-  return (
-    <EditorProvider stage={{ width: 1920, height: 1080 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-        <Preview style={{ flex: 1 }} />
-        <Timeline style={{ height: 200 }} />
-      </div>
-    </EditorProvider>
-  )
-}
-```
-
-2. **理解代理视频概念**
-
-找一段 1080p 视频，用 ffmpeg 转 540p：
-```bash
-ffmpeg -i input_1080p.mp4 -vf scale=960:540 \
-  -c:v libx264 -crf 28 -preset fast -g 50 \
-  -c:a aac -b:a 64k -ac 1 output_540p.mp4
-```
-
-对比两个文件的大小差异（通常 540p 是 1080p 的 1/10 到 1/5）。
+**`proxyEngine.js`**：代理视频 URL 解析，将素材引用（episode + 时间范围）转换为 Elah clip 参数。
 
 ## 前置知识
 
-- [[React与Vite]] — Elah 使用 React 组件和 hooks
-- [[JavaScript与React生态]] — npm 包管理、ES Module
+- [[React与Vite]] — Elah 是 React 组件库，需要 React 基础
+- [[ffmpeg媒体处理]] — 代理视频需要 ffmpeg 生成
 
 ## 延伸
 
-- [[Shell与ffmpeg工具链]] — 代理视频生成用 ffmpeg
-- [[HTTP服务与SSE流式]] — 代理视频通过 HTTP 服务提供
+- [[状态管理与SSE消费]] — Elah 内部用 Zustand 管理状态
+- [[SQLite数据层设计]] — timeline 缓存持久化
+
+## 动手实验
+
+1. **观察 Project 数据结构**
+在 VibeEdit 页面打开浏览器 Console，输入：
+```js
+window.__vibe_prg_engine.getProject()
+```
+观察返回的 project JSON 结构，特别关注 `tracks` 和 `clips` 字段。
+
+2. **手动加载一段空轨道**
+```js
+const engine = window.__vibe_prg_engine
+engine.loadProject({
+  id: 'test', fps: 25, stage: { width: 1920, height: 1080 },
+  tracks: [{ id: 't1', name: '测试', kind: 'video', order: 0, height: 52 }],
+  clips: { t1: [] }, transitions: [], version: 1, masterVolume: 1
+})
+```
+
+## 学习资源
+
+- `@elah/editor` 官方文档 — SDK 完整 API 参考
+- `VibeEdit.jsx` 源码 — 实际集成的最佳参考
+- `timelineBuilder.js` 源码 — Project 数据构建逻辑
