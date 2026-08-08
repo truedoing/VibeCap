@@ -54,44 +54,25 @@ def _has_numerical_claim(text):
     """检测是否包含数值主张(用于数据一致性检查)"""
     return bool(re.search(r'\d+[万亿千百]', text))
 
-API_URL = "https://api.moonshot.cn/v1/chat/completions"
 
-def _get_api_key():
-    """延迟读取 API key (因为 .env 可能在 import 之后才加载)"""
-    return os.environ.get("MOONSHOT_API_KEY", "")
-
-# BGE 语义搜索函数注入(由 server.py 设置)
+# ── BGE 语义搜索函数注入(由 main.py 设置) ──
 _search_fn = None
 def set_search_fn(fn):
     global _search_fn
     _search_fn = fn
+from lib.llm import call_moonshot_json as _call_llm_json
 
 def _call_llm(system_prompt, user_content, temp=0.4, max_tokens=3000):
-    """底层 LLM 调用，带重试"""
-    payload = json.dumps({
-        "model": "moonshot-v1-8k",
-        "messages": [{"role": "system", "content": system_prompt},
-                     {"role": "user", "content": user_content}],
-        "temperature": temp, "max_tokens": max_tokens,
-    }).encode()
-    api_key = _get_api_key()
-    for attempt in range(3):
-        try:
-            req = urllib.request.Request(API_URL, data=payload,
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"})
-            with urllib.request.urlopen(req, timeout=180) as resp:
-                result = json.loads(resp.read())
-            text = result["choices"][0]["message"]["content"].strip()
-            if text.startswith("```"): text = text.split("\n",1)[1].split("```")[0].strip()
-            parsed = json.loads(text)
-            # 防御: LLM 可能返回 list 而非 dict, 包装为标准格式
-            if isinstance(parsed, list):
-                parsed = {"sections": parsed}
-            return {"ok": True, "result": parsed}
-        except Exception as e:
-            if attempt == 2: return {"ok": False, "error": str(e)[:200]}
-            time.sleep(2)
-    return {"ok": False, "error": "unknown"}
+    """底层 LLM 调用，兼容旧接口"""
+    result = _call_llm_json(system_prompt, user_content,
+                            temperature=temp, max_tokens=max_tokens,
+                            timeout=180, retries=3, label="agent")
+    if result["ok"]:
+        data = result["data"]
+        if isinstance(data, list):
+            data = {"sections": data}
+        return {"ok": True, "result": data}
+    return {"ok": False, "error": result.get("error", "?")[:200]}
 
 
 # ═══════════════════════════════════════════════
