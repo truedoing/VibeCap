@@ -1,4 +1,4 @@
-# VibeCut 技术架构文档 v1.0
+# VibeCut 技术架构文档 v1.1
 
 > AI 影视解说/口播剪辑台 — 从语言到框架到库到模型的全栈技术图谱
 
@@ -34,7 +34,7 @@
 │   sentence-transformers  │  numpy  │  faster-whisper  │  PyTorch  │
 ├─────────────────────────────────────────────────────────┤
 │                   🔧 后端服务层 (Python 3.12)             │
-│   http.server  │  sqlite3  │  threading  │  subprocess   │
+│   FastAPI  │  Uvicorn  │  SQLite  │  threading  │  subprocess  │
 ├─────────────────────────────────────────────────────────┤
 │                   🖥️ 前端框架层 (JavaScript)             │
 │   React 19  │  React Router 7  │  Vite 8  │  Tailwind 4  │
@@ -59,12 +59,12 @@
 
 | 语言 | 版本 | 用途 |
 |------|------|------|
-| **Python** | 3.12 | 后端全栈：HTTP 服务、AI 流水线、数据库、视频处理编排 |
+| **Python** | 3.12 | 后端全栈：FastAPI 服务、AI 流水线、数据库、视频处理编排 |
 | **JavaScript (ES Modules)** | ES2024+ | 前端全栈：UI 渲染、视频编辑器集成、状态管理 |
 | **JSX** | React 19 | 组件模板（非 TypeScript，纯 JSX） |
 | **CSS** | Tailwind 4 + 内联样式 | 样式系统（混合方案） |
 
-**选型特点：** 前后端均为纯 JS/Python，无 TypeScript、无类型标注。后端刻意不用 Flask/FastAPI，仅用标准库 `http.server`。
+**选型特点：** 前后端均为纯 JS/Python，无 TypeScript、无类型标注。v1.1 后端从 `http.server` 升级至 **FastAPI** 以获取自动文档、请求校验和模块化路由能力。
 
 ---
 
@@ -78,16 +78,19 @@
 | **前端包管理** | npm | `package.json` 管理 18 个生产依赖 |
 | **虚拟环境** | 无 | 直接使用 Anaconda 全局环境 |
 
-### Python 依赖清单
+**Python 依赖清单 (v1.1)**
 
 ```
 numpy>=1.24
 sentence-transformers>=2.7
-faster-whisper          # (隐式依赖, 未列入 requirements.txt)
-python-docx             # (隐式依赖, DOCX 解析)
-torch                   # (隐式依赖, F5-TTS 推理)
-f5-tts                  # (隐式依赖, 语音克隆)
-zhconv                  # (可选, 繁简转换)
+fastapi>=0.112            # (v1.1 新增) Web 框架
+uvicorn>=0.35             # (v1.1 新增) ASGI 服务器
+python-multipart          # (v1.1 新增) 文件上传支持
+faster-whisper            # (隐式依赖)
+python-docx               # (隐式依赖, DOCX 解析)
+torch                     # (隐式依赖, F5-TTS 推理)
+f5-tts                    # (隐式依赖, 语音克隆)
+zhconv                    # (可选, 繁简转换)
 ```
 
 ### 前端依赖清单
@@ -122,16 +125,24 @@ zhconv                  # (可选, 繁简转换)
 
 ## 3. 后端框架与服务
 
-### 3.1 HTTP 服务
+### 3.1 HTTP 服务 (v1.1: FastAPI)
+
+| 组件 | 技术 | 说明 |
+|------|------|------|
+| **Web 框架** | **FastAPI** (0.112) | Async-capable，自动 Swagger 文档，Pydantic 校验 |
+| **ASGI 服务器** | **Uvicorn** (0.35) | 高性能异步服务器 |
+| **并发模型** | Uvicorn worker (async) | 替代旧 ThreadingMixIn |
+| **路由** | FastAPI 路由装饰器 | `@app.get/post`，模块化 `handlers/` |
+| **流式响应** | `StreamingResponse` + SSE | 通用生成器包装，复用 `lib/sse.py` |
+| **静态文件** | `FileResponse` + SPA fallback | handlers/static.py |
+| **端口** | 8765 (默认) | 可配置 |
+
+### 3.2 旧版 (v1.0, server.py 兼容保留)
 
 | 组件 | 技术 | 说明 |
 |------|------|------|
 | **HTTP 服务器** | `http.server.HTTPServer` | Python 标准库，线程池模式 |
 | **并发模型** | `socketserver.ThreadingMixIn` | 每请求一线程 |
-| **路由** | 手动 `urlparse` + `if/elif` | 无框架路由，约 30+ 端点 |
-| **流式响应** | SSE (Server-Sent Events) | 自定义实现，`text/event-stream` |
-| **静态文件** | `SimpleHTTPRequestHandler` | 前端 dist 目录直出 |
-| **端口** | 8765 (默认) | 可配置 |
 
 ### 3.2 核心模块
 

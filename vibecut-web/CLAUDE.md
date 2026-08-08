@@ -1,9 +1,11 @@
 ---
 name: vibecut-web
-description: VibeCut React 前端 — 策划台(粗剪+精剪) + 沉浸剪辑台(自动建轨) v1.0
+description: VibeCut React 前端 — 策划台(粗剪+精剪) + 沉浸剪辑台(自动建轨) v1.1
 ---
 
-## VibeCut Web v1.0
+## VibeCut Web v1.1
+
+后端 v1.1 引入 FastAPI，API 文档: http://localhost:8765/docs
 
 ### 架构
 ```

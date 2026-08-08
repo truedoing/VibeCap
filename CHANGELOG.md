@@ -1,75 +1,62 @@
 # VibeCut 更新日志
 
+## v1.1.0 — 后端架构重构 (2026-08-08)
+
+### 重构
+
+- **引入 FastAPI**: 替换 `http.server` 标准库，开启自动 Swagger 文档 (`/docs`)、Pydantic 输入校验、内置 CORS/文件上传
+- **拆分 server.py (2,866 行)**: God Class → `main.py` (805 行) + 13 个模块
+  - `handlers/`: 8 个聚焦模块 (search, tasks, script_gen, pipeline, media, dialogue, static)
+  - `lib/`: 5 个共享基础设施 (llm, embeddings, sse, env, subprocess_runner)
+- **消除重复代码**:
+  - LLM 调用: 10 种实现 → `lib/llm.py` 统一封装 (Moonshot + MiMo)
+  - SSE 发射器 + 心跳: 3 次逐字重复 → 通用生成器
+  - 子进程执行器: 2 套 95% 相同代码 → `lib/subprocess_runner.py` 统一
+  - `load_env()`: 4 处逐字重复 → `lib/env.py`
+- **script_agents.py 优化**: `_call_llm` 改用 `lib/llm.py`，消除 25 行重复 LLM 调用代码
+- **多模块编译 + 12 端点 API 验证通过**: GET /status, /dramas, /tasks, /search, /segments.json, /asr/classified, /proxies/manifest + POST /tasks/status, /chat, /dialogue_match
+
+### 架构收益
+
+| 指标 | v1.0 | v1.1 |
+|---|---|---|
+| 主入口文件 | `server.py` 2,866 行 | `main.py` 805 行 |
+| 模块总数 | 24 脚本 (无分层) | 13 新模块 + 24 脚本 |
+| 路由方式 | 手动 if/elif 链 (200 行) | FastAPI 装饰器 (每端点一行) |
+| LLM 调用实现 | 10 种 | 1 种 (`lib/llm.py`) |
+| API 文档 | ❌ | ✅ Swagger (`/docs`) |
+| CORS | 每个端点手写 | `CORSMiddleware` 一行 |
+| Multipart 上传 | 150 行手写 boundary 解析 | FastAPI `UploadFile` 自动 |
+
+### 新增文件
+
+```
+vibecut-server/
+├── main.py              ← FastAPI 入口 + 32 路由
+├── config.py            ← CLI 参数 + 项目配置 + 路径解析
+├── lib/                 ← 共享基础设施 (5 模块, 377 行)
+│   ├── llm.py           ← 统一 LLM 调用 (Moonshot/MiMo)
+│   ├── embeddings.py    ← BGE 模型单例
+│   ├── sse.py           ← SSE 发射器 + 心跳
+│   ├── env.py           ← .env 加载
+│   └── subprocess_runner.py ← 子进程执行器
+└── handlers/            ← 接口处理器 (8 模块, 2,107 行)
+    ├── search.py        ← 6 种搜索引擎
+    ├── tasks.py         ← 任务 CRUD
+    ├── script_gen.py    ← AI 脚本生成 (v3/v4/refine SSE)
+    ├── pipeline.py      ← 后台加工流水线
+    ├── media.py         ← 媒体服务
+    ├── dialogue.py      ← 对话/台词/分镜
+    └── static.py        ← SPA 前端回退
+```
+
+### 版本标签
+
+```
+v1.1.0 ← 当前
+v1.0.0 (重构前基线)
+```
+
+---
+
 ## v1.0.0 — 正式命名 + Agent 架构升级 (2026-08-04)
-
-### 产品
-- 正式命名 VibeCut（原 VIBECAP），统一品牌标识
-- 目录重构: vibecap-server/web → vibecut-server/web
-- 版本从 v0.13 直接跳至 v1.0，标志产品进入正式阶段
-
-### 技术架构设计（本版本完成方案论证）
-- **Agent 化架构**: 从 LLM 辅助工具 → 全应用 Agent 自主运行的设计方案
-- **RAG 体系**: Naive RAG → Agentic RAG 的升级路径
-- **框架选型**: LangGraph + langchain-core 作为 Agent 基础设施
-- **BGE 索引**: 双模式（电视剧/口播）构建与查询全链路文档化
-
-### 新增文档
-- docs/tech/TECH_STACK.md — 全栈技术架构
-- docs/tech/BGE_INDEX.md — BGE 索引构建+查询深度剖析
-- docs/tech/EVOLUTION_ANALYSIS.md — AI 应用层框架演进分析
-- docs/tech/RAG_KNOWLEDGE.md — RAG 概念体系 + 框架选型
-
----
-
-## v0.11.0 — 数据增强管线 + 故事优先流水线 (2026-08-03)
-
-### 数据台
-- **clean_interview_data.py**: LLM 文本清洗 + 说话人识别。批量处理 classified ASR，每批25句。输出 `classified_enhanced.json`（新增 `cleaned_text` + `speaker` 字段）。299句 guest / 168句 host / 38句文本修正，耗时88s。
-- **build_interview_index.py**: 口播采访 BGE 索引重建。优先使用 enhanced 数据，speaker 边界断开分块（不同说话人不合并），只用 guest 句子建索引，用 `cleaned_text` 编码、`original_text` 展示。索引从 73 条（含主持废句）→ 66 条（纯嘉宾内容，零污染）。
-- **classify_transcript.py**: LLM 口播 ASR 分类（content/meta/guide/filler 四层）
-- **segment_transcript.py**: LLM 采样 + 主题分段（5-8 组观点单元）
-
-### 策划台
-- **PlanningDesk.jsx**: 策划台重构，AI 生成脚本 SSE 流式进度 + 日志面板
-- **故事优先流水线 (story-first v4)**: LLM 通读全部 ASR → 理解完整故事 → 一次性输出分组段落脚本
-  - 分组段落结构 `section(clips, 2-5个)`，段落内保留原文"第一/第二/第三"逻辑
-  - 过渡句全部来自 ASR 原文（0 句 AI 生成），找不到过渡就硬切
-  - 单次 LLM 调用 ~12s 完成（对比 v3 搜索流水线 ~40s）
-  - API: `POST /script/generate_story_first`
-- **v3 搜索流水线 (run_pipeline)**: 策划师 → 文案师(BGE) → 精编师(LLM) → 审核师(LLM)
-  - 全局时间跟踪（搜索阶段偏好冷门窗口）+ 邻近检测（8s）+ 桶限制（≤2/窗口）
-  - 口语废句源头过滤（12 条正则 + 嵌入废词清理）
-  - 强 topic 锚点（evidence/proof ≥2 关键词）
-  - 累积式修复（时间堆砌 + 收尾 + 漂移 + 素材不足 同时修）
-
-### Server
-- BGE 离线模式（`HF_HUB_OFFLINE=1`）：模型加载 194s → 8s
-- 搜索返回 `original_text`（ASR 原文）+ `cleaned_text`（清洗后）
-- `.env` 空值覆盖修复：空环境变量不再阻止 `.env` 加载
-- 新增端点：`POST /script/generate_story_first`、`GET /tasks/文案脚本.json`
-- 回调函数返回 list/dict 防御
-
-### 修复
-- `_call_llm` 双重 `urlopen` bug
-- 搜索循环 `r = q.get()` 覆盖策划结果
-- LLM 返回 list 型 JSON 崩溃
-- 流水线返回缺少 `rich_count`/`final_count`/`total`
-- 策划台 SSE 双重 `JSON.parse`
-
----
-
-## v0.10.0 — 沉浸剪辑台 (2026-08-02)
-
-- 源定位器 + 分镜推荐 + 剧集优先搜索
-- VibeEdit.jsx 沉浸剪辑台（策划+剪辑合并）
-
-## v0.8-0.9 — VLM 优化流水线
-
-- VLM 并发 4→12→20，单集 32min→6.5min
-- 540p 代理视频，帧提取 3x 加速
-- VLM 场景智能合并，冗余 -15%
-
-## v0.7 — 多任务架构
-
-- 加权 n-gram + 繁简归一化 ASR 匹配
-- `?task=` 参数，一个 server 服务所有任务
