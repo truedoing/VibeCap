@@ -469,7 +469,19 @@ class Handler(SimpleHTTPRequestHandler):
             task = req_task or _args.task
             narr_file = self._resolve_work_dir(task) / "narration.json"
             if narr_file.exists():
-                self._json(json.load(open(narr_file)))
+                raw = json.load(open(narr_file))
+                # 兼容旧格式 (数组) → 包装为 {segments: [{index, start, end, ...}]}
+                if isinstance(raw, list):
+                    wrapped = []
+                    for i, s in enumerate(raw):
+                        wrapped.append({"index": s.get("index", i), "start": s["start"], "end": s["end"],
+                                        "narration": s.get("narration", ""),
+                                        "pause_after_ms": s.get("pause_after_ms", 0),
+                                        "overlaps_speech": s.get("overlaps_speech", False),
+                                        "emotion": s.get("emotion", "")})
+                    self._json({"segments": wrapped})
+                else:
+                    self._json(raw)
             else:
                 self._json({}, 404)
         elif path == "/segments.json":
@@ -692,7 +704,11 @@ class Handler(SimpleHTTPRequestHandler):
             self._handle_download(req_task)
         elif path == "/storyboard_suggest":
             data = json.loads(self._read_body())
-            suggestions = self._generate_storyboard(data.get("narration", ""))
+            suggestions = self._generate_storyboard(
+                data.get("narration", ""),
+                segment_context=data.get("segment_context"),
+                cover=data.get("cover", ""),
+            )
             self._json({"suggestions": suggestions})
         elif path == "/tasks/create":
             self._create_task()
@@ -792,10 +808,8 @@ class Handler(SimpleHTTPRequestHandler):
         if eps:
             ep_set = set(int(e) for e in str(eps).split(",") if e.strip().isdigit())
             if ep_set:
-                # 先筛选优先剧集，再拼接其他结果
-                priority = [r for r in results if r.get("ep") in ep_set]
-                others = [r for r in results if r.get("ep") not in ep_set]
-                results = priority + others
+                # 过滤：仅保留指定剧集的结果
+                results = [r for r in results if r.get("ep") in ep_set]
         return results
 
     def _interview_keyword_search(self, query, limit=10):
@@ -859,7 +873,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         return sorted(merged.values(), key=lambda x: -x["score"])[:limit]
 
-    def _asr_first_search(self, query, limit=10):
+    def _asr_first_search(self, query, limit=10, min_score=10, eps=None):
         '''ASR优先匹配：纯 ASR 关键词搜索 + 语义兜底，结果展示 ASR 台词'''
         query = _norm(query)  # 繁→简归一化
         results = {}
@@ -922,7 +936,9 @@ class Handler(SimpleHTTPRequestHandler):
                 results[k] = r
                 seen.add(k)
 
-        return sorted(results.values(), key=lambda x: -x["score"])[:limit]
+        # 按分排序，低于阈值的不凑数
+        sorted_results = sorted(results.values(), key=lambda x: -x["score"])
+        return self._filter_low_scores(sorted_results, min_score)[:limit]
 
     def _semantic_search(self, query, limit=10):
         '''纯语义搜索（BGE embedding + 余弦相似度）'''
@@ -1136,6 +1152,23 @@ class Handler(SimpleHTTPRequestHandler):
             print(f"[llm_rerank] failed: {e}")
             return candidates[:top_n]
 
+
+    def _filter_low_scores(self, sorted_results, min_score=10):
+        """Filter low-score results to avoid padding with noise.
+        Rule: best >= 30 -> keep best * 0.15 threshold.
+               best >= 20 -> keep min_score threshold.
+               best < 20  -> discard all."""
+        if not sorted_results:
+            return []
+        best = sorted_results[0]["score"]
+        if best < 20:
+            return []
+        if best >= 30:
+            threshold = max(min_score, best * 0.15)
+        else:
+            threshold = min_score
+        return [r for r in sorted_results if r["score"] >= threshold]
+
     def _make_result(self, ep, start, end, scene_id, desc, asr, score):
         return {
             "ep": ep, "start": start, "end": end,
@@ -1144,6 +1177,62 @@ class Handler(SimpleHTTPRequestHandler):
             "description": desc, "asr": asr,
             "score": round(score, 1),
         }
+
+    def _inject_speaker(self, query, results, context):
+        '''台词结果注入说话人：封面标题人物 > highlight_text 集数定位 + VLM 分析'''
+        import re
+        CHARS = ['苏大强','苏明哲','苏明成','苏明玉','明玉','朱丽','吴非','石天冬','蒙总','老蒙','蒙太','沈浩','柳青','赵美兰','小咪','蔡根花']
+        CHAR_ALIAS = {'明玉': '苏明玉', '老蒙': '蒙总'}
+
+        if not results:
+            return results
+
+        # Strategy 1: 从封面标题提取人物
+        cover = context.get("cover", "")
+        cover_chars = [c for c in CHARS if c in cover]
+        speaker = CHAR_ALIAS.get(cover_chars[0], cover_chars[0]) if cover_chars else None
+
+        # Strategy 2: highlight_text 提取集数 + VLM 定位
+        if not speaker:
+            hl = context.get("highlight_text", "")
+            # 匹配 "41集" 或 "39.17" (集数.时间) 或 "EP41"/"EP 41"
+            ep_match = re.search(r'(\d{1,2})集|(\d{1,2})\.\d{1,2}$|EP\s*(\d{1,2})', str(hl))
+            if ep_match:
+                target_ep = ep_match.group(1) or ep_match.group(2) or ep_match.group(3)
+                # 在搜索结果中找到最佳匹配（得分最高且在该集的）
+                best = None
+                for r in results:
+                    if str(r.get("ep")) == target_ep:
+                        if best is None or r["score"] > best["score"]:
+                            best = r
+                if best:
+                    start = best["start"]
+                    end = best["end"]
+                    # 读取附近 VLM 描述统计人物出现频率
+                    vlm_entries = [m for m in semantic_metas
+                                   if str(m.get("ep", "")) == target_ep and m.get("type") == "vlm"
+                                   and float(m.get("start", 0)) <= end + 5
+                                   and float(m.get("end", 0)) >= start - 5]
+                    char_freq = {}
+                    for vlm in vlm_entries:
+                        text = vlm.get("text", "")
+                        for c in CHARS:
+                            if c in text:
+                                char_freq[c] = char_freq.get(c, 0) + 1
+                    if char_freq:
+                        top = sorted(char_freq.items(), key=lambda x: -x[1])[0][0]
+                        speaker = CHAR_ALIAS.get(top, top)
+
+        # 将说话人注入到结果的 description 前缀
+        if speaker:
+            for r in results:
+                prefix = f"【{speaker}】"
+                if not r.get("description", "").startswith(prefix):
+                    r["description"] = prefix + r.get("description", "")
+                    if r.get("asr"):
+                        r["asr"] = prefix + r.get("asr", "")
+
+        return results
 
     def _extract(self, data, full=False, clip_dir=None):
         if clip_dir is None:
@@ -1493,14 +1582,15 @@ class Handler(SimpleHTTPRequestHandler):
                 # A2: ASR 解说音频
                 audio_file = task_dir / "解说音频.wav"
                 if audio_file.exists():
+                    env_a2 = {**env, "KMP_DUPLICATE_LIB_OK": "TRUE"}  # OMP 冲突避让
                     r2 = _sp.run(["/opt/anaconda3/bin/python3", str(Path(__file__).parent / "asr_narration.py")],
-                               capture_output=True, text=True, env=env, timeout=300)
+                               capture_output=True, text=True, env=env_a2, timeout=300)
                     results["steps"].append({"step": "asr_narration", "ok": r2.returncode == 0, "output": r2.stdout[-200:]})
 
                     # A3: 匹配切分
                     if r2.returncode == 0:
                         r3 = _sp.run(["/opt/anaconda3/bin/python3", str(Path(__file__).parent / "match_split.py")],
-                                   capture_output=True, text=True, env=env, timeout=60)
+                                   capture_output=True, text=True, env=env_a2, timeout=60)
                         results["steps"].append({"step": "match_split", "ok": r3.returncode == 0, "output": r3.stdout[-200:]})
 
             self._json(results)
@@ -1663,9 +1753,9 @@ class Handler(SimpleHTTPRequestHandler):
             '输出: {"lines":[{"original":"爸，你是想跟大哥去美国吧？","variants":["你想跟大哥去美国","他跟大哥去美国","他想跟你去美国","你要去美国找大哥","跟大哥去美国是吧"]}]}'
         )
 
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        api_key = os.environ.get("MOONSHOT_API_KEY", "")
         payload = json.dumps({
-            "model": "deepseek-chat",
+            "model": "moonshot-v1-8k",
             "messages": [
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": f"高亮台词：{dialogue}\n\n输出JSON："}
@@ -1676,7 +1766,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         try:
             req = _ur.Request(
-                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.moonshot.cn/v1/chat/completions",
                 data=payload,
                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
             )
@@ -1753,9 +1843,11 @@ class Handler(SimpleHTTPRequestHandler):
                 if query.startswith(prefix):
                     query = query[len(prefix):]
                     break
-            results = self._asr_first_search(query, limit=5)
-            reply = self._format_chat_reply(results, query)
-            self._json({"reply": reply, "results": results, "action": "search"})
+            results = self._asr_first_search(query, limit=5, eps=eps)
+            # 台词结果注入角色名：cover 标题人物 > highlight_text 集数+VLM 推断
+            enriched = self._inject_speaker(query, results, context)
+            reply = self._format_chat_reply(enriched or results, query)
+            self._json({"reply": reply, "results": enriched or results, "action": "search"})
             return
 
         # Step 1: DeepSeek 意图理解 + query 精炼（语义搜索路径）
@@ -1837,9 +1929,9 @@ class Handler(SimpleHTTPRequestHandler):
             api_messages.append({"role": role, "content": m.get("content", "")[:500]})
         api_messages.append({"role": "user", "content": "输出JSON："})
 
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        api_key = os.environ.get("MOONSHOT_API_KEY", "")
         payload = json.dumps({
-            "model": "deepseek-chat",
+            "model": "moonshot-v1-8k",
             "messages": api_messages,
             "temperature": 0.7,
             "max_tokens": 400,
@@ -1847,7 +1939,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         try:
             req = _ur.Request(
-                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.moonshot.cn/v1/chat/completions",
                 data=payload,
                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
             )
@@ -1868,11 +1960,23 @@ class Handler(SimpleHTTPRequestHandler):
             return f'没找到匹配的镜头，换个角度描述试试？'
         return f'找到 {len(results)} 个匹配镜头，看看哪个合适~'
 
-    def _generate_storyboard(self, narration, num=3):
-        '''将解说词转写为1-3个视觉搜索描述，每个从不同角度匹配原剧镜头'''
+    def _generate_storyboard(self, narration, num=3, segment_context=None, cover=""):
+        '''两步生成分镜推荐：1) 搜索真实VLM镜头 2) LLM基于搜索结果生成推荐'''
         if not narration or not narration.strip():
             return []
         import urllib.request as _ur
+
+        # 构建段落上下文
+        seg_ctx_str = ""
+        cover_info = ""
+        if cover and cover.strip():
+            cover_info = f"封面标题/主角线索：{cover[:200]}\n\n"
+        if segment_context:
+            sents = segment_context.get("sentences", [])
+            if sents:
+                seg_ctx_str = "该句所在段落的所有解说词：\n" + "\n".join(
+                    f"句{i}：{s}" for i, s in enumerate(sents)
+                ) + "\n\n"
 
         # 加载角色信息
         char_ctx = ""
@@ -1890,37 +1994,52 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception:
             pass
 
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-        api_url = os.environ.get("DEEPSEEK_API_URL", "https://api.deepseek.com/v1")
+        api_key = os.environ.get("MOONSHOT_API_KEY", "")
+        api_url = os.environ.get("MOONSHOT_API_URL", "https://api.moonshot.cn/v1")
+
+        # Step 1: BGE 语义搜索真实存在的 VLM 镜头
+        real_vlm_results = self._semantic_search(narration, limit=8)
+        # 提取前8个结果的 VLM 描述作为 LLM 参考
+        vlm_samples = ""
+        if real_vlm_results:
+            samples = real_vlm_results[:8]
+            vlm_samples = "以下是搜索到的真实VLM镜头描述（必须从这些镜头中挑选和引用）：\n"
+            for i, r in enumerate(samples):
+                ep = r.get("ep", "?")
+                t = r.get("start", 0)
+                desc = r.get("description", r.get("asr", ""))[:120]
+                vlm_samples += f"[{i+1}] EP{ep} {t:.0f}s — {desc}\n"
+            vlm_samples += "\n"
+
+        # Step 2: LLM 把真实 VLM 结果翻译成分镜推荐
         payload = json.dumps({
-            "model": "deepseek-chat",
+            "model": "moonshot-v1-8k",
             "messages": [{
                 "role": "system",
                 "content": (
-                    "你是视频搜索查询专家。你的任务是：把一段解说词转写为1-3个视觉搜索描述，"
-                    "每个描述将用BGE语义搜索在原剧VLM素材库中检索匹配的镜头画面。\n\n"
-                    "输出格式：每行一个，格式为「镜头N：视觉描述」\n\n"
+                    "你是视频剪辑分镜推荐助手。你的任务是根据一句解说词，从下方提供的"
+                    "真实VLM镜头描述中挑选最匹配的几个，改写为自然的分镜推荐语。\n\n"
+                    "输出格式：每行一个，格式为「镜头N：推荐描述」\n\n"
                     "核心规则：\n"
-                    "1. 【浓缩而非拆散】一句解说词通常只对应1-3个镜头。"
-                    "每个镜头描述覆盖解说词的一个主要视觉角度，不要把一句话拆得支离破碎。\n"
-                    "2. 【视觉风格翻译】把叙事文字翻译成VLM视觉描述风格的语言：用具体的人物动作、"
-                    "面部表情、空间关系、光线氛围来描述，而不是复述剧情。\n"
-                    "3. 【50-100字】每个描述要有足够细节让BGE做精准语义匹配，但不能冗长稀释信号。\n"
-                    "4. 【用真名不用代词】使用角色真名（蒙总、蒙太、明玉、沈浩），禁止「他」「她」。\n"
-                    "5. 【不同角度互补】如果有多个描述，每个聚焦不同人物或不同时刻，互补而非重复。\n"
-                    "6. 【只转写不编造】基于解说词中真实发生的事来写，不要添加解说词没提到的画面。\n\n"
+                    "1. 【必须基于真实镜头】只能从下面提供的VLM镜头中挑选，不允许编造"
+                    "不存在的内容。镜头描述中没出现的人物/动作/场景，绝对不能出现在推荐里。\n"
+                    "2. 【1-3个镜头】一句解说词通常对应1-3个镜头，不要超过。\n"
+                    "3. 【自然口语化】用剪辑师的语气改写VLM描述，保留关键视觉元素"
+                    "（人物、表情、场景），但把生硬的「第一帧/第二帧」结构转换为连贯描述。\n"
+                    "4. 【30-60字】推荐语简短有力，聚焦核心画面。\n"
+                    "5. 【与解说词匹配】推荐的镜头画面必须能配合这句解说词使用。\n"
+                    "6. 【人物准确】如果封面/上下文提到了角色名，优先推荐该角色的镜头。\n\n"
                     "参考示例：\n"
-                    "解说词：「蒙总决定清理亲戚，遭到蒙太激烈反对，蒙太以离婚相要挟」\n"
-                    "输出：\n"
-                    "「镜头1：蒙总和蒙太在办公室激烈对峙，蒙太情绪激动手指蒙总，蒙总面色凝重眉头紧锁，气氛剑拔弩张」\n"
-                    "「镜头2：蒙总独自坐在昏暗办公室，神情疲惫无奈，低头沉思，面对离婚威胁内心挣扎」"
+                    "VLM镜头：EP1 30s — 苏明成在苏家老宅内伸手取书，苏大强坐小凳低头翻书\n"
+                    "解说词：「他不光窝里横，在外边他也照样狂」\n"
+                    "输出：「镜头1：苏明成在老宅翻找东西，面色不善，动作粗鲁」"
                 )
             }, {
                 "role": "user",
-                "content": f"{char_ctx}解说词：{narration}\n\n请转写为视觉搜索描述："
+                "content": f"{cover_info}{char_ctx}{seg_ctx_str}{vlm_samples}解说词：{narration}\n\n请基于真实VLM镜头生成分镜推荐："
             }],
-            "temperature": 0.6,
-            "max_tokens": 1500,
+            "temperature": 0.5,
+            "max_tokens": 1200,
         }).encode("utf-8")
         req = _ur.Request(
             f"{api_url}/chat/completions",
@@ -1931,7 +2050,9 @@ class Handler(SimpleHTTPRequestHandler):
             with _ur.urlopen(req, timeout=30) as resp:
                 result = json.loads(resp.read())
             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            lines = [l.strip() for l in text.strip().split("\n") if l.strip() and len(l.strip()) > 15]
+            # 只保留「镜头N：...」格式的推荐行，过滤 LLM 开场白/解释性语句
+            lines = [l.strip() for l in text.strip().split("\n")
+                     if l.strip() and len(l.strip()) > 15 and re.match(r'^镜头\d+[：:]', l.strip())]
             return lines[:num]
         except Exception as e:
             print(f"[storyboard_suggest] LLM call failed: {e}")
@@ -1947,13 +2068,13 @@ class Handler(SimpleHTTPRequestHandler):
             self._json({"ok": False, "error": "请提供转写文本"}, 400)
             return
 
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        api_key = os.environ.get("MOONSHOT_API_KEY", "")
         if not api_key:
-            self._json({"ok": False, "error": "未配置 DEEPSEEK_API_KEY"}, 500)
+            self._json({"ok": False, "error": "未配置 MOONSHOT_API_KEY"}, 500)
             return
 
         payload = json.dumps({
-            "model": "deepseek-chat",
+            "model": "moonshot-v1-8k",
             "messages": [{
                 "role": "system",
                 "content": (
@@ -1983,7 +2104,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         try:
             req = _ur.Request(
-                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.moonshot.cn/v1/chat/completions",
                 data=payload,
                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
             )
@@ -2032,9 +2153,9 @@ class Handler(SimpleHTTPRequestHandler):
         # 构建大纲描述
         outline_desc = "\n".join(f"{i+1}. [{o.get('narrative_role','?')}] {o.get('label','')}" for i, o in enumerate(outline))
 
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        api_key = os.environ.get("MOONSHOT_API_KEY", "")
         payload = json.dumps({
-            "model": "deepseek-chat",
+            "model": "moonshot-v1-8k",
             "messages": [{
                 "role": "system",
                 "content": (
@@ -2071,7 +2192,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         try:
             req = _ur.Request(
-                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.moonshot.cn/v1/chat/completions",
                 data=payload,
                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
             )
@@ -2096,9 +2217,9 @@ class Handler(SimpleHTTPRequestHandler):
             self._json({"ok": False, "error": "请提供视频主题"}, 400)
             return
 
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        api_key = os.environ.get("MOONSHOT_API_KEY", "")
         if not api_key:
-            self._json({"ok": False, "error": "未配置 DEEPSEEK_API_KEY"}, 500)
+            self._json({"ok": False, "error": "未配置 MOONSHOT_API_KEY"}, 500)
             return
 
         # 加载分类数据
@@ -2114,7 +2235,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         def _call_llm(system_prompt, user_content, temp=0.4, label="?"):
             payload = json.dumps({
-                "model": "deepseek-chat",
+                "model": "moonshot-v1-8k",
                 "messages": [{"role": "system", "content": system_prompt},
                              {"role": "user", "content": user_content}],
                 "temperature": temp, "max_tokens": 3000,
@@ -2122,7 +2243,7 @@ class Handler(SimpleHTTPRequestHandler):
             for attempt in range(3):
                 try:
                     req = _ur.Request(
-                        "https://api.deepseek.com/v1/chat/completions",
+                        "https://api.moonshot.cn/v1/chat/completions",
                         data=payload,
                         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
                     )

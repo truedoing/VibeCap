@@ -26,9 +26,9 @@ def classify(project_name, progress_callback=None):
     output_dir = project_dir / "sources_clean"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    api_key = os.environ.get("MOONSHOT_API_KEY", "")
     if not api_key:
-        print("❌ 未配置 DEEPSEEK_API_KEY")
+        print("❌ 未配置 MOONSHOT_API_KEY")
         return None
 
     all_results = {}
@@ -46,7 +46,7 @@ def classify(project_name, progress_callback=None):
             lines = '\n'.join(f"[{s.get('start', s.get('start_sec', 0)):.1f}s] {s['text']}" for s in chunk)
 
             payload = json.dumps({
-                "model": "deepseek-chat",
+                "model": "moonshot-v1-8k",
                 "messages": [{
                     "role": "system",
                     "content": (
@@ -68,7 +68,7 @@ def classify(project_name, progress_callback=None):
             for attempt in range(3):
                 try:
                     req = urllib.request.Request(
-                        "https://api.deepseek.com/v1/chat/completions",
+                        "https://api.moonshot.cn/v1/chat/completions",
                         data=payload,
                         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
                     )

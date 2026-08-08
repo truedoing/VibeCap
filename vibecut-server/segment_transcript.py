@@ -25,7 +25,7 @@ def segment(project_name, progress_callback=None):
     output_dir = project_dir / "sources_clean"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    api_key = os.environ.get("MOONSHOT_API_KEY", "")
 
     all_groups = {}
     total = len(list(output_dir.glob("classified_*.json")))
@@ -48,7 +48,7 @@ def segment(project_name, progress_callback=None):
         print(f"  📝 {source_name}: {len(content)} content句, 采样{len(sampled)}句")
 
         payload = json.dumps({
-            "model": "deepseek-chat",
+            "model": "moonshot-v1-8k",
             "messages": [{
                 "role": "system",
                 "content": (
@@ -65,7 +65,7 @@ def segment(project_name, progress_callback=None):
 
         try:
             req = urllib.request.Request(
-                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.moonshot.cn/v1/chat/completions",
                 data=payload,
                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
             )

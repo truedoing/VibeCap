@@ -231,15 +231,17 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
     } catch (e) { console.error('[prg] auto-build error:', e) }
   }, [isInterview, didInit.current, segments, proxyManifest, narrationMeta, project?.vibe_timeline])
 
-  // proxyManifest 就绪 → 给空轨道加占位 clip（确保轨道显示）
+  // proxyManifest 就绪 → 给必需轨道加占位 clip（确保轨道显示，跳过补充镜头/旁白）
   const didPlaceholders = useRef(false)
   useEffect(() => {
     if (!didInit.current || !proxyManifest?.proxies?.length || didPlaceholders.current) return
     try {
       const phSrc = `/proxies/${proxyManifest.proxies[0].file}`
       const prj = engine.getProject()
+      const skipNames = new Set(['补充镜头', '旁白 TTS'])
       for (const track of prj.tracks) {
         if (track.name?.startsWith('源')) continue
+        if (skipNames.has(track.name)) continue
         const clips = prj.clips[track.id] || []
         if (clips.length === 0) {
           engine.addClip({ type: track.kind, trackId: track.id, name: '·', src: phSrc, startFrame: 0, durationFrames: 1, sourceStartFrame: 0, sourceDurationFrames: 1, volume: 0, opacity: 0.001 })
@@ -281,11 +283,13 @@ export default function VibeEdit() {
   const prgTLRef = useRef(null)
   const demuxRef = useRef(null)
 
-  const [scriptW, setScriptW] = useState(300)
-  const [aiW, setAiW] = useState(400)
+  const [scriptW, setScriptW] = useState(380)
+  const [aiW, setAiW] = useState(460)
   const [scriptCollapsed, setScriptCollapsed] = useState(false)
   const [aiCollapsed, setAiCollapsed] = useState(false)
   const [bottomPct, setTimelinePct] = useState(28)
+  const [cover, setCover] = useState('')  // 封面描述文案（不需要选镜头）
+
   const [segments, setSegments] = useState([])
   const [curSid, setCurSid] = useState(null)
   const [curSeq, setCurSeq] = useState('0')
@@ -309,7 +313,9 @@ export default function VibeEdit() {
     if (!taskId) return
     fetch(`/segments.json?task=${taskId}`).then(r => r.json()).then(d => {
       setSegments(d.segments || [])
+      setCover(d.cover || '')
       window.__vibe_segments = d.segments || []  // v0.11: 供 ProgramLoader 检测 interview mode
+      window.__vibe_cover = d.cover || ''
       if (d.segments?.length && curSid == null) setCurSid(d.segments[0].seg_id)
     }).catch(() => {})
   }, [taskId])
@@ -368,7 +374,6 @@ export default function VibeEdit() {
 
     const sf = inFrames ?? 0; const of = outFrames ?? (sf + secondsToFrames(5, FPS))
     const df = of - sf
-    const insertFrame = usePlaybackStore.getState().currentFrame || 0
     const prj = engine.getProject()
     // v0.13: 支持主镜头/补充镜头双轨
     const isSupp = trackType === 'supp'
@@ -378,15 +383,22 @@ export default function VibeEdit() {
     const prgAud = audTrackName ? prj.tracks.find(t => t.name === audTrackName) : null
     if (!prgVid) return
 
+    // 计算插入位置：轨道末尾（跟在已有 clip 之后），空轨则为 0
+    const existingClips = prj.clips[prgVid.id] || []
+    const insertFrame = existingClips.reduce((max, c) => Math.max(max, (c.startFrame || 0) + (c.durationFrames || 0)), 0)
+
     engine.batch(() => {
       // 移除占位 clip
       for (const [tid, tClips] of Object.entries(prj.clips)) {
         for (const c of tClips) { if (c.name === '·') engine.removeClip(c.id, tid) }
       }
       const v = engine.addClip({ type: 'video', trackId: prgVid.id, name: `S${curSid ?? '?'} EP${ep}${isSupp ? ' 补' : ''}`, src: proxy, startFrame: insertFrame, durationFrames: df, sourceStartFrame: sf, sourceDurationFrames: df, volume: isSupp ? 0 : 1, opacity: 1 })
+      // Elah addClip 会忽略 sourceStartFrame/sourceDurationFrames，需 updateClip 回补
+      engine.updateClip(v.id, prgVid.id, { sourceStartFrame: sf, sourceDurationFrames: df })
       let a = null
       if (prgAud) {
         a = engine.addClip({ type: 'audio', trackId: prgAud.id, name: `S${curSid ?? '?'} EP${ep}`, src: proxy, startFrame: insertFrame, durationFrames: df, sourceStartFrame: sf, sourceDurationFrames: df, volume: 1 })
+        engine.updateClip(a.id, prgAud.id, { sourceStartFrame: sf, sourceDurationFrames: df })
         linkClipPair(v.id, a.id)
       }
     }, 'src→prg')
@@ -412,7 +424,7 @@ export default function VibeEdit() {
     document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up)
   }
 
-  const chatCtx = { sid: curSid, seq: curSeq, narration: curNarration, taskId }
+  const chatCtx = { sid: curSid, seq: curSeq, narration: curNarration, taskId, segments, cover }
   const proxyEps = proxyManifest?.proxies?.map(p => p.ep)?.join(",") || ""
   const leftW = scriptCollapsed ? 0 : scriptW
   const rightW = aiCollapsed ? 0 : aiW
@@ -435,8 +447,8 @@ export default function VibeEdit() {
                       <span className="text-xs font-medium text-foreground">脚本段</span>
                       <button onClick={() => setScriptCollapsed(true)} className="text-muted-foreground hover:text-foreground shrink-0">◀</button>
                     </div>
-                    <ScriptPanel segments={segments} curSid={curSid} curSeq={curSeq} onPickSentence={handleSelectSegment} picks={project.picks} collapsed={false} />
-                    <StoryboardPanel suggestions={storySuggestions} curSid={curSid} curSeq={curSeq} onSearch={(q) => { if (window.__sourceSearchQuery) window.__sourceSearchQuery(q) }} />
+                    <ScriptPanel segments={segments} curSid={curSid} curSeq={curSeq} onPickSentence={handleSelectSegment} picks={project.picks} collapsed={false} cover={cover} />
+                    <StoryboardPanel suggestions={storySuggestions} curSid={curSid} curSeq={curSeq} onSearch={(q) => { if (window.__sourceSetInput) window.__sourceSetInput(q) }} />
                   </div>
                 )}
               </div>
@@ -476,7 +488,7 @@ export default function VibeEdit() {
               onMouseLeave={e => e.currentTarget.style.background = T.border} />
             <div style={{ height: `${bottomPct}%`, flexShrink: 0, display: 'flex', flexDirection: 'column', borderTop: `1px solid ${T.border}` }}>
               {proxyManifest && (
-                <SourceInspector proxyManifest={proxyManifest} onAddToProgram={handleAddToProgram} timelineFrame={prgCurrentFrame} />
+                <SourceInspector proxyManifest={proxyManifest} onAddToProgram={handleAddToProgram} timelineFrame={prgCurrentFrame} taskId={taskId} />
               )}
             </div>
           </div>

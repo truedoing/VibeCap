@@ -114,12 +114,7 @@ const TimelineControls = memo(function TimelineControls({ timelineRef, showRebui
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         {showTrackButtons && (
           <>
-            <button type="button" className="elah-toolbar-btn" style={btnDisabled(false)} onClick={() => {
-              const track = { id: generateId(), name: '视频轨', kind: 'video', order: engine.getProject().tracks.length, height: 44, locked: false, disabled: false, muted: false, solo: false }
-              engine.getProject().tracks.push(track)
-              engine.getProject().clips[track.id] = []
-              engine.loadProject(engine.getProject())
-            }} title="添加视频轨道">＋ 视频轨</button>
+            <button type="button" className="elah-toolbar-btn" style={btnDisabled(false)} onClick={() => engine.addTrack('video', { name: '视频轨' })} title="添加视频轨道">＋ 视频轨</button>
             <button type="button" className="elah-toolbar-btn" style={btnDisabled(false)} onClick={() => engine.addTrack('audio', { name: '音频轨' })} title="添加音频轨道">＋ 音频轨</button>
             <div style={{ width: 1, height: 18, background: theme.border, flexShrink: 0, margin: '0 4px' }} />
           </>

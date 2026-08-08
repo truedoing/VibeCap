@@ -12,7 +12,7 @@ import json, os, time, urllib.request, argparse, re
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-API_URL = "https://api.deepseek.com/v1/chat/completions"
+API_URL = "https://api.moonshot.cn/v1/chat/completions"
 
 def load_env():
     env_file = Path(__file__).resolve().parent / ".env"
@@ -27,9 +27,9 @@ def load_env():
                         os.environ[k] = v
 
 def call_llm(system, user, temp=0.3, max_tokens=3000):
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    api_key = os.environ.get("MOONSHOT_API_KEY", "")
     payload = json.dumps({
-        "model": "deepseek-chat",
+        "model": "moonshot-v1-8k",
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "temperature": temp, "max_tokens": max_tokens,

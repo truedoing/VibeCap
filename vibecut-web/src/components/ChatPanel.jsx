@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Sparkles } from 'lucide-react'
 import { cn } from '../lib/utils'
 
@@ -28,14 +28,14 @@ function ResultCard({ result, selected, onClick }) {
           : 'border-border/60 bg-white/5 hover:border-purple/20 hover:bg-purple/[0.03]'
       )}
     >
-      <div className="flex items-center gap-2 text-[10px] text-muted-foreground mb-1">
+      <div className="flex items-center gap-2 text-[11px] text-muted-foreground mb-1">
         <span className="px-1.5 py-0.5 rounded-md bg-purple/10 text-purple font-medium">EP{result.ep}</span>
         <span>{result.start?.toFixed(0)}s – {result.end?.toFixed(0)}s</span>
-        {hasAsr && <span className="text-[10px] text-warning/70" title="ASR台词匹配">💬 台词</span>}
-        <span className="ml-auto text-[10px] text-purple/70 font-medium">{result.score?.toFixed(1)} 分</span>
+        {hasAsr && <span className="text-[11px] text-warning/70" title="ASR台词匹配">💬 台词</span>}
+        <span className="ml-auto text-[11px] text-purple/70 font-medium">{result.score?.toFixed(1)} 分</span>
       </div>
       <p className={cn(
-        'text-xs leading-relaxed line-clamp-2',
+        'text-sm leading-relaxed line-clamp-2',
         hasAsr ? 'text-warning/90 italic' : 'text-foreground/80'
       )}>
         <SafeHtml text={(hasAsr ? result.asr : result.description)?.substring(0, 150)} />
@@ -57,6 +57,91 @@ function TypingDots() {
     </div>
   )
 }
+// ═══════════════════════════
+// 范围滑杆组件
+// ═══════════════════════════
+function RangeSlider({ min, max, value, onChange, compact }) {
+  const trackRef = useRef(null)
+  const [dragging, setDragging] = useState(null)  // 'min' | 'max' | null
+
+  const pctFrom = ((value[0] - min) / (max - min)) * 100
+  const pctTo = ((value[1] - min) / (max - min)) * 100
+
+  const handleDown = useCallback((which, e) => {
+    e.preventDefault(); e.stopPropagation()
+    setDragging(which)
+    const rect = trackRef.current.getBoundingClientRect()
+    const mm = (ev) => {
+      const x = (ev.clientX - rect.left) / rect.width
+      const ep = Math.round(min + Math.max(0, Math.min(1, x)) * (max - min))
+      if (which === 'min') {
+        const clamped = Math.min(ep, value[1] - 1)
+        onChange([Math.max(min, clamped), value[1]])
+      } else {
+        const clamped = Math.max(ep, value[0] + 1)
+        onChange([value[0], Math.min(max, clamped)])
+      }
+    }
+    const up = () => { setDragging(null); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', up) }
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', up)
+  }, [min, max, value, onChange])
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-1.5" style={{ userSelect: 'none' }}>
+        <span className="text-[10px] text-muted-foreground/60 shrink-0" style={{ fontFamily: 'monospace' }}>EP{value[0]}-{value[1]}</span>
+        <div ref={trackRef} className="flex-1 h-4 relative flex items-center">
+          <div className="absolute left-0 right-0 h-1 rounded-full bg-white/8" />
+          <div className="absolute h-1 rounded-full bg-purple/30"
+            style={{ left: `${pctFrom}%`, right: `${100 - pctTo}%` }} />
+          <div
+            onMouseDown={(e) => handleDown('min', e)}
+            className="absolute w-2.5 h-4 rounded-sm bg-purple/50 hover:bg-purple cursor-ew-resize"
+            style={{ left: `${pctFrom}%`, transform: 'translateX(-50%)', zIndex: 2 }} />
+          <div
+            onMouseDown={(e) => handleDown('max', e)}
+            className="absolute w-2.5 h-4 rounded-sm bg-purple/50 hover:bg-purple cursor-ew-resize"
+            style={{ left: `${pctTo}%`, transform: 'translateX(-50%)', zIndex: 2 }} />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2" style={{ userSelect: 'none' }}>
+      <span className="text-[10px] text-muted-foreground shrink-0 w-6 text-right">EP</span>
+      {/* Track */}
+      <div ref={trackRef} className="flex-1 h-5 relative flex items-center" style={{ margin: '0 6px' }}>
+        {/* 背景条 */}
+        <div className="absolute left-0 right-0 h-1 rounded-full bg-white/8" />
+        {/* 选中范围 */}
+        <div className="absolute h-1 rounded-full bg-purple/40"
+          style={{ left: `${pctFrom}%`, right: `${100 - pctTo}%` }} />
+        {/* Min 拖拽点 */}
+        <div
+          onMouseDown={(e) => handleDown('min', e)}
+          className="absolute w-3 h-5 rounded-sm bg-purple/60 hover:bg-purple cursor-ew-resize flex items-center justify-center"
+          style={{ left: `${pctFrom}%`, transform: 'translateX(-50%)', zIndex: 2 }}
+        >
+          <div className="w-0.5 h-3 rounded-full bg-white/30" />
+        </div>
+        {/* Max 拖拽点 */}
+        <div
+          onMouseDown={(e) => handleDown('max', e)}
+          className="absolute w-3 h-5 rounded-sm bg-purple/60 hover:bg-purple cursor-ew-resize flex items-center justify-center"
+          style={{ left: `${pctTo}%`, transform: 'translateX(-50%)', zIndex: 2 }}
+        >
+          <div className="w-0.5 h-3 rounded-full bg-white/30" />
+        </div>
+      </div>
+      <span className="text-[10px] text-muted-foreground shrink-0 w-4" style={{ fontSize: 11, fontFamily: 'monospace' }}>{max}</span>
+      {/* 当前值 */}
+      <span className="text-[10px] text-purple/80 shrink-0 ml-1" style={{ fontFamily: 'monospace' }}>
+        {value[0]}-{value[1]}
+      </span>
+    </div>
+  )
+}
 
 export default function ChatPanel({ context, onPreview, onPick, onSearch, onSuggestions, eps, isInterview }) {
   const [messages, setMessages] = useState([])
@@ -69,11 +154,26 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
   const inputRef = useRef(null)
   const prevSid = useRef(null)
 
+  const allEps = eps ? eps.split(',').map(Number).filter(Boolean).sort((a,b) => a-b) : []
+  const epMin = allEps.length > 0 ? allEps[0] : 1
+  const epMax = allEps.length > 0 ? allEps[allEps.length - 1] : 46
+  const [epRange, setEpRange] = useState([epMin, epMax])  // [start, end]
+  const [dragging, setDragging] = useState(null)  // 'min' | 'max' | null
+
+  // 重置范围当 eps 变化时
+  useEffect(() => { setEpRange([epMin, epMax]) }, [eps])
+
+  // 构建传给后端的 eps 字符串
+  const epsParam = (epRange[0] === epMin && epRange[1] === epMax)
+    ? eps  // 全范围 → 传原始 eps（不限制）
+    : Array.from({length: epRange[1] - epRange[0] + 1}, (_, i) => epRange[0] + i).join(',')
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-    window.__sourceSearchQuery = (q) => { setInput(q); send() }
-    return () => { delete window.__sourceSearchQuery }
-  }, [messages, loading])
+    window.__sourceSearchQuery = (q) => { send(q) }
+    window.__sourceSetInput = (q) => { setInput(q) }
+    return () => { delete window.__sourceSearchQuery; delete window.__sourceSetInput }
+  })
 
   // 点击句子时：台词 → ASR优先搜索，解说词 → AI分镜推荐
   useEffect(() => {
@@ -85,43 +185,47 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
     setSelectedIdx(null)
 
     if (context.seq === 'D') {
-      // ── 台词：拆解 + ASR 匹配原剧对白 ──
+      // ── 台词：直接 ASR 搜索，不发分镜建议 ──
       setLoading(true)
-      fetch('/dialogue_match', {
+      const strategy = 'asr_first'
+      // 提取当前 segment 的 highlight_text 中的集数信息
+      const seg = (context.segments || []).find(s => s.seg_id === context.sid)
+      const ctx = { ...context, strategy, cover: context.cover, highlight_text: seg?.highlight_text || '' }
+      const userMsg = { role: 'user', content: context.narration }
+      fetch('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dialogue: context.narration })
-      }).then(r => r.json()).then(d => {
-        const lines = d.lines || []
-        if (lines.length > 0) {
-          const suggestionItems = lines.flatMap(l => {
-            const best = l.matches?.[0]
-            const confident = l.confident !== false
-            return [{
-              display: confident && best
-                ? `✅「${l.normalized}」→ EP${best.ep} 原台词`
-                : `🔍「${l.normalized}」→ 未确认原台词，语义搜索`,
-              query: l.normalized,
-              confident
-            }]
-          })
-          setMessages([{
-            role: 'ai',
-            content: '这段台词拆解为以下原剧对白，点击搜索 ~',
-            suggestionItems: suggestionItems
-          }])
-        } else {
-          setMessages([{ role: 'ai', content: '没有匹配到原剧台词，换个说法试试？' }])
+        body: JSON.stringify({ messages: [userMsg], context: ctx, eps: epsParam })
+      }).then(r => r.json()).then(data => {
+        setSuggestions(null)
+        if (onSuggestions) onSuggestions(null)
+        const aiMsg = {
+          role: 'ai',
+          content: data.reply || '没找到匹配的镜头 ~',
+          results: data.results || [],
+          action: data.action
         }
+        setMessages([userMsg, aiMsg])
+        if (data.results?.length > 0 && onSearch) onSearch(data.results)
       }).catch(() => {
         setMessages([{ role: 'ai', content: '台词匹配出错，请重试' }])
       }).finally(() => setLoading(false))
     } else {
       // ── 解说词：AI 分镜推荐 → 自动搜索第一个建议 ──
+      // 找到当前 segment 的全部解说词，提供给后端推断人物语境
+      const seg = (context.segments || []).find(s => s.seg_id === context.sid)
+      const segSentences = (seg?.narration_text || '').split(/[。！？]/).filter(s => s.trim())
       fetch(`/storyboard_suggest?task=${context.taskId || ''}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ narration: context.narration })
+        body: JSON.stringify({
+          narration: context.narration,
+          segment_context: {
+            seg_id: context.sid,
+            sentences: segSentences,
+          },
+          cover: context.cover || '',
+        })
       }).then(r => r.json()).then(d => {
         const list = (d.suggestions || []).map(s => s.replace(/^镜头\d+[：:]\s*/, ''))
         if (list.length > 0) {
@@ -133,8 +237,8 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
     }
   }, [context.sid, context.seq, context.narration, onSuggestions])
 
-  const send = async () => {
-    const text = input.trim()
+  const send = async (directText) => {
+    const text = (directText ?? input).trim()
     if (!text || loading) return
 
     // 台词上下文 → ASR 优先策略
@@ -151,7 +255,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
       const resp = await fetch(`/chat?task=${ctx.taskId || ''}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages, context: ctx, eps })
+        body: JSON.stringify({ messages: newMessages, context: ctx, eps: epsParam })
       })
       const data = await resp.json()
 
@@ -184,8 +288,14 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
           <p className="text-xs font-semibold text-foreground">小 V</p>
           <p className="text-[10px] text-muted-foreground">AI 剪辑助手</p>
         </div>
+        {/* 集数范围滑杆 — 在 header 内 */}
+        {allEps.length > 1 && (
+          <div className="flex-1 mx-2" style={{ minWidth: 60 }}>
+            <RangeSlider min={epMin} max={epMax} value={epRange} onChange={setEpRange} compact />
+          </div>
+        )}
         {context.sid != null && (
-          <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+          <span className="text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary shrink-0">
             S{context.sid}-{context.seq}
           </span>
         )}
@@ -200,7 +310,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
               <Sparkles size={28} className="text-purple" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-foreground">你好，我是小 V</p>
+              <p className="text-base font-semibold text-foreground">你好，我是小 V</p>
               <p className="text-xs text-muted-foreground mt-1">
                 {context.sid != null
                   ? (isInterview ? '描述你想找的内容，我帮你在原视频中搜索 ~' : '描述你想找的画面，我帮你在原剧中搜索 ~')
@@ -213,7 +323,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
                 : ['苏大强在老宅翻存折', '蒙总和蒙太办公室争吵', '苏明玉冷漠表情特写']
               ).map(hint => (
                 <button key={hint} onClick={() => { setInput(hint); inputRef.current?.focus() }}
-                  className="text-[11px] px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground hover:border-purple/30 hover:text-purple transition-colors"
+                  className="text-[12px] px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground hover:border-purple/30 hover:text-purple transition-colors"
                 >{hint}</button>
               ))}
             </div>
@@ -240,7 +350,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
               {/* Text */}
               {msg.content && (
                 <p className={cn(
-                  'text-xs leading-relaxed px-3 py-2 rounded-2xl inline-block max-w-[90%]',
+                  'text-sm leading-relaxed px-3 py-2 rounded-2xl inline-block max-w-[90%]',
                   msg.role === 'user'
                     ? 'bg-primary text-primary-foreground rounded-tr-sm'
                     : 'bg-card border border-border/50 text-foreground rounded-tl-sm'
@@ -267,7 +377,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
                         try {
                           const resp = await fetch('/chat', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ messages: newMsgs, context, eps })
+                            body: JSON.stringify({ messages: newMsgs, context, eps: epsParam })
                           })
                           const data = await resp.json()
                           setMessages([...newMsgs, {
@@ -292,7 +402,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
                         {isDialogue ? '💬' : '🎬'}
                       </span>
                       <SafeHtml text={display} />
-                      <span className="text-[10px] text-muted-foreground/0 group-hover:text-purple/50 transition-colors ml-1 shrink-0">搜索 →</span>
+                      <span className="text-[11px] text-muted-foreground/0 group-hover:text-purple/50 transition-colors ml-1 shrink-0">搜索 →</span>
                     </button>
                     )
                   })}
@@ -310,7 +420,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
                         <button
                           onClick={() => setEpFilter(null)}
                           className={cn(
-                            'text-[10px] px-2 py-0.5 rounded-full border transition-colors',
+                            'text-[11px] px-2 py-0.5 rounded-full border transition-colors',
                             epFilter === null ? 'bg-purple/15 border-purple/30 text-purple' : 'border-border text-muted-foreground hover:bg-accent'
                           )}
                         >全部 ({msg.results.length})</button>
@@ -320,7 +430,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
                             <button key={ep}
                               onClick={() => setEpFilter(epFilter === ep ? null : ep)}
                               className={cn(
-                                'text-[10px] px-2 py-0.5 rounded-full border transition-colors',
+                                'text-[11px] px-2 py-0.5 rounded-full border transition-colors',
                                 epFilter === ep ? 'bg-purple/15 border-purple/30 text-purple' : 'border-border text-muted-foreground hover:bg-accent'
                               )}
                             >EP{ep} ({count})</button>
@@ -367,7 +477,7 @@ export default function ChatPanel({ context, onPreview, onPick, onSearch, onSugg
             className="flex-1 bg-background border border-border rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-purple/40 focus:ring-1 focus:ring-purple/20 transition-all placeholder:text-muted-foreground/50"
             disabled={loading}
           />
-          <button onClick={send} disabled={!input.trim() || loading}
+          <button onClick={() => send()} disabled={!input.trim() || loading}
             className="w-10 h-10 rounded-xl bg-purple text-white flex items-center justify-center disabled:opacity-30 transition-all hover:bg-purple/90 active:scale-95">
             <Send size={16} />
           </button>

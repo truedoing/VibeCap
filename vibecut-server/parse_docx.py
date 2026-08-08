@@ -39,13 +39,17 @@ def parse_episode_marker(text: str) -> dict | None:
         minute_approx = float(m.group(2))
         return {"episode": ep, "approx_minute": minute_approx, "raw": f"{ep}.{minute_approx}"}
 
-    # 也尝试匹配如 "27.5" 出现在文本最后被高亮包裹的情况
+    # S0 的 highlight 有 "41集" → episode=41, approx_minute=0
+    m = re.search(r'([\d]+)集\s*$', text)
+    if m:
+        ep = int(m.group(1))
+        return {"episode": ep, "approx_minute": 0, "raw": f"{ep}.0"}
     m2 = re.search(r'([\d]+)\.(\d+)', text)
     if m2:
         ep = int(m2.group(1))
         minute_approx = float(m2.group(2))
         # 检查是否是合理范围 (剧集 20-40, 分钟 0-60)
-        if 20 <= ep <= 40 and 0 <= minute_approx <= 60:
+        if 20 <= ep <= 46 and 0 <= minute_approx <= 60:
             return {"episode": ep, "approx_minute": minute_approx, "raw": f"{ep}.{minute_approx}"}
 
     return None
@@ -85,9 +89,21 @@ def main():
             "has_highlight": has_highlight
         })
 
-    # 第二步：配对 —— 高亮段 + 紧随其后的白色解说段
+    # 第二步：分离封面描述 —— 开头连续的无高亮段落
+    cover_lines = []
+    body_start = 0
+    for entry in entries:
+        if not entry["has_highlight"]:
+            cover_lines.append(entry["text"])
+            body_start += 1
+        else:
+            break
+
+    cover = "\n".join(cover_lines) if cover_lines else ""
+
+    # 第三步：配对 —— 高亮段 + 紧随其后的白色解说段（仅从 body_start 开始）
     segments = []
-    i = 0
+    i = body_start
     while i < len(entries):
         if entries[i]["has_highlight"]:
             highlight_text = entries[i]["text"]
@@ -100,7 +116,7 @@ def main():
                 narration_text = entries[i + 1]["text"]
                 i += 2  # 消费了两个
             else:
-                # 没有后续解说词（如 P16 后面有 P17）
+                # 没有后续解说词
                 i += 1
 
             seg = {
@@ -108,23 +124,16 @@ def main():
                 "highlight_text": cleaned_highlight,
                 "episode_marker": marker,
                 "narration_text": narration_text,
-                "mode": "A"  # 默认剧情再现，后续可手动调整
+                "mode": "A"  # 默认剧情再现
             }
             segments.append(seg)
         else:
-            # 孤立的解说词（不是紧跟着高亮的），比如最后总结段落
-            # 把它附加到上一个 segment 或者单独成段
+            # body 中间的孤立解说词 — 追加到上一段
             if segments:
-                # 追加到上一个 segment
                 segments[-1]["narration_text"] += "\n" + entries[i]["text"]
             else:
-                segments.append({
-                    "seg_id": 0,
-                    "highlight_text": "",
-                    "episode_marker": None,
-                    "narration_text": entries[i]["text"],
-                    "mode": "C"
-                })
+                # 理论上不会到这里（body 已跳过 cover 段）
+                pass
             i += 1
 
     # 第三步：标记剪辑模式
@@ -138,6 +147,7 @@ def main():
     output = {
         "source_docx": str(DOCX_PATH),
         "total_segments": len(segments),
+        "cover": cover,  # 封面描述文案（不需要选镜头）
         "segments": segments
     }
 

@@ -14,7 +14,7 @@ function tc(s) {
   return h > 0 ? `${h}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${mm}:${String(ss).padStart(2, '0')}`
 }
 
-export default function SourceInspector({ proxyManifest, onAddToProgram, timelineFrame }) {
+export default function SourceInspector({ proxyManifest, onAddToProgram, timelineFrame, taskId }) {
   const videoRef = useRef(null)
   const barRef = useRef(null)
   const tlFrameRef = useRef(timelineFrame)
@@ -33,21 +33,25 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
 
   useEffect(() => {
     window.__sourceLoadEpisode = (e, startTime = 0, endTime = 0) => {
-      let st = startTime
-      if (!startTime && tlFrameRef.current > 0) st = tlFrameRef.current / FPS
+      // endTime 有值时优先使用，不要用 tlFrameRef 覆盖
+      const hasEndTime = endTime > 0
+      let st = hasEndTime ? startTime : (startTime || (tlFrameRef.current > 0 ? tlFrameRef.current / FPS : 0))
       setEp(e); setDur(0); setMarkers([]); setPos(0)
       setSelIn(endTime > st ? st : null)
       setSelOut(endTime > st ? endTime : null)
-      setZoom(1)
-      const url = proxyUrlForEpisode(e, proxyManifest)
-      setOffset(url ? Math.max(0, st - 30) : 0)  // 非代理视频不从大偏移开始
       window.__sourceIO = endTime > st ? { in: st, out: endTime } : {}
       if (!videoRef.current) return
       const vid = videoRef.current
+      const url = proxyUrlForEpisode(e, proxyManifest)
+      const applyZoom = (totalDur) => {
+        const z = 20  // 预览整部影片 → 直接缩放到最大
+        setZoom(z)
+        setOffset(Math.max(0, st - totalDur / z / 2))
+      }
       if (url) {
         setLoading(true)
         const info = proxyInfoForEpisode(e, proxyManifest)
-        if (info) setDur(info.duration_sec)
+        if (info) { setDur(info.duration_sec); applyZoom(info.duration_sec) }
         // 强制重载（同源切换时浏览器不触发 loadeddata）
         vid.src = ''
         requestAnimationFrame(() => {
@@ -57,8 +61,12 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
           vid.addEventListener('loadeddata', onReady)
         })
       } else {
-        fetch(`/preview_video?ep=${e}&t=${st}&task=Task7029`).then(r => r.json()).then(d => {
-          if (d?.url && videoRef.current) { videoRef.current.src = d.url; setDur(d.end ? d.end - d.start : 60); setLoading(false) }
+        fetch(`/preview_video?ep=${e}&t=${st}&task=${taskId || 'Task7024'}`).then(r => r.json()).then(d => {
+          if (d?.url && videoRef.current) {
+            videoRef.current.src = d.url
+            const totalDur = d.end ? d.end - d.start : 60
+            setDur(totalDur); applyZoom(totalDur); setLoading(false)
+          }
         }).catch(() => { setLoading(false) })
       }
     }
@@ -112,11 +120,29 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
   }, [x2t])
 
   const add = () => {
-    const io = window.__sourceIO; const s = io?.in ?? 0; const o = io?.out ?? s + 10
+    const io = window.__sourceIO
+    let s, o
+    if (io?.in != null && io?.out != null && io.out > io.in) {
+      // 有明确的 I/O 标记 → 按标记插入
+      s = io.in; o = io.out
+    } else {
+      // 无标记 → 以当前预览位置为中心抓取一段 (前0.5s + 后4.5s = 5s窗口)
+      const ct = videoRef.current?.currentTime || 0
+      s = Math.max(0, ct - 0.5)
+      o = ct + 4.5
+    }
     if (ep && o > s) onAddToProgram(ep, Math.round(s * FPS), Math.round(o * FPS), 'main')
   }
   const addSupp = () => {
-    const io = window.__sourceIO; const s = io?.in ?? 0; const o = io?.out ?? s + 10
+    const io = window.__sourceIO
+    let s, o
+    if (io?.in != null && io?.out != null && io.out > io.in) {
+      s = io.in; o = io.out
+    } else {
+      const ct = videoRef.current?.currentTime || 0
+      s = Math.max(0, ct - 0.5)
+      o = ct + 4.5
+    }
     if (ep && o > s) onAddToProgram(ep, Math.round(s * FPS), Math.round(o * FPS), 'supp')
   }
 
@@ -156,7 +182,7 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
         <video id="source-video" ref={videoRef} style={{ width:'100%', height:'100%', objectFit:'contain', pointerEvents:'none' }} />
         {loading && (
           <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(0,0,0,0.6)', zIndex:10 }}>
-            <div style={{ display:'flex', alignItems:'center', gap:6, color:'#9ca3af', fontSize:11 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:6, color:'#9ca3af', fontSize:12 }}>
               <div style={{ width:16, height:16, border:'2px solid #6b7280', borderTopColor:'#22c55e', borderRadius:'50%', animation:'spin 0.6s linear infinite' }} />
               加载中...
             </div>
@@ -170,13 +196,13 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
           <div style={{ position:'absolute', top:0, left:0, right:0, height:12, display:'flex', justifyContent:'space-between', alignItems:'flex-end', pointerEvents:'none' }}>
             {Array.from({length:5}).map((_,i) => {
               const ts = viewStart + (viewEnd-viewStart)*(i/4)
-              return <span key={i} style={{ fontSize:9, color:'rgba(255,255,255,0.4)', fontFamily:'monospace', lineHeight:1, fontWeight:500 }}>{tc(ts)}</span>
+              return <span key={i} style={{ fontSize:11, color:'rgba(255,255,255,0.4)', fontFamily:'monospace', lineHeight:1, fontWeight:500 }}>{tc(ts)}</span>
             })}
           </div>
           <div ref={barRef} onMouseDown={scrub}
             style={{ position:'absolute', top:12, left:0, right:0, bottom:0, borderRadius:2, background:'rgba(255,255,255,0.05)', cursor:'crosshair' }}>
             {selIn != null && selOut != null && selOut > selIn && (
-              <div style={{ position:'absolute', top:0, bottom:0, left:`${((selIn-viewStart)/viewLen*100)}%`, width:`${((selOut-selIn)/viewLen*100)}%`, background:'rgba(34,197,94,0.15)', borderLeft:'2px solid #22c55e', borderRight:'2px solid #22c55e' }} />
+              <div style={{ position:'absolute', top:0, bottom:0, left:`${((selIn-viewStart)/viewLen*100)}%`, width:`${((selOut-selIn)/viewLen*100)}%`, background:'rgba(34,197,94,0.15)', borderLeft:'2px solid #22c55e', borderRight:'2px solid #ef4444' }} />
             )}
             {selIn != null && <div style={{ position:'absolute', top:0, bottom:0, width:2, background:'#22c55e', zIndex:6, left:`${((selIn-viewStart)/viewLen*100)}%` }} />}
             {selOut != null && <div style={{ position:'absolute', top:0, bottom:0, width:2, background:'#ef4444', zIndex:6, left:`${((selOut-viewStart)/viewLen*100)}%` }} />}
@@ -205,33 +231,33 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
         </div>
 
         {/* Row3: 25px 操作区 */}
-        <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#9ca3af', height:25, flexShrink:0 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, color:'#9ca3af', height:25, flexShrink:0 }}>
           <button onClick={() => { const v=videoRef.current; if(v){setSelIn(v.currentTime);window.__sourceIO={...window.__sourceIO,in:v.currentTime}} }}
-            style={{ minWidth:28, height:22, fontSize:13, borderRadius:3, background:'rgba(34,197,94,0.15)', color:'#22c55e', border:'none', cursor:'pointer', fontWeight:600, display:'flex', alignItems:'center', justifyContent:'center' }} title="入点 (I)">{'{'}</button>
+            style={{ minWidth:28, height:22, fontSize:14, borderRadius:3, background:'rgba(34,197,94,0.15)', color:'#22c55e', border:'none', cursor:'pointer', fontWeight:600, display:'flex', alignItems:'center', justifyContent:'center' }} title="入点 (I)">{'{'}</button>
           <button onClick={() => { const v=videoRef.current; if(v){setSelOut(v.currentTime);window.__sourceIO={...window.__sourceIO,out:v.currentTime}} }}
-            style={{ minWidth:28, height:22, fontSize:13, borderRadius:3, background:'rgba(239,68,68,0.15)', color:'#ef4444', border:'none', cursor:'pointer', fontWeight:600, display:'flex', alignItems:'center', justifyContent:'center' }} title="出点 (O)">{'}'}</button>
+            style={{ minWidth:28, height:22, fontSize:14, borderRadius:3, background:'rgba(239,68,68,0.15)', color:'#ef4444', border:'none', cursor:'pointer', fontWeight:600, display:'flex', alignItems:'center', justifyContent:'center' }} title="出点 (O)">{'}'}</button>
           <span style={{ color:'#374151', margin:'0 2px', fontSize:14, lineHeight:'22px' }}>|</span>
           <button onClick={() => { const v=videoRef.current; if(v) v.paused?v.play().catch(()=>{}):v.pause() }}
-            style={{ minWidth:28, height:22, fontSize:13, borderRadius:3, background:'rgba(255,255,255,0.12)', color:'#e5e7eb', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }} title="播放/暂停">
+            style={{ minWidth:28, height:22, fontSize:14, borderRadius:3, background:'rgba(255,255,255,0.12)', color:'#e5e7eb', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }} title="播放/暂停">
             {videoRef.current?.paused ? '▶' : '⏸'}
           </button>
           <button onClick={() => { const v=videoRef.current; if(v) v.muted=!v.muted }}
-            style={{ minWidth:28, height:22, fontSize:13, borderRadius:3, background:'rgba(255,255,255,0.06)', color:videoRef.current?.muted?'#ef4444':'#9ca3af', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }} title="静音">
+            style={{ minWidth:28, height:22, fontSize:14, borderRadius:3, background:'rgba(255,255,255,0.06)', color:videoRef.current?.muted?'#ef4444':'#9ca3af', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }} title="静音">
             🔊
           </button>
           <span style={{ color:'#374151', margin:'0 2px', fontSize:14, lineHeight:'22px' }}>|</span>
           <button onClick={add} title="插入片段到主镜头轨道"
-            style={{ padding:'0 10px', height:22, fontSize:10, borderRadius:3, background:'rgba(34,197,94,0.18)', color:'#22c55e', border:'none', cursor:'pointer', fontWeight:500 }}>
+            style={{ padding:'0 10px', height:22, fontSize:12, borderRadius:3, background:'rgba(34,197,94,0.18)', color:'#22c55e', border:'none', cursor:'pointer', fontWeight:500 }}>
             ↓ 插入clip
           </button>
           <button onClick={addSupp} title="插入片段到补充镜头轨道"
-            style={{ padding:'0 10px', height:22, fontSize:10, borderRadius:3, background:'rgba(168,85,247,0.18)', color:'#a855f7', border:'none', cursor:'pointer', fontWeight:500 }}>
+            style={{ padding:'0 10px', height:22, fontSize:12, borderRadius:3, background:'rgba(168,85,247,0.18)', color:'#a855f7', border:'none', cursor:'pointer', fontWeight:500 }}>
             ↓ 补
           </button>
           <div style={{ flex:1 }} />
-          <span style={{ fontFamily:'monospace', color:'#e5e7eb', fontSize:11 }}>{tc(pos)}{dur>0?` / ${tc(dur)}`:''}</span>
-          {selIn!=null&&selOut!=null&&selOut>selIn&&<span style={{ fontSize:9, color:'#4ade80' }}>{(selOut-selIn).toFixed(1)}s</span>}
-          <span style={{ color:'#6b7280', fontSize:9 }}>{ep?`EP${ep}`:''}</span>
+          <span style={{ fontFamily:'monospace', color:'#e5e7eb', fontSize:12 }}>{tc(pos)}{dur>0?` / ${tc(dur)}`:''}</span>
+          {selIn!=null&&selOut!=null&&selOut>selIn&&<span style={{ fontSize:11, color:'#4ade80' }}>{(selOut-selIn).toFixed(1)}s</span>}
+          <span style={{ color:'#6b7280', fontSize:12 }}>{ep?`EP${ep}`:''}</span>
         </div>
         <div style={{ height:4, flexShrink:0 }} />
       </div>

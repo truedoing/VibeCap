@@ -49,12 +49,13 @@ export const space = {
 }
 
 export const font = {
-  xs:   11,
-  sm:   12,
-  md:   13,
-  lg:   14,
-  xl:   16,
-  xxl:  18,
+  xxs:  10,   // 辅助标注
+  xs:   12,   // 标签 / 时间码
+  sm:   13,   // 正文小字
+  md:   14,   // 常规正文
+  lg:   15,   // 卡片标题
+  xl:   17,   // 面板标题
+  xxl:  20,   // 页面标题
   mono: '"SF Mono", "Fira Code", monospace',
 }
 

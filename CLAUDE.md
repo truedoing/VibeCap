@@ -144,7 +144,7 @@ cd vibecut-web && npm run dev
 ## 依赖
 
 - Python: /opt/anaconda3/bin/python3 (sentence-transformers, numpy, faster-whisper)
-- DeepSeek API: DEEPSEEK_API_KEY (策划台LLM + 数据台清洗)
+- Moonshot API: MOONSHOT_API_KEY (策划台LLM + 数据清洗 + 分镜推荐)
 - MiMo API: MIMO_API_KEY (VLM画面分析, 仅电视剧)
 - ffmpeg: 视频处理 + 代理生成
 - Node: Vite + React 前端

@@ -54,11 +54,11 @@ def _has_numerical_claim(text):
     """检测是否包含数值主张(用于数据一致性检查)"""
     return bool(re.search(r'\d+[万亿千百]', text))
 
-API_URL = "https://api.deepseek.com/v1/chat/completions"
+API_URL = "https://api.moonshot.cn/v1/chat/completions"
 
 def _get_api_key():
     """延迟读取 API key (因为 .env 可能在 import 之后才加载)"""
-    return os.environ.get("DEEPSEEK_API_KEY", "")
+    return os.environ.get("MOONSHOT_API_KEY", "")
 
 # BGE 语义搜索函数注入(由 server.py 设置)
 _search_fn = None
@@ -69,7 +69,7 @@ def set_search_fn(fn):
 def _call_llm(system_prompt, user_content, temp=0.4, max_tokens=3000):
     """底层 LLM 调用，带重试"""
     payload = json.dumps({
-        "model": "deepseek-chat",
+        "model": "moonshot-v1-8k",
         "messages": [{"role": "system", "content": system_prompt},
                      {"role": "user", "content": user_content}],
         "temperature": temp, "max_tokens": max_tokens,

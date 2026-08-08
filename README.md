@@ -45,7 +45,7 @@ cd VibeCut
 cp .env.example .env
 # 编辑 .env 填入:
 #   MIMO_API_KEY=sk-xxx        (VLM 画面分析)
-#   DEEPSEEK_API_KEY=sk-xxx    (分镜方案生成)
+#   MOONSHOT_API_KEY=sk-xxx  (Moonshot LLM 所有功能)
 
 # 3. 安装依赖
 cd vibecut-web && npm install && cd ..

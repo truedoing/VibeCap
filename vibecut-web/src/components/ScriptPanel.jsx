@@ -6,6 +6,7 @@
 import { useState, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { font, colors } from '../styles/theme'
 
 const CHARS = ["苏大强", "苏明哲", "苏明成", "苏明玉", "明玉", "朱丽", "吴非", "石天冬", "蒙总", "老蒙", "蒙太", "沈浩", "柳青", "赵美兰", "小咪"]
 
@@ -61,7 +62,7 @@ function RefineView({ segments, onPickSentence }) {
 
   return (
     <div className="overflow-y-auto flex-1">
-      <div className="px-2 py-1.5 flex items-center gap-3 text-[10px] border-b border-border/30 shrink-0 bg-emerald-500/5">
+      <div className="px-2 py-1.5 flex items-center gap-3 text-[11px] border-b border-border/30 shrink-0 bg-emerald-500/5">
         <span className="text-emerald-400 font-medium">{stats.keep} 保留</span>
         <span className="text-red-400 font-medium">{stats.cut} 删除</span>
         <span className="text-muted-foreground">保留 {stats.keepDur.toFixed(0)}s</span>
@@ -80,24 +81,24 @@ function RefineView({ segments, onPickSentence }) {
                   ? 'border-emerald-500/60 bg-emerald-500/5 hover:bg-emerald-500/10'
                   : 'border-red-500/40 bg-red-500/3 hover:bg-red-500/8 opacity-80'
               )}>
-              <span className={cn('text-[10px] font-bold shrink-0 mt-0.5',
+              <span className={cn('text-[11px] font-bold shrink-0 mt-0.5',
                 isKeep ? 'text-emerald-400' : 'text-red-400')}>
                 {isKeep ? '✅' : '❌'}
               </span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 mb-0.5">
-                  <span className="text-[9px] text-muted-foreground/70 font-mono">
+                  <span className="text-[10px] text-muted-foreground/70 font-mono">
                     S{sc.seg_id} {sc.start.toFixed(0)}s-{sc.end.toFixed(0)}s
                   </span>
-                  <span className={cn('text-[9px] font-medium',
+                  <span className={cn('text-[10px] font-medium',
                     isKeep ? 'text-emerald-500/70' : 'text-red-400/70')}>
                     {dur.toFixed(1)}s
                   </span>
-                  <span className="text-[9px] text-muted-foreground/50">{sc.speaker}</span>
+                  <span className="text-[10px] text-muted-foreground/50">{sc.speaker}</span>
                 </div>
-                <p className={cn('text-[10px] leading-snug',
+                <p className={cn('text-[11px] leading-snug',
                   isKeep ? 'text-foreground/85' : 'text-foreground/50 line-through')}>
-                  {sc.text.length > 60 ? sc.text.substring(0, 60) + '...' : sc.text}
+                  {sc.text.length > 80 ? sc.text.substring(0, 80) + '...' : sc.text}
                 </p>
               </div>
             </button>
@@ -109,13 +110,29 @@ function RefineView({ segments, onPickSentence }) {
 }
 
 /* ── 粗段脚本视图 (影剧/通用) ── */
-function ScriptView({ segments, curSid, curSeq, onPickSentence, picks }) {
+function ScriptView({ segments, curSid, curSeq, onPickSentence, picks, cover }) {
   const [openSeg, setOpenSeg] = useState(null)
   if (openSeg === null && segments.length > 0) setOpenSeg(segments[0].seg_id)
 
   return (
     <div className="overflow-y-auto flex-1">
       <div className="p-1.5 space-y-1">
+        {/* 封面描述 — 仅供参考，不需要选镜头 */}
+        {cover && (
+          <div style={{
+            margin: '0 4px 8px', padding: '8px 12px', borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)',
+            fontSize: font.sm, lineHeight: 1.6, color: colors.textMuted,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <span style={{ fontSize: font.xs, color: colors.textFaint, fontWeight: 600 }}>📋 封面文案</span>
+              <span style={{ fontSize: font.xxs, color: colors.textDisabled }}>（不需要选镜头）</span>
+            </div>
+            {cover.split('\n').map((line, i) => (
+              <p key={i} style={{ margin: 0 }}>{line}</p>
+            ))}
+          </div>
+        )}
         {segments.map(seg => {
           const isOpen = openSeg === seg.seg_id
           const sentences = (seg.narration_text || '').split(/[。！？]/).filter(s => s.trim())
@@ -123,18 +140,21 @@ function ScriptView({ segments, curSid, curSeq, onPickSentence, picks }) {
           // 段状态标记
           let statusBadge = null
           if (status.total > 0) {
-            statusBadge = <span className="text-[9px] text-emerald-400 font-medium shrink-0 ml-1">✓{status.mainCnt}主{status.suppCnt > 0 ? `+${status.suppCnt}补` : ''}</span>
+            statusBadge = <span className="text-[10px] text-emerald-400 font-medium shrink-0 ml-1">✓{status.mainCnt}主{status.suppCnt > 0 ? `+${status.suppCnt}补` : ''}</span>
           } else if (status.hasVideo) {
-            statusBadge = <span className="text-[9px] text-amber-400 font-medium shrink-0 ml-1">📍已定位</span>
+            statusBadge = <span className="text-[10px] text-amber-400 font-medium shrink-0 ml-1">📍已定位</span>
           }
           return (
             <div key={seg.seg_id}>
               <button
-                onClick={() => setOpenSeg(isOpen ? null : seg.seg_id)}
+                onClick={() => {
+                  const next = isOpen ? null : seg.seg_id
+                  setOpenSeg(next)
+                }}
                 className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-card border border-border hover:bg-accent transition-colors text-left">
                 <span className="text-[10px] text-muted-foreground/50">🔊</span>
                 <span className="text-xs font-semibold text-warning">S{seg.seg_id}</span>
-                <span className="text-[10px] text-muted-foreground truncate flex-1">{(seg.narration_text||'').substring(0, 30)}</span>
+                <span className="text-[11px] text-warning/80 font-medium truncate flex-1">{(seg.highlight_text || seg.narration_text || '').substring(0, 30)}</span>
                 {statusBadge}
                 {isOpen ? <ChevronDown className="size-3 text-muted-foreground shrink-0" /> : <ChevronRight className="size-3 text-muted-foreground shrink-0" />}
               </button>
@@ -144,8 +164,8 @@ function ScriptView({ segments, curSid, curSeq, onPickSentence, picks }) {
                     <button onClick={() => onPickSentence(seg.seg_id, 'D')}
                       className={cn('w-full text-left px-2 py-1 rounded-r border-l-[3px] transition-colors',
                         curSid===seg.seg_id&&curSeq==='D' ? 'bg-warning/20 border-warning' : 'bg-destructive/10 border-warning hover:bg-destructive/15')}>
-                      <span className="text-[9px] text-warning/70">台词</span>
-                      <span className="text-[10px] text-warning leading-snug ml-1"><Highlighted text={seg.highlight_text.substring(0,60)} />{seg.highlight_text.length>60&&'...'}</span>
+                      <span style={{ fontSize: font.xs, color: colors.textMuted }}>台词</span>
+                      <span className="text-[11px] text-warning leading-snug ml-1"><Highlighted text={seg.highlight_text.substring(0,60)} />{seg.highlight_text.length>80&&'...'}</span>
                     </button>
                   )}
                   {sentences.map((s, i) => {
@@ -153,13 +173,13 @@ function ScriptView({ segments, curSid, curSeq, onPickSentence, picks }) {
                     const cnt = (p?.main?.length||0)+(p?.supp?.length||0)
                     return (
                       <div key={i} className={cn('flex items-start gap-1 py-0.5 px-1 rounded group transition-colors',
-                        curSid===seg.seg_id&&curSeq===i ? 'bg-purple/10 border-l-[3px] border-l-purple' : 'hover:bg-accent/50')}>
-                        <span className="text-[9px] text-info font-mono pt-0.5 shrink-0">句{i}</span>
-                        <button onClick={() => onPickSentence(seg.seg_id, i)} className="flex-1 text-left text-[10px] text-foreground/80 leading-relaxed">
+                        curSid===seg.seg_id&&curSeq===String(i) ? 'bg-purple/10 border-l-[3px] border-l-purple' : 'hover:bg-accent/50')}>
+                        <span className="text-[10px] text-info font-mono pt-0.5 shrink-0">句{i}</span>
+                        <button onClick={() => onPickSentence(seg.seg_id, i)} className="flex-1 text-left text-[11px] text-foreground/80 leading-relaxed">
                           <Highlighted text={s.trim()+'。'} />
                         </button>
                         <button onClick={() => onPickSentence(seg.seg_id, i)} className="p-0.5 opacity-0 group-hover:opacity-100 text-purple shrink-0"><Search className="size-2.5" /></button>
-                        {cnt>0 && <span className="text-[9px] text-success font-medium shrink-0">{mainCnt}{suppCnt>0 ? `+${suppCnt}` : ''}</span>}
+                        {cnt>0 && <span className="text-[10px] text-success font-medium shrink-0">{mainCnt}{suppCnt>0 ? `+${suppCnt}` : ''}</span>}
                       </div>
                     )
                   })}

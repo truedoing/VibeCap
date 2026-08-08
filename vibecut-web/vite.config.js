@@ -12,6 +12,8 @@ export default defineConfig({
       '/preview_video': 'http://localhost:8765',
       '/assign': 'http://localhost:8765',
       '/status': 'http://localhost:8765',
+      '/narration': 'http://localhost:8765',
+      '/narration.json': 'http://localhost:8765',
       '/segments.json': 'http://localhost:8765',
       '/素材clips': 'http://localhost:8765',
       '/clips': 'http://localhost:8765',
