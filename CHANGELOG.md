@@ -15,6 +15,7 @@
   - `load_env()`: 4 处逐字重复 → `lib/env.py`
 - **script_agents.py 优化**: `_call_llm` 改用 `lib/llm.py`，消除 25 行重复 LLM 调用代码
 - **多模块编译 + 12 端点 API 验证通过**: GET /status, /dramas, /tasks, /search, /segments.json, /asr/classified, /proxies/manifest + POST /tasks/status, /chat, /dialogue_match
+- **LLM 成本**: DeepSeek v4 Pro, 14,307,420 tokens, ¥1.80
 
 ### 架构收益
 
