@@ -1,0 +1,211 @@
+{
+  "main": {
+    "id": "e26ce5a5305783aa",
+    "type": "split",
+    "children": [
+      {
+        "id": "4f9a239dcceb7c64",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "72edf67c465a19f3",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "_INDEX.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "_INDEX"
+            }
+          },
+          {
+            "id": "15bf3cfd7b453a19",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "L1-语言与运行时.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "L1-语言与运行时"
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "ede8251af1838d8f",
+    "type": "split",
+    "children": [
+      {
+        "id": "37c4726adb127af1",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "b0fe6518dc243ab8",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "文件列表"
+            }
+          },
+          {
+            "id": "701dae8d225a6f8f",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "搜索"
+            }
+          },
+          {
+            "id": "21afbdf3b603ee3c",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "书签"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "3c7e287eb30719ea",
+    "type": "split",
+    "children": [
+      {
+        "id": "0ff62d0b1596450c",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "0f8875bc15a29f7d",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "L1-语言与运行时.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "L1-语言与运行时 的反向链接列表"
+            }
+          },
+          {
+            "id": "02460e64734c3754",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "L1-语言与运行时.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "L1-语言与运行时 的出链列表"
+            }
+          },
+          {
+            "id": "5aeee3ef76fe9eac",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "标签"
+            }
+          },
+          {
+            "id": "6897f1d53943d807",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "添加笔记属性"
+            }
+          },
+          {
+            "id": "80da6f3bab475468",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "L1-语言与运行时.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "L1-语言与运行时 的大纲"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:打开快速切换": false,
+      "graph:查看关系图谱": false,
+      "canvas:新建白板": false,
+      "daily-notes:打开/创建今天的日记": false,
+      "templates:插入模板": false,
+      "command-palette:打开命令面板": false,
+      "bases:新建数据库": false
+    }
+  },
+  "active": "15bf3cfd7b453a19",
+  "lastOpenFiles": [
+    "Python-数据处理.md",
+    "L1-语言与运行时.md",
+    "Shell与ffmpeg工具链.md",
+    "Radix-UI组件体系.md",
+    "Python-标准库与并发.md",
+    "_INDEX.md",
+    "_学习路线.md"
+  ]
+}
