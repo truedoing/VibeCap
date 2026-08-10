@@ -361,9 +361,19 @@ def storyboard_suggest(narration: str, segment_context: dict = None, cover: str 
             temperature=0.5, max_tokens=600, timeout=30, label="storyboard",
         )
         if llm_result["ok"]:
-            lines = [l.strip() for l in llm_result["content"].strip().split("\n")
-                     if l.strip() and len(l.strip()) > 15 and re.match(r'^镜头\d+[：:]', l.strip())]
-            if lines:
+            raw = llm_result["content"].strip()
+            lines = []
+            for line in raw.split("\n"):
+                line = line.strip()
+                if not line or len(line) < 10:
+                    continue
+                if re.match(r'^镜头\d+[：:]', line):
+                    lines.append(line)
+                elif re.match(r'^\d+[\.\、\s]', line):
+                    line = re.sub(r'^\d+[\.\、\s]+', '', line)
+                    lines.append(f"镜头{len(lines)+1}：{line}")
+            if len(lines) >= 2:
+                return lines[:num]
                 return lines[:num]
 
     return results[:num]
