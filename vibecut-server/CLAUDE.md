@@ -1,9 +1,9 @@
 ---
 name: vibecut-server
-description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + AI流水线
+description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + AI流水线 v1.2
 ---
 
-## VibeCut Server v1.1 (重构后)
+## VibeCut Server v1.2
 
 ### 架构
 ```
@@ -27,7 +27,7 @@ vibecut-server/
 │   ├── sse.py                  ← 可复用SSE发射器 + 心跳
 │   └── env.py                  ← 统一.env加载
 │
-├── script_agents.py            ← 策划台 AI Agent
+├── script_agents.py            ← 编剧台 AI Agent
 │   ├── run_pipeline()          ← v3 搜索流水线
 │   └── story_first_pipeline()  ← v4 故事优先 (口播专用)
 ├── refine_segments.py          ← 口播精切引擎
@@ -37,7 +37,8 @@ vibecut-server/
 ├── export_capcut.py            ← 剪映草稿导出
 ├── generate_proxies.py         ← 540p代理视频
 ├── analyze_episodes.py         ← 电视剧: 场景+ASR+VLM
-├── cross_calibrate.py          ← 电视剧: ASR↔VLM校准
+├── cross_calibrate.py          ← 电视剧: ASR↔VLM校准 (已废弃)
+├── vlm_char_calibrate.py       ← 电视剧: VLM人物校准 (字幕称呼词 + 场景连续性)
 ├── clean_data.py               ← 电视剧: 数据清洗
 └── ...                         ← 其他独立脚本
 ```
@@ -88,7 +89,34 @@ cd vibecut-server
 | /picks | POST | 同步picks到SQLite |
 | /{filename}?task= | GET | 任务目录文件 (SPA兜底) |
 
-### 口播数据管线
+### 电视剧数据管线 (v1.3 优化后)
+
+```
+源视频 → analyze_episodes → VLM 场景分析 (vlm_analysis.json)
+    │         (场景+ASR+VLM)         │
+    │         v1.3优化:               │
+    │         · 角色参考照锚定         │
+    │         · 面部优先→反推场景      │
+    │         · 剧集概要注入           │
+    │         · 上下文窗口传递人物      │
+    │         · 跳过序幕/落幕          │
+    │                                │
+    │                                ▼
+    │                         clean_data.py
+    │                         数据清洗 + 场景合并
+    │                         (sources_clean/epN/)
+    │                                │
+    │                                ▼
+    └─────────────────────── build_index.py
+                            BGE 语义索引
+                            (31498 条, 768维)
+```
+
+**v1.3 新增**:
+- VLM分析提示词优化: 角色参考照 + 面部识别优先 + 剧集概要
+- 淘汰 cross_calibrate.py (ASR↔VLM校准)
+- 淘汰 vlm_char_calibrate.py (T1-T4校准) — VLM源头已解决人物识别问题
+- 淘汰 T4 LLM校准 (DeepSeek) — 不再需要
 
 ```
 ASR → classify_transcript → clean_interview_data → build_index
@@ -116,5 +144,36 @@ ASR → classify_transcript → clean_interview_data → build_index
 - Python 3.12 (`/opt/anaconda3/bin/python3`)
 - FastAPI + Uvicorn (conda install)
 - sentence-transformers (BGE, HF_HUB_OFFLINE=1)
-- Moonshot API (策划台 + 数据清洗)
+- Moonshot API (编剧台LLM + 数据清洗)
 - MiMo API (VLM, 仅电视剧)
+- MPS (Apple Silicon GPU, 6.8GB VRAM)
+
+### VLM 画面分析策略 (analyze_episodes.py v1.3)
+
+**核心优化**:
+
+1. **角色参考照锚定**: 从 `character_portraits/` 加载角色肖像照，每10场景发送一次作为面孔对比参考
+2. **面部优先识别**: prompt 明确要求"先对比面孔与参考照→再反推场景地点"，**严禁先判地点再反推人物**
+3. **剧集概要注入**: 通过 DeepSeek 生成每集剧情概要(ep_synopsis.json)，VLM 分析时注入 prompt，提供剧情上下文
+4. **上下文窗口**: 串行分析时，前场景的VLM结果（人物+字幕）传递给当前场景，维持对话连贯性
+5. **跳过序幕/落幕**: 跳过前1分钟(6场景)片头和后3分钟(18场景)片尾
+
+**精度提升路径**: 原始VLM(苏大强+苏明成) → +角色照(苏明哲+苏明成) → +面孔优先(吴非+苏明哲) ✅
+
+**速度优化**:
+- 15s/场景切分，每场景1-2帧
+- 分组并发：10场景一组，组内串行(继承上下文)，多组并发(最多4组)
+- 每10场景发送一次角色照锚定，中间场景仅依赖上下文
+- 预计 25-30 分钟/集
+
+**依赖**: `.env` 中 `MIMO_API_KEY` + `DEEPSEEK_API_KEY` (仅生成剧集概要)
+
+### 分镜搜索策略 (导演思维)
+
+**核心思路**: 解说词 → 叙事节拍分析 → 约束搜索 (episode_marker + BGE语义 + frame_facts 人物过滤)。不再按句子机械匹配，而是拆解"谁/在哪/做什么/什么情绪"的视觉节拍。
+
+**搜索原则**:
+- episode_marker 缩小范围 (31,498 → 500-800)
+- BGE 语义匹配找情感/氛围相似的场景
+- frame_facts 人物标签精确约束 (VLM源头优化后准确率大幅提升)
+- VLM depth_analysis 提供导演级场景情绪解读

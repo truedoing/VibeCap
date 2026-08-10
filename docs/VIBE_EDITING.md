@@ -1,8 +1,8 @@
-# Vibe 沉浸式剪辑台
+# 分镜台 (VibeEdit)
 
 ## 概述
 
-Vibe 剪辑台 (`/vibe`) 合并"选素材"和"剪辑"为单一沉浸式工作台。
+分镜台 (`/vibe`) 是解说词→镜头匹配的导演工作台。
 
 核心变革：**从"提取片段文件"变为"数据定位引用"** — 编辑阶段不碰 ffmpeg，导出阶段才从 1080p 原剧提取。
 
@@ -82,7 +82,7 @@ Elah Zustand store 是模块级单例，无法在一页运行两个引擎。源�
 
 ### 缓存隔离
 
-VibeEdit 使用 `vibe_timeline`/`vibe_mediaCache` 独立缓存键，与老剪辑台的 `timeline`/`mediaCache` 互不干扰。
+VibeEdit 使用 `vibe_timeline`/`vibe_mediaCache` 独立缓存键，与老分镜台的 `timeline`/`mediaCache` 互不干扰。
 
 ### 代理视频
 
@@ -97,7 +97,7 @@ VibeEdit 使用 `vibe_timeline`/`vibe_mediaCache` 独立缓存键，与老剪辑
 |------|------|
 | `vibecut-server/generate_proxies.py` | 代理视频批量生成脚本 |
 | `vibecut-server/server.py` | 后端，新增 `eps` 搜索过滤 |
-| `vibecut-web/src/pages/VibeEdit.jsx` | Vibe 剪辑台主页面 |
+| `vibecut-web/src/pages/VibeEdit.jsx` | 分镜台主页面 |
 | `vibecut-web/src/components/ScriptPanel.jsx` | 脚本段面板（标签式） |
 | `vibecut-web/src/components/StoryboardPanel.jsx` | 分镜推荐面板 |
 | `vibecut-web/src/components/SourceInspector.jsx` | 源检视器（PR 风格） |

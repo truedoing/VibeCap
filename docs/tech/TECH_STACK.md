@@ -1,6 +1,6 @@
-# VibeCut 技术架构文档 v1.1
+# VibeCut 技术架构文档 v1.2
 
-> AI 影视解说/口播剪辑台 — 从语言到框架到库到模型的全栈技术图谱
+> AI 影视解说/口播导演台 — 从语言到框架到库到模型的全栈技术图谱
 
 ---
 
@@ -150,7 +150,7 @@ zhconv                    # (可选, 繁简转换)
 vibecut-server/
 ├── server.py                  ← 主服务: API + SSE + 静态文件 + 后台流水线
 ├── db.py                      ← SQLite 数据库层 (VibeCutDB 类)
-├── script_agents.py           ← 策划台 AI Agent 系统
+├── script_agents.py           ← 编剧台 AI Agent 系统
 │   ├── run_pipeline()         ← v3 搜索流水线 (规划→BGE搜索→写作→审核)
 │   └── story_first_pipeline() ← v4 故事优先 (LLM通读→单次生成)
 ├── refine_segments.py         ← 口播精切引擎 (粗段→sub_clips KEEP/CUT)
@@ -203,9 +203,9 @@ vibecut-server/
 
 | 路由 | 页面 | 说明 |
 |------|------|------|
-| `/` | Home | 任务台：项目管理 |
-| `/:project/:task/planning` | PlanningDesk | 策划台：三栏布局 (素材/脚本/AI) |
-| `/:project/:task/vibe` | VibeEdit | 沉浸剪辑台：多轨时间轴编辑 |
+| `/` | Home | 项目：项目管理 |
+| `/:project/:task/planning` | PlanningDesk | 编剧台：三栏布局 (素材/脚本/AI) |
+| `/:project/:task/vibe` | VibeEdit | 分镜台：多轨时间轴编辑 |
 | `/data` | DataDesk | 数据台：流水线管理 + 质量监控 |
 
 ### 4.3 Vite 代理配置
@@ -413,7 +413,7 @@ vibecut-server/
 电视剧管线:
   视频 → faster-whisper (ASR) + MiMo VLM (画面分析)
        → 交叉校准 → 数据清洗 → BGE (索引)
-       → DeepSeek (搜索+脚本) → 剪辑台
+       → DeepSeek (搜索+脚本) → 分镜台
 ```
 
 **关键设计原则：**
@@ -516,7 +516,7 @@ quality_reports — 质量评分 (ASR, VLM, subtitle, overall)
 **环境变量：**
 
 ```bash
-DEEPSEEK_API_KEY=sk-xxx   # 策划台 LLM + 数据清洗
+DEEPSEEK_API_KEY=sk-xxx   # 编剧台 LLM + 数据清洗
 MIMO_API_KEY=sk-xxx       # VLM 画面分析 (仅电视剧)
 MIMO_API_URL=https://api.xiaomimimo.com/v1
 VITE_API_BASE=http://localhost:8765  # 前端 API 基址
@@ -559,7 +559,7 @@ VITE_API_BASE=http://localhost:8765  # 前端 API 基址
                            │
                            ▼
 ┌──────────────────────────────────────────────────────┐
-│              策划台 (AI 脚本生成)                       │
+│              编剧台 (AI 脚本生成)                       │
 │                                                        │
 │  script_agents.py                                      │
 │  ┌─────────────────────────────────────────┐          │
@@ -577,7 +577,7 @@ VITE_API_BASE=http://localhost:8765  # 前端 API 基址
                            │
                            ▼
 ┌──────────────────────────────────────────────────────┐
-│              剪辑台 / 导出                              │
+│              分镜台 / 导出                              │
 │                                                        │
 │  VibeEdit.jsx  ← segments.json (含 sub_clips)         │
 │  Elah 引擎: 仅 KEEP sub_clips → 时间轴                  │
@@ -615,7 +615,7 @@ VITE_API_BASE=http://localhost:8765  # 前端 API 基址
                 └────────────────┬────────────────────┘
                                  │
                                  ▼
-                    策划台 → 剪辑台 → 导出
+                    编剧台 → 分镜台 → 导出
 ```
 
 ### 12.3 SSE 流式协议

@@ -1,11 +1,18 @@
-# VibeCut — AI 影视解说剪辑台
+# VibeCut — AI 影视解说导演台
 
-对原剧进行 VLM 画面分析 + ASR 台词转写，构建 BGE 语义索引，然后根据解说词自动搜索匹配原剧镜头，完成解说短视频的策划与剪辑。
+对原剧进行 VLM 画面分析 + ASR 台词转写，构建 BGE 语义索引，然后根据解说词自动搜索匹配原剧镜头，完成解说短视频的分镜与导出。定位为"导演台"——在 VibeCut 完成创作决策（写词 + 分镜），导出到剪映做技术性剪辑。
 
 ## 工作流
 
 ```
 解说词 → LLM 分镜 → BGE 搜索匹配画面 → 选取镜头 → 时间轴编排 → 导出
+```
+
+## 四台流水线
+
+```
+项目 ──→ 数据台 ──→ 编剧台 ──→ 分镜台 ──→ 剪映
+制片      建索引     写解说词    分镜匹配     精剪导出
 ```
 
 ## 项目结构
@@ -16,7 +23,7 @@ VibeCut/
 │   ├── main.py               ← FastAPI 入口 + 路由注册 (v1.1)
 │   ├── config.py             ← CLI参数 + 项目配置 + 路径解析
 │   ├── db.py                 ← SQLite 数据库层
-│   ├── script_agents.py      ← 策划台 AI Agent (v3搜索+v4故事优先)
+│   ├── script_agents.py      ← 编剧台 AI Agent (v3搜索+v4故事优先)
 │   ├── refine_segments.py    ← 口播精切引擎
 │   ├── lib/                  ← 共享基础设施
 │   │   ├── llm.py            ← 统一 LLM 调用 (Moonshot/MiMo)
@@ -41,9 +48,9 @@ VibeCut/
 │
 ├── vibecut-web/          ← React 前端 (Vite, 3000)
 │   └── src/pages/
-│       ├── Home.jsx           任务管理
-│       ├── PlanningDesk.jsx   策划台 (粗剪+精剪)
-│       ├── VibeEdit.jsx       沉浸剪辑台
+│       ├── Home.jsx           项目管理
+│       ├── PlanningDesk.jsx   编剧台 (脚本+精切)
+│       ├── VibeEdit.jsx       分镜台
 │       └── DataDesk.jsx       数据台 (流水线管理)
 │
 └── {电视剧/口播}/        ← 数据目录 (不提交)
