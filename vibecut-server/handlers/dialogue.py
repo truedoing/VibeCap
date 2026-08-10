@@ -6,7 +6,7 @@ import re
 import time
 
 from config import project_name, project_type, PROJECT_DIR
-from lib.llm import call_moonshot, call_moonshot_json
+from lib.llm import call_moonshot, call_moonshot_json, call_deepseek_json
 from handlers.search import search, _asr_first_search, inject_speaker, search_asr_text
 from handlers.media import serve_preview
 
@@ -183,7 +183,308 @@ def _format_chat_reply(results, query):
 
 
 # ── POST /storyboard_suggest ──
-def storyboard_suggest(narration: str, segment_context: dict = None, cover: str = "", num: int = 3) -> list:
+# v4: 导演Agent — LLM 叙事理解 + 结构化分镜查询 + v3数据匹配
+
+# 导演Agent prompt
+DIRECTOR_PROMPT = """你是电视剧《都挺好》的分镜导演。根据解说词策划一个分镜序列，用原剧场景来匹配。
+
+人物推断规则（按优先级）：
+1. 封面/标题中出现的角色名 = 主角，权重最高（如"苏明成/炸弹视角" → 主角确定是苏明成）
+2. 上下文解说词中出现的角色名 = 辅助信息
+3. 解说词本身描述的行为特征 → 对照角色出场统计推断
+4. 角色列表 + 出场次数: {KNOWN_CHARS}
+5. 推断的主角必须填写在 main_char 字段中
+
+可选景别：特写、近景、中景、全景、远景。
+可选光线：自然光、暖调、冷调、暗调、高调。
+
+任务：
+1. 确定主角（基于封面 > 上下文 > 行为推断）
+2. 设计 3 个分镜，每个分镜说明叙事目的
+3. 为每个分镜输出结构化的素材查询条件
+
+输出 JSON（严格格式，不要 markdown）：
+{{
+  "main_char": "主角名（必须填，从角色列表选）",
+  "shots": [
+    {{
+      "purpose": "镜头1的叙事目的（≤12字）",
+      "characters": ["人物名"],
+      "shot_size": "景别",
+      "emotional_tone": ["情绪标签"],
+      "intensity_min": 强度下限1-5,
+      "location_hint": "场景提示",
+      "action_hint": "动作提示"
+    }}
+  ]
+}}
+
+规则：
+- 人物必须从角色列表中选择，不得超过已知范围
+- emotional_tone 从常见情绪词中选择（对峙/愤怒/压抑/低落/争执/温馨/紧张/冲突/激动/冷漠/冲动/兴奋/无奈/悲痛/严肃等）
+- intensity_min 1=平静 3=有明显情绪 5=激烈爆发
+- 3个分镜要有叙事递进关系（建立→发展→高潮或揭示）"""
+
+# 结构化匹配引擎缓存
+_vlm_cache = None  # {ep: {scene_idx: vlm_entry}}
+_char_counts = {}  # {"苏明玉": 120, ...}
+
+def _load_vlm_cache():
+    """惰性加载 46 集 vlm_seg_cache_v3 到内存，统计角色出场次数"""
+    global _vlm_cache, _char_counts
+    if _vlm_cache is not None:
+        return _vlm_cache
+    from pathlib import Path
+    sources = PROJECT_DIR / "sources"
+    _vlm_cache = {}
+    _char_counts = {}
+    for ep_dir in sources.iterdir():
+        if not ep_dir.is_dir() or not ep_dir.name.startswith("ep"):
+            continue
+        ep = int(ep_dir.name[2:])
+        vlm_f = ep_dir / "vlm_seg_cache_v3.json"
+        sm_f = ep_dir / "scene_map.json"
+        if not vlm_f.exists() or not sm_f.exists():
+            continue
+        try:
+            vlm = json.load(open(vlm_f))
+            sm = json.load(open(sm_f))
+        except Exception:
+            continue
+        ep_data = {}
+        for i, seg in enumerate(sm):
+            v = vlm.get(str(i), {})
+            actions = v.get("actions", [])
+            # 展平嵌套列表
+            if isinstance(actions, list):
+                flat = []
+                for a in actions:
+                    if isinstance(a, list): flat.extend(a)
+                    else: flat.append(str(a))
+                actions = flat
+            chars = seg.get("characters", [])
+            for ch in chars:
+                _char_counts[ch] = _char_counts.get(ch, 0) + 1
+            ep_data[i] = {
+                "ep": ep, "scene_id": i,
+                "start": seg["time_range"][0], "end": seg["time_range"][1],
+                "characters": seg.get("characters", []),
+                "location": seg.get("location", ""),
+                "event": seg.get("event", ""),
+                "mood": seg.get("mood", ""),
+                "visual_summary": v.get("visual_summary", ""),
+                "shot_size": v.get("shot_size", ""),
+                "composition": v.get("composition", ""),
+                "angle": v.get("angle", ""),
+                "emotional_tone": v.get("emotional_tone", ""),
+                "intensity": v.get("intensity", 3),
+                "lighting": v.get("lighting", ""),
+                "actions": actions,
+            }
+        _vlm_cache[ep] = ep_data
+    return _vlm_cache
+
+
+def _match_shot_query(query: dict, num: int = 5):
+    """给定一个分镜查询，从 v3 缓存中匹配最优场景段"""
+    cache = _load_vlm_cache()
+    scored = []
+
+    target_chars = set(query.get("characters", []))
+    target_emotions = set(query.get("emotional_tone", []))
+    min_intensity = query.get("intensity_min", 1)
+    target_shot = query.get("shot_size", "")
+    location_hint = query.get("location_hint", "")
+    action_hint = query.get("action_hint", "")
+
+    for ep, ep_data in cache.items():
+        for idx, s in ep_data.items():
+            score = 0
+            desc = s["visual_summary"] + " " + s["event"] + " " + s["location"]
+
+            # 1. 人物精确匹配 (核心权重)
+            chars = set(s["characters"])
+            if target_chars:
+                overlap = chars & target_chars
+                if overlap:
+                    score += len(overlap) * 15
+                else:
+                    score -= 10  # 惩罚不包含目标人物的场景
+
+            # 2. 情绪匹配
+            s_emo = s["emotional_tone"]
+            for te in target_emotions:
+                if te in s_emo:
+                    score += 8
+
+            # 3. 强度匹配
+            if s["intensity"] >= min_intensity:
+                score += (s["intensity"] - min_intensity + 1) * 3
+
+            # 4. 景别匹配
+            if target_shot and s["shot_size"] == target_shot:
+                score += 6
+            elif target_shot:
+                # 近似景别也给部分分
+                size_order = {"特写": 0, "近景": 1, "中景": 2, "全景": 3, "远景": 4}
+                if s["shot_size"] in size_order and target_shot in size_order:
+                    dist = abs(size_order[s["shot_size"]] - size_order[target_shot])
+                    score += max(0, 6 - dist * 3)
+
+            # 5. 地点提示匹配
+            if location_hint and location_hint in s["location"]:
+                score += 4
+
+            # 6. 动作提示匹配
+            if action_hint:
+                acts_str = " ".join(s["actions"]) if isinstance(s["actions"], list) else str(s["actions"])
+                if action_hint in acts_str:
+                    score += 4
+
+            # 7. VLM 视觉描述丰富度
+            if len(s["visual_summary"]) > 30:
+                score += 2
+
+            scored.append((score, s))
+
+    scored.sort(key=lambda x: -x[0])
+    # 去重 ep + scene_id
+    seen = set()
+    results = []
+    for score, s in scored:
+        key = f"{s['ep']}_{s['scene_id']}"
+        if key in seen: continue
+        seen.add(key)
+        results.append({**s, "match_score": score})
+        if len(results) >= num: break
+    return results
+
+
+def director_agent(narration: str, segment_context: dict = None, cover: str = "", num_shots: int = 3) -> dict:
+    """导演Agent — LLM叙事理解 → 分镜设计 → 结构化匹配 + 人物交叉校验"""
+    if not narration or not narration.strip():
+        return {"shots": []}
+
+    # 加载缓存 + 角色统计
+    _ = _load_vlm_cache()
+    known = sorted(_char_counts.keys(), key=lambda c: -_char_counts[c])
+    known_str = ", ".join(f"{c}({_char_counts[c]}场)" for c in known)
+
+    # Step 1: LLM 导演推理 — 注入角色统计 + cover 上下文
+    ctx_text = ""
+    if cover:
+        ctx_text += f"封面/标题: {cover}\n"
+    if segment_context and segment_context.get("sentences"):
+        ctx_text += "上下文解说:\n" + "\n".join(
+            f"- {s}" for s in segment_context["sentences"]
+        ) + "\n"
+    ctx_text += f"\n角色出场统计（46集总计）: {known_str}"
+
+    user_prompt = f"{ctx_text}\n当前解说词：{narration}\n\n请推断主角并设计分镜序列，输出JSON。"
+
+    formatted_prompt = DIRECTOR_PROMPT.replace("{KNOWN_CHARS}", known_str)
+
+    llm_result = call_deepseek_json(
+        formatted_prompt, user_prompt,
+        temperature=0.5, max_tokens=1200, timeout=30, label="director_agent",
+    )
+
+    if not llm_result.get("ok"):
+        return {"shots": [], "fallback": True, "error": llm_result.get("error", "LLM失败")}
+
+    data = llm_result["data"]
+    shots_spec = data.get("shots", [])
+    main_char = data.get("main_char", "")
+
+    # Step 2: 人物交叉校验 — cover 中的人物是决定性线索
+    cover_chars = [c for c in sorted(_char_counts.keys(), key=lambda x: -_char_counts[x])
+                   if c in (cover or '')]
+    if cover_chars:
+        definitive = cover_chars[0]  # 封面人物 = 主角
+        if main_char and main_char != definitive:
+            print(f"[director] ⚠️ LLM推断 {main_char}, 但封面明确是 {definitive}, 修正")
+        elif not main_char:
+            print(f"[director] 📌 封面人物 {definitive} 确定为主角")
+        main_char = definitive
+        # 修正所有分镜的 characters
+        for spec in shots_spec:
+            chars = spec.get("characters", [])
+            # 替换错误推断的人物
+            spec["characters"] = [definitive if ch != definitive and ch in _char_counts else ch for ch in chars]
+            if definitive not in spec["characters"]:
+                spec["characters"] = [definitive] + spec["characters"][:1]
+
+    # 校验 main_char 是否在已知角色中
+    if main_char and main_char not in _char_counts:
+        print(f"[director] ⚠️ 主角 {main_char} 不在已知角色中!")
+        main_char = ""
+
+    if not shots_spec:
+        return {"shots": [], "fallback": True, "error": "LLM未返回有效分镜"}
+
+    # Step 3: 逐镜结构化匹配 (无结果时放宽限制重试)
+    result_shots = []
+    for spec in shots_spec:
+        candidates = _match_shot_query(spec, num=5)
+        if not candidates:
+            relaxed = {**spec, "shot_size": "", "location_hint": ""}
+            candidates = _match_shot_query(relaxed, num=5)
+        result_shots.append({
+            "purpose": spec.get("purpose", ""),
+            "query": spec,
+            "candidates": [
+                {
+                    "ep": c["ep"],
+                    "start": c["start"],
+                    "end": c["end"],
+                    "visual_summary": c["visual_summary"][:120],
+                    "shot_size": c["shot_size"],
+                    "emotional_tone": c["emotional_tone"],
+                    "intensity": c["intensity"],
+                    "location": c["location"],
+                    "characters": c["characters"],
+                    "match_score": c["match_score"],
+                }
+                for c in candidates
+            ],
+        })
+
+    return {"shots": result_shots, "narration": narration, "main_char": main_char}
+
+
+def storyboard_suggest(narration: str, segment_context: dict = None, cover: str = "", num: int = 3) -> dict:
+    """分镜推荐 v4 — 导演Agent优先, 降级为v3分层匹配
+    返回: {"suggestions": [...], "shots": [...]}  — shots 为结构化分镜序列"""
+    if not narration or not narration.strip():
+        return {"suggestions": [], "shots": []}
+
+    # 尝试导演Agent
+    shots = []
+    try:
+        result = director_agent(narration, segment_context, cover, num)
+        if result.get("shots") and not result.get("fallback"):
+            shots = result["shots"]
+            # 转换为前端兼容文本格式
+            suggestions = []
+            for shot in result["shots"]:
+                for c in shot["candidates"][:1]:
+                    label = shot.get("purpose", "")
+                    entry = f"镜头{len(suggestions)+1}：{label} | EP{c['ep']} [{c['start']:.0f}s-{c['end']:.0f}s] {c['visual_summary'][:80]}"
+                    if c.get("shot_size"):
+                        entry += f" [{c['shot_size']}]"
+                    suggestions.append(entry)
+                if len(suggestions) >= num: break
+            if suggestions:
+                return {"suggestions": suggestions[:num], "shots": shots, "main_char": result.get("main_char", "")}
+    except Exception as e:
+        print(f"[storyboard] 导演Agent失败, 降级v3: {e}")
+
+    # 降级：原有v3分层匹配逻辑
+    fallback = _fallback_storyboard_suggest(narration, segment_context, cover, num)
+    return {"suggestions": fallback, "shots": shots, "main_char": ""}
+
+
+def _fallback_storyboard_suggest(narration: str, segment_context: dict = None, cover: str = "", num: int = 3) -> list:
     """分镜推荐 v3 — 分层结构化匹配: scene_map人物过滤 + VLM描述语义评分 + ASR时间锚定"""
     if not narration or not narration.strip():
         return []
@@ -207,7 +508,10 @@ def storyboard_suggest(narration: str, segment_context: dict = None, cover: str 
             continue
         ep = int(ep_dir.name[2:])
         sm_file = ep_dir / "scene_map.json"
-        vlm_file = ep_dir / "vlm_seg_cache_v2.json"
+        # v3 优先, v2 fallback
+        vlm_file = ep_dir / "vlm_seg_cache_v3.json"
+        if not vlm_file.exists():
+            vlm_file = ep_dir / "vlm_seg_cache_v2.json"
         if not sm_file.exists():
             continue
         try:
@@ -219,8 +523,10 @@ def storyboard_suggest(narration: str, segment_context: dict = None, cover: str 
             seg_chars = set(seg.get('characters', []))
             if target_chars and not (seg_chars & target_chars):
                 continue
-            vlm_desc = vlm.get(str(i), {}).get('description', '') or seg.get('event', '')
-            matches.append({
+            vlm_entry = vlm.get(str(i), {})
+            # v3: visual_summary | v2: description
+            vlm_desc = vlm_entry.get('visual_summary', '') or vlm_entry.get('description', '') or seg.get('event', '')
+            match = {
                 'ep': ep, 'scene_id': i,
                 'start': seg.get('time_range', [0, 0])[0],
                 'end': seg.get('time_range', [0, 0])[1],
@@ -228,7 +534,21 @@ def storyboard_suggest(narration: str, segment_context: dict = None, cover: str 
                 'chars': list(seg_chars),
                 'event': seg.get('event', ''),
                 'vlm_desc': vlm_desc,
-            })
+            }
+            # v3 结构化字段 (用于增强评分精度)
+            if 'shot_size' in vlm_entry:
+                match['shot_size'] = vlm_entry['shot_size']
+            if 'composition' in vlm_entry:
+                match['composition'] = vlm_entry['composition']
+            if 'emotional_tone' in vlm_entry:
+                match['emotional_tone'] = vlm_entry['emotional_tone']
+            if 'intensity' in vlm_entry:
+                match['intensity'] = vlm_entry['intensity']
+            if 'lighting' in vlm_entry:
+                match['lighting'] = vlm_entry['lighting']
+            if 'actions' in vlm_entry:
+                match['actions'] = vlm_entry['actions']
+            matches.append(match)
 
     # ── Step 3: 语义评分 ──
     KW_MAP = {

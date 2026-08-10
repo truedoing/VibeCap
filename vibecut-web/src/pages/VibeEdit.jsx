@@ -1,6 +1,6 @@
 /**
- * 分镜台 — AI 解说词 → 镜头匹配工作台
- * 双引擎：程序引擎(大预览+底部时间轴) + 源引擎(AI面板内轻量定位)
+ * 分镜台 v3 — 段落级分镜设计
+ * 双引擎：节目引擎(大预览+底部时间轴) + 分镜序列面板(右侧)
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
@@ -16,8 +16,7 @@ import {
 } from '@elah/editor'
 
 import ScriptPanel from '../components/ScriptPanel'
-import StoryboardPanel from '../components/StoryboardPanel'
-import ChatPanel from '../components/ChatPanel'
+import StoryboardSequence from '../components/StoryboardSequence'
 import { colors } from '../styles/theme'
 import { divider as dividerStyle } from '../styles/mixins'
 import SourceInspector from '../components/SourceInspector'
@@ -55,32 +54,23 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
   const didInit = useRef(false)
   const saveTimer = useRef(null)
 
-  // v0.13: 从 segments 响应中读取 project_type (drama/interview)，不再从 source_start 推断
   const projectType = segments?.project_type || (segments?.length > 0 && segments.some(s => s.source_start > 0) ? 'interview' : 'drama')
   const isInterview = projectType === 'interview'
 
-  // 初始化：口播2轨 / 电视剧4轨
-  // 依赖 isInterview：segments 异步到达后触发重初始化切换到 interview 模式
   useEffect(() => {
     try {
     programEngineRef.current = engine
     window.__vibe_prg_engine = engine
 
-    // v0.11: 若已初始化但 segments 到达后检测到模式需要从 drama→interview 切换，则强制重初始化
-    // initTrigger 递增会触发此 effect 重新执行
-    const timeline = project?.timeline
-    const mediaCache = project?.mediaCache
     const vibeTimeline = project?.vibe_timeline
     const vibeMediaCache = project?.vibe_mediaCache
 
     if (vibeTimeline && vibeMediaCache?.assets) {
       if (didInit.current) return
-      // v0.11: 检测缓存模式是否匹配 (drama=4轨, interview=2轨)
       const cachedTrackCount = vibeTimeline.tracks?.length || 0
       const expectedTrackCount = isInterview ? 2 : 4
       if (cachedTrackCount !== expectedTrackCount) {
         console.log(`[prg] 缓存模式不匹配 (cached=${cachedTrackCount} expected=${expectedTrackCount}), 重新初始化`)
-        // 跳过缓存，继续下方新布局创建
       } else {
         engine.loadProject(vibeTimeline)
         const store = useMediaLibraryStore.getState()
@@ -105,13 +95,11 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
       { id: generateId(), name: '旁白 TTS', kind: 'audio', order: 3, height: 44, locked: false, disabled: false, muted: false, solo: false },
     ]
 
-    // 如果之前已初始化为不同模式，先清除旧轨道
     if (didInit.current) {
       const prj = engine.getProject()
       const prevTrackCount = prj.tracks?.length || 0
       const newTrackCount = t.length
       if (prevTrackCount !== newTrackCount) {
-        // 移除所有旧 clips
         for (const track of prj.tracks) {
           const clips = prj.clips[track.id] || []
           for (const c of [...clips]) engine.removeClip(c.id, track.id)
@@ -128,10 +116,8 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
     } catch(e) { console.error('[prg] init error:', e) }
   }, [engine, isInterview])
 
-  // v0.13: 自动建轨 — interview 和 drama 各自逻辑
   const didAutoBuild = useRef(false)
   const [narrationMeta, setNarrationMeta] = useState(null)
-  // 加载 narration 数据（drama 自动建轨用）
   useEffect(() => {
     if (!taskId || isInterview) return
     fetch(`/narration.json?task=${taskId}`)
@@ -143,14 +129,11 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
   useEffect(() => {
     if (!proxyManifest?.proxies?.length || !didInit.current || didAutoBuild.current) return
     if (!segments?.length) return
-    // 已有缓存 timeline → 保留用户手动编辑成果
     if (project?.vibe_timeline) return
 
     try {
       let picks = {}
-
       if (isInterview) {
-        // ── 口播自动建轨 ──
         const hasSubClips = segments.some(s => s.sub_clips?.length > 0)
         if (hasSubClips) {
           let idx = 0
@@ -169,31 +152,25 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
             const startSec = s.source_start ?? 0
             const endSec = s.source_end ?? (startSec + 5)
             if (startSec <= 0 && endSec <= 0) return
-            const key = `${s.seg_id ?? 0}_0`
-            picks[key] = { main: [{ ep, sourceStartSec: startSec, sourceEndSec: endSec }] }
+            picks[`${s.seg_id ?? 0}_0`] = { main: [{ ep, sourceStartSec: startSec, sourceEndSec: endSec }] }
           })
         }
       } else {
-        // ── Drama 自动建轨 ──
-        // 1. segments_located 定位 → main clips
-        // 2. narration.json → NARR_DURATIONS + tts_segments
         const sorted = [...segments].sort((a, b) => (a.seg_id ?? 0) - (b.seg_id ?? 0))
         sorted.forEach(s => {
           const ep = s.video_episode || s.episode_marker?.episode
           const startSec = s.source_start
           const endSec = s.source_end
           if (ep && startSec != null && startSec > 0) {
-            const key = `${s.seg_id ?? 0}_0`
             const marginStart = Math.max(0, startSec - 2)
             const marginEnd = (endSec && endSec > startSec) ? endSec + 2 : startSec + 8
-            picks[key] = { main: [{ ep, sourceStartSec: marginStart, sourceEndSec: marginEnd }] }
+            picks[`${s.seg_id ?? 0}_0`] = { main: [{ ep, sourceStartSec: marginStart, sourceEndSec: marginEnd }] }
           }
         })
       }
 
       if (Object.keys(picks).length === 0) return
 
-      // 2. 构建旁白时长（drama 模式）
       const narrDurations = {}
       if (!isInterview && narrationMeta?.segments) {
         for (const ns of narrationMeta.segments) {
@@ -202,36 +179,26 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
         }
       }
 
-      // 3. build project
       const mode = isInterview ? 'interview' : 'drama'
       const { project: elahProject, mediaList } = buildProjectFromProxyPicks(
         picks, proxyManifest, [], { mode, narrDurations }
       )
 
-      // 4. 加载到 engine
       engine.loadProject(elahProject)
-
-      // 5. 注册媒体资源
       const store = useMediaLibraryStore.getState()
       const order = []
       for (const m of mediaList) {
         if (!store.assets[m.assetId]) store.addAsset(m)
         order.push(m.assetId)
       }
-
-      // 6. 持久化缓存
       saveTimelineCache(elahProject, { assets: { ...store.assets }, order }, 'vibe')
-
       didAutoBuild.current = true
       if (onReady) setTimeout(onReady, 50)
       setTimeout(() => prgTLRef?.current?.fitToWindow(), 100)
-
-      const modeLabel = isInterview ? (segments.some(s => s.sub_clips?.length > 0) ? '口播 精切' : '口播 粗段') : 'Drama'
-      console.log(`[prg] 🎬 ${modeLabel} 自动建轨: ${Object.keys(picks).length} segments → 时间轴`)
+      console.log(`[prg] 🎬 ${isInterview ? 'Interview' : 'Drama'} 自动建轨: ${Object.keys(picks).length} segments → 时间轴`)
     } catch (e) { console.error('[prg] auto-build error:', e) }
   }, [isInterview, didInit.current, segments, proxyManifest, narrationMeta, project?.vibe_timeline])
 
-  // proxyManifest 就绪 → 给必需轨道加占位 clip（确保轨道显示，跳过补充镜头/旁白）
   const didPlaceholders = useRef(false)
   useEffect(() => {
     if (!didInit.current || !proxyManifest?.proxies?.length || didPlaceholders.current) return
@@ -251,7 +218,6 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
     } catch(e) { console.error('[prg] placeholder error:', e) }
   }, [proxyManifest])
 
-  // 自动保存 — 仅当有实际内容时
   useEffect(() => {
     if (!didInit.current) return
     let empty = true
@@ -284,25 +250,24 @@ export default function VibeEdit() {
   const demuxRef = useRef(null)
 
   const [scriptW, setScriptW] = useState(380)
-  const [aiW, setAiW] = useState(460)
+  const [rightW, setRightW] = useState(460)
   const [scriptCollapsed, setScriptCollapsed] = useState(false)
-  const [aiCollapsed, setAiCollapsed] = useState(false)
+  const [rightCollapsed, setRightCollapsed] = useState(false)
   const [bottomPct, setTimelinePct] = useState(28)
-  const [cover, setCover] = useState('')  // 封面描述文案（不需要选镜头）
+  const [cover, setCover] = useState('')
 
   const [segments, setSegments] = useState([])
   const [curSid, setCurSid] = useState(null)
-  const [curSeq, setCurSeq] = useState('0')
-  const [curNarration, setCurNarration] = useState('')
+  const [curHighlight, setCurHighlight] = useState('')  // 当前台词文本
+  const [curNarration, setCurNarration] = useState('')   // 当前解说词文本
+  const [storyTrigger, setStoryTrigger] = useState(0)     // 每次策划分镜递增
   const [proxyManifest, setProxyManifest] = useState(null)
   const [prgReady, setPrgReady] = useState(false)
-  const [storySuggestions, setStorySuggestions] = useState(null)
-  const prgCurrentFrame = usePlaybackStore(s => s.currentFrame)  // 顶层调用，供源检视器同步
+  const prgCurrentFrame = usePlaybackStore(s => s.currentFrame)
 
   if (!demuxRef.current) { try { demuxRef.current = createDefaultDemuxerFactory() } catch(e) { console.warn('[vibe] demux:', e) } }
 
   useEffect(() => { fetchProxyManifest().then(setProxyManifest) }, [])
-  // 卸载前清理 portal 节点
   useEffect(() => {
     return () => {
       const mount = document.getElementById('source-inspector-mount')
@@ -314,27 +279,18 @@ export default function VibeEdit() {
     fetch(`/segments.json?task=${taskId}`).then(r => r.json()).then(d => {
       setSegments(d.segments || [])
       setCover(d.cover || '')
-      window.__vibe_segments = d.segments || []  // v0.11: 供 ProgramLoader 检测 interview mode
+      window.__vibe_segments = d.segments || []
       window.__vibe_cover = d.cover || ''
       if (d.segments?.length && curSid == null) setCurSid(d.segments[0].seg_id)
     }).catch(() => {})
   }, [taskId])
 
-  // v0.13: 从 segments 响应推断 project_type
-  const projectType = segments?.project_type || (segments?.length > 0 && segments.some(s => s.source_start > 0) ? 'interview' : 'drama')
-  const isInterview = projectType === 'interview'
-
-  const handleSelectSegment = useCallback((sid, seq) => {
-    setCurSid(sid); setCurSeq(seq || '0')
+  // v3: 台词点击 → ASR 精确定位 (直接 seek 源素材)
+  const handleDialogueClick = useCallback((sid) => {
+    setCurSid(sid)
     const seg = segments.find(s => s.seg_id === sid)
     if (seg) {
-      let ref = ''
-      if (seq === 'D') ref = (seg.highlight_text || '').substring(0, 200)
-      else { const ss = (seg.narration_text || '').split(/[。！？]/).filter(s => s.trim()); ref = (ss[parseInt(seq) || 0] || '').trim() }
-      setCurNarration(ref)
-      setStorySuggestions(null)
-
-      // v0.11: 段直达 — 如果 segment 已有 source_start, 直接 seek 源检视器, 跳过 AI 搜索
+      setCurHighlight(seg.highlight_text || '')
       const ss = seg.source_start
       const se = seg.source_end
       if (ss != null && ss > 0) {
@@ -348,24 +304,19 @@ export default function VibeEdit() {
     }
   }, [segments])
 
-  // AI 搜索结果 → 加载第一个结果 + 设置标记
-  const handleSearch = useCallback((results) => {
-    if (!results?.length) return
-    const ep = results[0].ep
-    if (window.__sourceLoadEpisode) window.__sourceLoadEpisode(ep)
-    if (window.__sourceSetMarkers) window.__sourceSetMarkers(results)
-  }, [])
+  // v3: 解说段点击 → 策划分镜
+  const handleStoryboard = useCallback((sid) => {
+    setCurSid(sid)
+    if (sid === -1) {
+      setCurNarration(cover || '')
+    } else {
+      const seg = segments.find(s => s.seg_id === sid)
+      setCurNarration(seg?.narration_text || seg?.highlight_text || '')
+    }
+    setStoryTrigger(t => t + 1)
+  }, [segments, cover])
 
-  // 点击搜索结果卡片 → 加载对应剧集 + seek 到对应时间
-  const handlePreviewClick = useCallback((result) => {
-    if (!result) return
-    const t = result.sourceStartSec ?? result.start ?? 0
-    const e = result.sourceEndSec ?? result.end ?? (t + 10)
-    if (window.__sourceLoadEpisode) window.__sourceLoadEpisode(result.ep, t, e)
-  }, [])
-
-  // 添加到节目引擎（inFrames, outFrames 由源检视器传入）
-  // trackType: 'main' (原声主镜头) | 'supp' (补充镜头)
+  // 添加到节目引擎
   const handleAddToProgram = useCallback((ep, inFrames, outFrames, trackType = 'main') => {
     const engine = programEngineRef.current
     if (!engine) return
@@ -375,25 +326,21 @@ export default function VibeEdit() {
     const sf = inFrames ?? 0; const of = outFrames ?? (sf + secondsToFrames(5, FPS))
     const df = of - sf
     const prj = engine.getProject()
-    // v0.13: 支持主镜头/补充镜头双轨
     const isSupp = trackType === 'supp'
     const vidTrackName = isSupp ? '补充镜头' : '原声主镜头'
-    const audTrackName = isSupp ? null : '原声主镜头 音频'  // 补充镜头不加音频轨
+    const audTrackName = isSupp ? null : '原声主镜头 音频'
     const prgVid = prj.tracks.find(t => t.name === vidTrackName)
     const prgAud = audTrackName ? prj.tracks.find(t => t.name === audTrackName) : null
     if (!prgVid) return
 
-    // 计算插入位置：轨道末尾（跟在已有 clip 之后），空轨则为 0
     const existingClips = prj.clips[prgVid.id] || []
     const insertFrame = existingClips.reduce((max, c) => Math.max(max, (c.startFrame || 0) + (c.durationFrames || 0)), 0)
 
     engine.batch(() => {
-      // 移除占位 clip
       for (const [tid, tClips] of Object.entries(prj.clips)) {
         for (const c of tClips) { if (c.name === '·') engine.removeClip(c.id, tid) }
       }
       const v = engine.addClip({ type: 'video', trackId: prgVid.id, name: `S${curSid ?? '?'} EP${ep}${isSupp ? ' 补' : ''}`, src: proxy, startFrame: insertFrame, durationFrames: df, sourceStartFrame: sf, sourceDurationFrames: df, volume: isSupp ? 0 : 1, opacity: 1 })
-      // Elah addClip 会忽略 sourceStartFrame/sourceDurationFrames，需 updateClip 回补
       engine.updateClip(v.id, prgVid.id, { sourceStartFrame: sf, sourceDurationFrames: df })
       let a = null
       if (prgAud) {
@@ -403,10 +350,10 @@ export default function VibeEdit() {
       }
     }, 'src→prg')
 
-    if (curSid != null && curSeq != null) {
-      addPick(curSid, curSeq, trackType, { ep, sourceStartSec: sf / FPS, sourceEndSec: of / FPS })
+    if (curSid != null) {
+      addPick(curSid, '0', trackType, { ep, sourceStartSec: sf / FPS, sourceEndSec: of / FPS })
     }
-  }, [proxyManifest, curSid, curSeq, addPick])
+  }, [proxyManifest, curSid, addPick])
 
   // 拖拽
   const dragX = (get, set, min, maxPct) => (e) => {
@@ -424,14 +371,13 @@ export default function VibeEdit() {
     document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up)
   }
 
-  const chatCtx = { sid: curSid, seq: curSeq, narration: curNarration, taskId, segments, cover }
-  const proxyEps = proxyManifest?.proxies?.map(p => p.ep)?.join(",") || ""
+  // v3: 分镜序列上下文 — 整段解说词
+  const storyCtx = { sid: curSid, narration: curNarration, taskId, segments, cover, trigger: storyTrigger }
   const leftW = scriptCollapsed ? 0 : scriptW
-  const rightW = aiCollapsed ? 0 : aiW
+  const rightPanelW = rightCollapsed ? 0 : rightW
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {/* ── 节目引擎 ── */}
       <EditorProvider fps={FPS} defaultTrackHeight={36} stage={STAGE}>
         <ProgramLoader prgTLRef={prgTLRef} proxyManifest={proxyManifest} onReady={() => setPrgReady(true)} segments={segments} taskId={taskId} />
         <ClipLinker />
@@ -447,15 +393,21 @@ export default function VibeEdit() {
                       <span className="text-xs font-medium text-foreground">脚本段</span>
                       <button onClick={() => setScriptCollapsed(true)} className="text-muted-foreground hover:text-foreground shrink-0">◀</button>
                     </div>
-                    <ScriptPanel segments={segments} curSid={curSid} curSeq={curSeq} onPickSentence={handleSelectSegment} picks={project.picks} collapsed={false} cover={cover} />
-                    <StoryboardPanel suggestions={storySuggestions} curSid={curSid} curSeq={curSeq} onSearch={(q) => { if (window.__sourceSetInput) window.__sourceSetInput(q) }} />
+                    <ScriptPanel
+                      segments={segments}
+                      curSid={curSid}
+                      onSelectSegment={handleDialogueClick}
+                      onStoryboard={handleStoryboard}
+                      picks={project.picks}
+                      cover={cover}
+                    />
                   </div>
                 )}
               </div>
               {scriptCollapsed ? <div style={{ width: 4, flexShrink: 0, cursor: 'col-resize', background: T.border }} onClick={() => setScriptCollapsed(false)} title="展开" />
                 : <VBar onMouseDown={dragX(() => scriptW, setScriptW, 200, 0.45)} />}
               <div style={{ flex: 1, minWidth: 200, position: 'relative', background: '#000' }}>
-                {demuxRef.current && <Preview demuxerFactory={demuxRef.current} style={{ width: '100%', height: '100%' }} />}
+                {demuxRef.current && <Preview demuxerFactory={demuxRef.current} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />}
               </div>
             </div>
             <HBar onMouseDown={dragTimeline} />
@@ -465,18 +417,24 @@ export default function VibeEdit() {
             </div>
           </div>
 
-          {/* ── 右：AI + 源检视器（全高）── */}
-          {aiCollapsed ? <div style={{ width: 4, flexShrink: 0, cursor: 'col-resize', background: T.border }} onClick={() => setAiCollapsed(false)} title="展开" />
-            : <VBar onMouseDown={dragX(() => aiW, setAiW, 260, 0.45)} />}
-          <div style={{ width: rightW, flexShrink: 0, overflow: 'hidden', display: rightW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: `1px solid ${T.border}` }}>
+          {/* ── 右：分镜序列 + 源检视器 ── */}
+          {rightCollapsed ? <div style={{ width: 4, flexShrink: 0, cursor: 'col-resize', background: T.border }} onClick={() => setRightCollapsed(false)} title="展开" />
+            : <VBar onMouseDown={dragX(() => rightW, setRightW, 260, 0.45)} />}
+          <div style={{ width: rightPanelW, flexShrink: 0, overflow: 'hidden', display: rightPanelW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: `1px solid ${T.border}` }}>
             <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 shrink-0">
-              <span className="text-xs font-medium text-foreground">AI 搜索</span>
-              <button onClick={() => setAiCollapsed(true)} className="text-muted-foreground hover:text-foreground">▶</button>
+              <span className="text-xs font-medium text-foreground">分镜序列</span>
+              <button onClick={() => setRightCollapsed(true)} className="text-muted-foreground hover:text-foreground">▶</button>
             </div>
+            {/* 分镜序列 — 上部，高度与预览区同步 */}
             <div style={{ flex: `${100 - bottomPct}%`, minHeight: 0, overflow: 'hidden' }}>
-              <ChatPanel context={chatCtx} onPreview={handlePreviewClick} onPick={null} onSearch={handleSearch} onSuggestions={setStorySuggestions} eps={proxyEps} isInterview={isInterview} />
+              <StoryboardSequence
+                context={storyCtx}
+                proxyManifest={proxyManifest}
+                onAddToProgram={handleAddToProgram}
+                taskId={taskId}
+              />
             </div>
-            {/* AI搜索 / 源预览 分隔条 — 拖拽同步两侧底部面板高度 */}
+            {/* 分隔条 — 拖拽同步时间线高度 */}
             <div onMouseDown={(e) => {
               e.preventDefault(); const s = bottomPct; const sy = e.clientY
               const ph = e.currentTarget.parentElement.clientHeight
@@ -486,7 +444,8 @@ export default function VibeEdit() {
             }} style={{ height: 5, flexShrink: 0, cursor: 'ns-resize', background: T.border, borderTop: `1px solid ${T.borderSubtle}` }}
               onMouseEnter={e => e.currentTarget.style.background = '#E11D48'}
               onMouseLeave={e => e.currentTarget.style.background = T.border} />
-            <div style={{ height: `${bottomPct}%`, flexShrink: 0, display: 'flex', flexDirection: 'column', borderTop: `1px solid ${T.border}` }}>
+            {/* 源检视器 — 下部，高度与时间线同步 */}
+            <div style={{ height: `${bottomPct}%`, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               {proxyManifest && (
                 <SourceInspector proxyManifest={proxyManifest} onAddToProgram={handleAddToProgram} timelineFrame={prgCurrentFrame} taskId={taskId} />
               )}

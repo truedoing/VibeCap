@@ -546,11 +546,11 @@ async def api_dialogue_match(request: Request):
 async def api_storyboard_suggest(request: Request):
     from handlers.dialogue import storyboard_suggest
     data = await request.json()
-    return {"suggestions": storyboard_suggest(
+    return storyboard_suggest(
         data.get("narration", ""),
         segment_context=data.get("segment_context"),
         cover=data.get("cover", ""),
-    )}
+    )
 
 
 @app.post("/script/analyze_transcript")
@@ -717,7 +717,10 @@ def api_data_quality(project: str = "都挺好"):
     for ep in range(1, 47):
         ep_dir = drama_dir / "sources" / f"ep{ep}"
         vlm = None; asr = None
-        if (ep_dir / "vlm_analysis_sliced.json").exists():
+        # v3: 读场景段级缓存, fallback sliced/旧格式
+        if (ep_dir / "vlm_seg_cache_v3.json").exists():
+            vlm = len(json.load(open(ep_dir / "vlm_seg_cache_v3.json")))
+        elif (ep_dir / "vlm_analysis_sliced.json").exists():
             vlm = len(json.load(open(ep_dir / "vlm_analysis_sliced.json")))
         elif (ep_dir / "vlm_merged.json").exists():
             vlm = len(json.load(open(ep_dir / "vlm_merged.json")))
@@ -733,7 +736,7 @@ def api_data_quality(project: str = "都挺好"):
             "ep": ep,
             "vlm": vlm or 0,
             "asr": asr or 0,
-            "has_sliced": (ep_dir / "vlm_analysis_sliced.json").exists(),
+            "has_vlm": (ep_dir / "vlm_seg_cache_v3.json").exists() or (ep_dir / "vlm_analysis_sliced.json").exists(),
         })
 
     return {"project": project, "episodes": episodes, "total": len(episodes)}

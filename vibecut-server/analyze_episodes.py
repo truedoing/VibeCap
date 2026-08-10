@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-EP VLM 分析脚本 v2.3 — 三层人物推理 + scene_map 驱动切分
+EP VLM 分析脚本 v3 — 三层推理 + 结构化视觉元数据
 
-Layer 1: DeepSeek 读 ASR + 剧情概要 → 结构化场景-人物映射
+Layer 1: DeepSeek 读 ASR + 剧情概要 → 结构化场景-人物映射 (scene_map.json)
 Layer 2: ASR 关键词锚定场景时间边界
-Layer 3: VLM 只做画面理解（已知人物/地点/剧情）
-Layer 4: 场景段 → 10s 切片拆解（BGE 索引需要细粒度）
+Layer 3: VLM 结构化画面理解 → 场景段级视觉元数据 (vlm_seg_cache_v3.json)
 
 用法:
   python3 analyze_episodes.py --ep 41                      # 完整一集
@@ -294,7 +293,7 @@ def pick_keyframes_for_segment(sm, frames, frame_times, max_frames=2):
 
 
 def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
-    """VLM 分析一个场景段 — 2帧 + 纯文本描述，max_tokens=500"""
+    """VLM 分析一个场景段 — 2帧 + 结构化JSON输出（v3: 导演级视觉元数据）"""
     start, end = sm['time_range']
     seg_frames = pick_keyframes_for_segment(sm, frames, frame_times)
 
@@ -307,10 +306,21 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
     loc_str = sm.get('location', '未知')
     event_str = sm.get('event', '未知')
 
+    # v3: 结构化JSON输出 — 导演级视觉元数据
     prompt = (
         f"角色={chars_str}  地点={loc_str}  事件={event_str}\n"
-        f"只用上述角色名, 看不清就写衣色。\n"
-        f"用≤80字描述画面的人物神态、情绪氛围、镜头语言。直接输出, 不要标题。"
+        f"只用上述角色名，看不清就写衣色。\n"
+        f"分析画面，输出 JSON（不要 markdown 代码块）:\n"
+        f'{{\n'
+        f'  "visual_summary": "≤80字画面描述",\n'
+        f'  "shot_size": "特写/近景/中景/全景/远景/大远景",\n'
+        f'  "composition": "单人/双人/三人/群像",\n'
+        f'  "angle": "平视/俯拍/仰拍",\n'
+        f'  "emotional_tone": "情绪标签≤8字",\n'
+        f'  "intensity": 强度1-5,\n'
+        f'  "lighting": "自然光/暖调/冷调/暗调/高调",\n'
+        f'  "actions": ["动作1","动作2"]\n'
+        f'}}'
     )
     if prev_desc:
         prompt = f"前情: {prev_desc}\n" + prompt
@@ -320,7 +330,7 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
     payload = {
         "model": VLM_MODEL,
         "messages": [{"role": "user", "content": content_parts}],
-        "max_tokens": 500,  # 2帧 + 短prompt → VLM思考消耗小，500足够
+        "max_tokens": 1200,  # v3: 结构化JSON + 2帧描述 → 需要充足空间
     }
 
     raw = ""
@@ -338,38 +348,189 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
                 return {"error": str(e), "start": start, "end": end}
             time.sleep(2)
 
-    # 检查是否所有内容都在 <thinking> 块内
-    raw_clean = raw.strip()
-    thinking_match = re.search(r'<thinking>(.*?)</thinking>', raw_clean, re.DOTALL)
-    if thinking_match:
-        after_thinking = raw_clean[thinking_match.end():].strip()
-        if after_thinking:
-            raw_clean = after_thinking
-        else:
-            think_content = thinking_match.group(1)
-            sentences = re.split(r'[。！？\n]', think_content)
-            raw_clean = sentences[-1].strip() if sentences else raw_clean
-    # 移除 markdown 标记
-    description = re.sub(r'^#{1,4}\s*', '', raw_clean)
-    description = re.sub(r'\*\*', '', description)
-    description = re.sub(r'\n+', ' ', description).strip()
-    # 截断到 200 字
-    if len(description) > 200:
-        description = description[:200]
+    # ── JSON 解析 + 容错 ──
+    parsed = _parse_vlm_json(raw)
 
-    chars = [c for c in KNOWN_CHARACTERS if c in description]
+    # 用 scene_map 信息补充：验证人物标签（从文本中提取已知角色名）
+    visible_chars = [c for c in KNOWN_CHARACTERS if c in parsed.get("visual_summary", "")]
+    # 也检查整个 raw 文本
+    if not visible_chars:
+        visible_chars = [c for c in KNOWN_CHARACTERS if c in raw]
 
     return {
-        "scene_id": seg_index,
+        "scene_map_index": seg_index,
         "start": round(start, 2),
         "end": round(end, 2),
-        "description": description,
+        "visual_summary": parsed.get("visual_summary", "")[:200],
+        "shot_size": parsed.get("shot_size", "未知"),
+        "composition": parsed.get("composition", "未知"),
+        "angle": parsed.get("angle", "未知"),
+        "emotional_tone": parsed.get("emotional_tone", ""),
+        "intensity": parsed.get("intensity", 3),
+        "lighting": parsed.get("lighting", "未知"),
+        "actions": parsed.get("actions", []),
         "_tokens": {
             "prompt_tokens": usage.get("prompt_tokens", 0),
             "completion_tokens": usage.get("completion_tokens", 0),
             "total_tokens": usage.get("total_tokens", 0),
         },
-        "_chars": chars,
+        "_chars": visible_chars,
+    }
+
+
+def _parse_vlm_json(raw_text: str) -> dict:
+    """解析 VLM 结构化 JSON 输出，多层容错"""
+    VALID_SHOT_SIZES = {"特写", "近景", "中景", "全景", "远景", "大远景"}
+    VALID_COMPOSITIONS = {"单人", "双人", "三人", "群像"}
+    VALID_ANGLES = {"平视", "俯拍", "仰拍"}
+    VALID_LIGHTING = {"自然光", "暖调", "冷调", "暗调", "高调"}
+    DEFAULTS = {
+        "visual_summary": "",
+        "shot_size": "中景",
+        "composition": "单人",
+        "angle": "平视",
+        "emotional_tone": "",
+        "intensity": 3,
+        "lighting": "自然光",
+        "actions": [],
+    }
+
+    raw = raw_text.strip()
+
+    # 0: 剥离 <thinking> 块 (MiMo 可能把推理内容塞进 thinking 标签)
+    thinking_match = re.search(r'<thinking>(.*?)</thinking>', raw, re.DOTALL)
+    if thinking_match:
+        after_thinking = raw[thinking_match.end():].strip()
+        if after_thinking:
+            raw = after_thinking
+        else:
+            # thinking 块占满整个输出，尝试从其中提取描述性内容
+            think_content = thinking_match.group(1)
+            sentences = re.split(r'[。！？\n]', think_content)
+            raw = sentences[-1].strip() if sentences else raw
+
+    # 策略1: 直接解析全体 JSON
+    result = _try_parse_json(raw)
+    if result:
+        return _validate_and_fill(result, VALID_SHOT_SIZES, VALID_COMPOSITIONS,
+                                  VALID_ANGLES, VALID_LIGHTING, DEFAULTS)
+
+    # 策略2: 提取 markdown 代码块中的 JSON
+    code_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
+    if code_match:
+        result = _try_parse_json(code_match.group(1))
+        if result:
+            return _validate_and_fill(result, VALID_SHOT_SIZES, VALID_COMPOSITIONS,
+                                      VALID_ANGLES, VALID_LIGHTING, DEFAULTS)
+
+    # 策略3: 提取第一个 { } 块
+    brace_match = re.search(r'\{.*\}', raw, re.DOTALL)
+    if brace_match:
+        result = _try_parse_json(brace_match.group(0))
+        if result:
+            return _validate_and_fill(result, VALID_SHOT_SIZES, VALID_COMPOSITIONS,
+                                      VALID_ANGLES, VALID_LIGHTING, DEFAULTS)
+
+    # 策略3.5: JSON 截断容错 — 尝试补全缺失的 } 再解析
+    truncated = raw.strip()
+    if truncated.startswith('{') and not truncated.rstrip().endswith('}'):
+        # 计算缺失的闭合括号数
+        open_cnt = truncated.count('{') - truncated.count('}')
+        completed = truncated + '}' * open_cnt
+        result = _try_parse_json(completed)
+        if result:
+            return _validate_and_fill(result, VALID_SHOT_SIZES, VALID_COMPOSITIONS,
+                                      VALID_ANGLES, VALID_LIGHTING, DEFAULTS)
+        # 尝试截断到最后一个逗号后补全
+        last_comma = truncated.rfind(',')
+        if last_comma > 0:
+            completed = truncated[:last_comma] + '}' * (open_cnt + 1)
+            result = _try_parse_json(completed)
+            if result:
+                return _validate_and_fill(result, VALID_SHOT_SIZES, VALID_COMPOSITIONS,
+                                          VALID_ANGLES, VALID_LIGHTING, DEFAULTS)
+
+    # 策略4: 正则提取 — 从截断/损坏的 JSON 中提取已知字段
+    regex_result = {}
+    for field, pattern in [
+        ('visual_summary', r'"visual_summary"\s*:\s*"([^"]*)"'),
+        ('shot_size', r'"shot_size"\s*:\s*"([^"]*)"'),
+        ('composition', r'"composition"\s*:\s*"([^"]*)"'),
+        ('angle', r'"angle"\s*:\s*"([^"]*)"'),
+        ('emotional_tone', r'"emotional_tone"\s*:\s*"([^"]*)"'),
+        ('lighting', r'"lighting"\s*:\s*"([^"]*)"'),
+    ]:
+        m = re.search(pattern, raw)
+        if m:
+            regex_result[field] = m.group(1)
+    # intensity
+    im = re.search(r'"intensity"\s*:\s*(\d+)', raw)
+    if im:
+        regex_result['intensity'] = int(im.group(1))
+    # actions
+    am = re.search(r'"actions"\s*:\s*(\[.*?\])', raw, re.DOTALL)
+    if am:
+        try:
+            regex_result['actions'] = json.loads(am.group(1))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    if regex_result.get('visual_summary'):
+        return _validate_and_fill(regex_result, VALID_SHOT_SIZES, VALID_COMPOSITIONS,
+                                  VALID_ANGLES, VALID_LIGHTING, DEFAULTS)
+
+    # 策略5: 完全降级 — 整段文本当作 visual_summary
+    cleaned = re.sub(r'<thinking>.*?</thinking>', '', raw, flags=re.DOTALL)
+    cleaned = re.sub(r'^#{1,4}\s*', '', cleaned)
+    cleaned = re.sub(r'\*\*', '', cleaned)
+    cleaned = re.sub(r'\n+', ' ', cleaned).strip()
+    if len(cleaned) > 200:
+        cleaned = cleaned[:200]
+    print(f"    ⚠ VLM JSON 解析失败，降级为纯文本. raw[:100]={raw[:100]}")
+    return {**DEFAULTS, "visual_summary": cleaned}
+
+
+def _try_parse_json(text: str) -> dict | None:
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _validate_and_fill(parsed: dict, valid_shots, valid_comp, valid_ang, valid_light, defaults: dict) -> dict:
+    """校验字段值，不在合法枚举内的回退为默认值"""
+    result = {}
+    result["visual_summary"] = str(parsed.get("visual_summary", defaults["visual_summary"]))[:200]
+    result["shot_size"] = parsed.get("shot_size", "") if parsed.get("shot_size", "") in valid_shots else defaults["shot_size"]
+    result["composition"] = parsed.get("composition", "") if parsed.get("composition", "") in valid_comp else defaults["composition"]
+    result["angle"] = parsed.get("angle", "") if parsed.get("angle", "") in valid_ang else defaults["angle"]
+    result["emotional_tone"] = str(parsed.get("emotional_tone", defaults["emotional_tone"]))[:20]
+    intensity = parsed.get("intensity", defaults["intensity"])
+    try:
+        result["intensity"] = max(1, min(5, int(intensity)))
+    except (ValueError, TypeError):
+        result["intensity"] = defaults["intensity"]
+    result["lighting"] = parsed.get("lighting", "") if parsed.get("lighting", "") in valid_light else defaults["lighting"]
+    actions = parsed.get("actions", defaults["actions"])
+    result["actions"] = actions if isinstance(actions, list) else defaults["actions"]
+    return result
+
+
+def _skip_opening_result(idx: int, sm: dict) -> dict:
+    """片头段跳过 VLM，直接用 scene_map 信息生成降级结果"""
+    return {
+        "scene_map_index": idx,
+        "start": round(sm["time_range"][0], 2),
+        "end": round(sm["time_range"][1], 2),
+        "visual_summary": f"{sm.get('location', '')}。{sm.get('event', '')}",
+        "shot_size": "中景",
+        "composition": "单人",
+        "angle": "平视",
+        "emotional_tone": sm.get("mood", ""),
+        "intensity": 3,
+        "lighting": "自然光",
+        "actions": [],
+        "_tokens": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "_chars": [c for c in KNOWN_CHARACTERS if c in sm.get("characters", [])],
     }
 
 
@@ -443,68 +604,66 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
             frame_times[f] = int(parts[1])
 
     # [5/5] VLM
-    effective_map = [sm for sm in scene_map if sm['time_range'][0] >= 60]
-    print(f"\n[5/5] VLM ({len(effective_map)} 段)")
+    # v3: 使用 scene_map 全集（不再跳过前60s），VLM 结果按 scene_map 原始下标存储
+    print(f"\n[5/5] VLM ({len(scene_map)} 段)")
 
-    cache_file = work_dir / "vlm_seg_cache_v2.json"
+    cache_file = work_dir / "vlm_seg_cache_v3.json"
     cache = json.load(open(cache_file)) if cache_file.exists() else {}
 
     t0 = time.time()
-    seg_results = [None] * len(effective_map)
-    todo = [i for i in range(len(effective_map)) if str(i) not in cache]
+    seg_results = [None] * len(scene_map)
+    todo = [i for i in range(len(scene_map)) if str(i) not in cache]
+
+    # 先加载已缓存的条目到 seg_results，确保前情上下文可用
+    for i in range(len(scene_map)):
+        if str(i) in cache and i not in todo:
+            seg_results[i] = cache[str(i)]
 
     if todo:
         print(f"  待分析: {len(todo)} 段 (串行)")
         for i in todo:
+            sm = scene_map[i]
+            # 跳过片头 (<60s) 的段：用降级默认值，避免 VLM 浪费在片头
+            if sm['time_range'][0] < 60:
+                r_clean = _skip_opening_result(i, sm)
+                seg_results[i] = r_clean
+                cache[str(i)] = r_clean
+                json.dump(cache, open(cache_file, 'w'), ensure_ascii=False, indent=2)
+                print(f"  [{i}] [skip] 片头段 {sm['time_range']}")
+                continue
+
             try:
-                prev = seg_results[i-1].get("description", "")[:80] if i > 0 and seg_results[i-1] else ""
-                r = analyze_segment_vlm(i, effective_map[i], frames, frame_times, prev)
+                prev = seg_results[i-1].get("visual_summary", "")[:80] if i > 0 and seg_results[i-1] else ""
+                r = analyze_segment_vlm(i, sm, frames, frame_times, prev)
                 r_clean = {k: v for k, v in r.items() if v is not None}
                 seg_results[i] = r_clean
                 cache[str(i)] = r_clean
                 json.dump(cache, open(cache_file, 'w'), ensure_ascii=False, indent=2)
                 chars = r_clean.get("_chars", [])
-                expected = set(effective_map[i].get('characters', []))
+                expected = set(sm.get('characters', []))
                 ok = "ok" if (set(chars) & expected or not expected) else "--"
-                desc = r_clean.get("description", "")[:60]
+                desc = r_clean.get("visual_summary", "")[:60]
                 tok = r_clean.get("_tokens", {})
                 print(f"  [{i}] [{ok}] {desc}... (in:{tok.get('prompt_tokens',0)} out:{tok.get('completion_tokens',0)})")
             except Exception as e:
                 print(f"  [{i}] 失败: {e}")
     else:
-        seg_results = [cache[str(i)] for i in range(len(effective_map))]
+        seg_results = [cache[str(i)] for i in range(len(scene_map))]
         print(f"  全部复用缓存")
 
     total_prompt = sum(r.get("_tokens", {}).get("prompt_tokens", 0) for r in seg_results if r)
     total_completion = sum(r.get("_tokens", {}).get("completion_tokens", 0) for r in seg_results if r)
     elapsed = time.time() - t0
 
-    # 切片
-    sliced = []
-    for seg in seg_results:
-        if not seg or not seg.get("description"): continue
-        seg_start, seg_end = seg["start"], seg["end"]
-        cursor = seg_start
-        while cursor < seg_end:
-            se = min(cursor + 10, seg_end)
-            sliced.append({"type": "vlm", "ep": ep, "scene_id": seg["scene_id"],
-                           "start": round(cursor,2), "end": round(se,2),
-                           "description": seg["description"], "_chars": seg.get("_chars",[])})
-            cursor = se
-
-    sliced_file = work_dir / "vlm_analysis_sliced.json"
-    json.dump(sliced, open(sliced_file, 'w'), ensure_ascii=False, indent=2)
-
-    valid = [r for r in seg_results if r and r.get("description")]
+    valid = [r for r in seg_results if r and r.get("visual_summary")]
     char_ok = sum(1 for r in valid
-                  if set(r.get("_chars",[])) & set(effective_map[r["scene_id"]].get("characters",[]))
-                  or not effective_map[r["scene_id"]].get("characters"))
+                  if set(r.get("_chars", [])) & set(scene_map[r["scene_map_index"]].get("characters", []))
+                  or not scene_map[r["scene_map_index"]].get("characters"))
 
-    print(f"\n✅ EP{ep}: {len(effective_map)}段 → {len(sliced)}切片, {len(asr_segments)} ASR")
+    print(f"\n✅ EP{ep}: {len(scene_map)}段 → VLM {len(valid)}段有效, {len(asr_segments)} ASR")
     print(f"   Token: {total_prompt+total_completion:,} ({elapsed:.0f}s)")
     print(f"   人物: {char_ok}/{len(valid)} ({char_ok/len(valid)*100:.0f}%)" if valid else "")
-    print(f"   输出: {sliced_file.name}")
-    return sliced, seg_results
+    return seg_results
 
 
 def main():

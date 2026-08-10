@@ -1,7 +1,7 @@
-# VibeCut 架构设计 v3
+# VibeCut 架构设计 v4
 
-> 统一电视剧与口播采访的工作流。v1.1 架构重构后。
-> 2026-08-08 · 基于 FastAPI + 模块化架构。
+> 导演Agent化分镜：从机械匹配到叙事驱动的分镜设计。
+> 2026-08-10 · 基于 FastAPI + React + DeepSeek导演推理。
 
 ---
 
@@ -84,41 +84,44 @@ vibecut-server/
 
 ## 三、数据台：双阶段流水线
 
-### 3.1 Phase A — 素材准备
+### 3.1 Phase A — 素材准备 (v3 结构化视觉元数据)
 
 ```
-电视剧流水线:                       口播流水线:
-  analyze_episodes.py                classify_transcript.py
-  ├─ 场景切分(10s)                   ├─ LLM分类 (content/meta/guide/filler)
-  ├─ ASR转写(faster-whisper)         ├─ LLM分段 (5-8个主题组)
-  └─ VLM分析(MiMo)                   └─ 生成标准化文案
+电视剧流水线 v3:                    口播流水线:
+  analyze_episodes.py               classify_transcript.py
+  ├─ Layer 1: DeepSeek 读ASR        ├─ LLM分类 (content/meta/guide/filler)
+  │   → scene_map.json              ├─ LLM分段 (5-8个主题组)
+  │    (人物/地点/事件/情绪, 场景级)   └─ 生成标准化文案
+  ├─ Layer 2: ASR 精确时间锚定
+  └─ Layer 3: MiMo VLM 结构化输出     clean_interview_data.py
+      → vlm_seg_cache_v3.json        ├─ LLM文本清洗 (去废词/口误)
+        (景别/构图/视角/情绪/强度       ├─ 说话人识别 (host/guest)
+         /光线/动作, 每段8个字段)       └─ 输出 classified_enhanced.json
 
-                                      clean_interview_data.py
-                                      ├─ LLM文本清洗 (去废词/口误)
-                                      ├─ 说话人识别 (host/guest)
-                                      └─ 输出 classified_enhanced.json
+v3 关键变化:
+  · VLM 不再认人脸，只负责视觉元数据
+  · 场景段级索引 (不再做10s切片展开)
+  · 814 场景段 / 46集，572种情绪标签
+  · 景别分布: 中景58%, 近景36%, 全景4%
+  · 构图分布: 单人51%, 双人38%, 三人6%
 
 产出:                              产出:
   sources/ep{N}/                      sources_clean/
-  ├─ asr_result.json                  ├─ classified.json
-  ├─ vlm_analysis.json                ├─ classified_enhanced.json
-  └─ scenes.json                      ├─ segmented.json
-                                      └─ content_report.json
+  ├─ scene_map.json                   ├─ classified.json
+  ├─ vlm_seg_cache_v3.json           ├─ classified_enhanced.json
+  ├─ asr_result.json                  └─ segmented.json
+  └─ scenes.json
 ```
 
 ### 3.2 Phase B — 深度索引
 
 ```
 电视剧流水线:                       口播流水线:
-  cross_calibrate.py                 build_index.py (自动识别项目类型)
-  ├─ ASR ↔ VLM 交叉校准              ├─ 优先使用 enhanced 数据
-  │                                   ├─ speaker边界断开分块
-  clean_data.py                       ├─ guest-only 建索引
-  ├─ ASR碎片合并                      └─ BGE 768维 → .npy + .json
-  ├─ VLM场景智能合并
-  │                                   semantic_embeddings.npy
-  build_index.py                      semantic_metas.json
-  └─ BGE语义索引重建
+  build_index.py (自动识别项目类型)
+  ├─ v3场景段 → BGE索引              ├─ 优先使用 enhanced 数据
+  │  (结构化标签注入索引文本)          ├─ speaker边界断开分块
+  │  "[景别:中景] [构图:双人]..."     ├─ guest-only 建索引
+  └─ npy + json mmap                 └─ BGE 768维 → .npy + .json
 ```
 
 ---
@@ -157,21 +160,84 @@ LLM 通读全部 ASR → 理解完整故事 → 一次性输出分组段落脚�
 
 ---
 
-## 五、分镜台：解说词→镜头匹配
+## 五、分镜台 v4：导演Agent化
+
+### 5.1 范式转变
 
 ```
-消费 segments.json，按项目类型选择策略:
-
-电视剧:
-  narration_text → BGE语义搜索 → VLM画面匹配 → Elah 4轨
-  4轨: 原声主镜头 | 原声音频 | 补充镜头 | 旁白TTS
-
-口播:
-  highlight_text → 源视频时间戳定位 → 跳切串联
-  可走两条路径:
-    A. Elah编辑器 (同电视剧)
-    B. CapCut自动导出 (export_capcut.py)
+v3 (机械匹配):                       v4 (导演Agent):
+  解说句1 → 搜索"苏大强" → 贴镜头         解说段 → 导演理解叙事 → 设计分镜方案
+  解说句2 → 搜索"对峙"   → 贴镜头                   ↓
+  解说句3 → 搜索"明玉"   → 贴镜头           逐镜结构化查询 → 数据匹配
+                                                    ↓
+  结果: 碎片化拼贴, 缺乏视觉叙事              结果: 有递进关系的分镜序列
 ```
+
+**核心理念**: 从"解说词作为搜索字符串"升级为"解说词作为叙事意图 → 翻译为导演语汇 → 精确查询源素材"。
+
+### 5.2 导演Agent 三层架构
+
+```
+POST /storyboard_suggest { narration, segment_context, cover }
+         │
+         ▼
+┌─────────────────────────────────────────────────────┐
+│ Layer 1: LLM 叙事理解 (DeepSeek)                      │
+│   输入: 解说词 + cover上下文 + 角色出场统计             │
+│   推理: 主题 → 主角推断 → 情绪弧线 → 分镜设计           │
+│   输出: { main_char, shots: [{purpose, characters,    │
+│           shot_size, emotional_tone, intensity_min}]} │
+├─────────────────────────────────────────────────────┤
+│ Layer 2: 人物交叉校验                                  │
+│   · cover 中出现的角色 = 决定性证据, 覆盖LLM推断         │
+│   · 角色必须在 scene_map 已知范围内                     │
+│   · 场景数 < 10 的角色标记为可疑                        │
+├─────────────────────────────────────────────────────┤
+│ Layer 3: 结构化匹配引擎 (_match_shot_query)              │
+│   在 46集×814场景段 中逐镜过滤:                         │
+│     · 人物精确匹配 (+15/人)                             │
+│     · 情绪标签匹配 (+8/命中)                            │
+│     · 强度阈值过滤 (+3/级)                              │
+│     · 景别精确匹配 (+6) / 近似匹配 (按距离衰减)          │
+│     · 地点/动作提示匹配 (+4)                            │
+│   每镜返回 top-5 候选 + 备选方案                        │
+└─────────────────────────────────────────────────────┘
+         │
+         ▼
+{ shots: [{purpose, candidates: [{ep,start,end,
+   visual_summary,shot_size,emotional_tone,...}]}] }
+```
+
+### 5.3 降级机制
+
+导演Agent 失败时自动降级为 v3 分层关键词匹配（scene_map人物过滤 + KW_MAP情绪关键词 + BGE轻量精排 + ASR锚定）。
+
+### 5.4 前端交互
+
+```
+┌────────────┬──────────────────┬──────────────────────┐
+│ ScriptPanel│ Preview+Timeline │ StoryboardSequence   │
+│ (段落级)    │                  │                       │
+│            │                  │ 镜1: 建立苏明成状态    │
+│ 🎣 Hook    │                  │  EP15 [600s] 中景 低落│
+│ S0 台词    │                  │  [预览] [替换] [加入]   │
+│   解说 ▶   │                  │                       │
+│            │                  │ 镜2: 展现窝里横       │
+│ S1 台词    │                  │  EP26 [150s] 中景 愤怒│
+│   解说 ▶   │                  │  [预览] [替换] [加入]   │
+│            │                  │                       │
+│            │                  │ [全部加入时间线]       │
+│            │                  ├──────────────────────│
+│            │                  │ SourceInspector      │
+├────────────┴──────────────────┴──────────────────────┤
+│ Timeline (Elah 4轨)                                   │
+└──────────────────────────────────────────────────────┘
+```
+
+- **ScriptPanel**: 段落级，台词行 + 解说行分离。点击解说行 = 展开 + 触发策划分镜
+- **StoryboardSequence**: 展示导演Agent输出的分镜序列，每镜带5个备选候选
+- **"替换"按钮**: 循环切换到下一个备选候选
+- **"加入时间线"**: 单镜或全部一键导入 Elah 时间轴
 
 ---
 
@@ -221,4 +287,4 @@ VibeCut/
 
 ---
 
-> 最后更新：2026-08-08 · v1.1.0
+> 最后更新：2026-08-10 · v4.0.0 · 导演Agent化

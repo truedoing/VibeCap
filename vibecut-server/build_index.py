@@ -119,31 +119,67 @@ def build_drama_index(project_dir, drama_name):
     print(f"[drama] 发现 {len(eps)} 集: {eps}")
 
     texts, metas = [], []
+    vlm_count = 0
     for ep in eps:
-        vlm_path = sources_dir / f"ep{ep}" / "vlm_analysis_sliced.json"
-        if not vlm_path.exists():
-            vlm_path = sources_dir / f"ep{ep}" / "vlm_merged.json"
-        if not vlm_path.exists():
-            vlm_path = sources_dir / f"ep{ep}" / "vlm_analysis.json"
-        if vlm_path.exists():
-            for s in json.load(open(vlm_path)):
+        # v3: 场景段级结构化数据 (不再切片), fallback v2 sliced
+        cache_v3 = sources_dir / f"ep{ep}" / "vlm_seg_cache_v3.json"
+        if cache_v3.exists():
+            cache = json.load(open(cache_v3))
+            for key, s in cache.items():
                 if s is None: continue
-                if "skip_opening" in s.get("tags", []): continue
-                text = s.get("description", "")
-                # 去掉可能存在的校准后缀（纯文本后缀不影响语义，但保持索引干净）
-                cal_marker = "\n[人物校准:"
-                if cal_marker in text:
-                    text = text[:text.index(cal_marker)]
-                if len(text) > 10:
-                    texts.append(text)
-                    metas.append({"type": "vlm", "ep": ep, "scene_id": s.get("scene_id", 0),
-                                  "start": s["start"], "end": s["end"], "text": text[:200]})
-                # subtitles 字段 v2.4 已不再产出, 保留兼容
-                for sub in s.get("subtitles", []):
-                    if len(sub) >= 3:
-                        texts.append(sub)
-                        metas.append({"type": "sub", "ep": ep, "scene_id": s.get("scene_id", 0),
-                                      "start": s["start"], "end": s["end"], "text": sub[:200]})
+                visual = s.get("visual_summary", "")
+                if len(visual) < 10: continue
+
+                tags_parts = []
+                if s.get("shot_size"):     tags_parts.append(f"景别:{s['shot_size']}")
+                if s.get("composition"):   tags_parts.append(f"构图:{s['composition']}")
+                if s.get("angle"):         tags_parts.append(f"视角:{s['angle']}")
+                if s.get("emotional_tone"): tags_parts.append(f"情绪:{s['emotional_tone']}")
+                if s.get("lighting"):      tags_parts.append(f"光线:{s['lighting']}")
+                tag_prefix = " ".join(f"[{t}]" for t in tags_parts)
+                text = f"{tag_prefix} {visual}".strip()
+
+                meta_entry = {
+                    "type": "vlm", "ep": ep,
+                    "scene_id": s.get("scene_map_index", int(key)),
+                    "start": s["start"], "end": s["end"],
+                    "text": text[:300],
+                    "shot_size": s.get("shot_size", ""),
+                    "composition": s.get("composition", ""),
+                    "angle": s.get("angle", ""),
+                    "emotional_tone": s.get("emotional_tone", ""),
+                    "intensity": s.get("intensity", 3),
+                    "lighting": s.get("lighting", ""),
+                    "actions": s.get("actions", []),
+                }
+                texts.append(text)
+                metas.append(meta_entry)
+                vlm_count += 1
+        else:
+            # v2 fallback: 切片文件
+            vlm_path = sources_dir / f"ep{ep}" / "vlm_analysis_sliced.json"
+            if not vlm_path.exists():
+                vlm_path = sources_dir / f"ep{ep}" / "vlm_merged.json"
+            if not vlm_path.exists():
+                vlm_path = sources_dir / f"ep{ep}" / "vlm_analysis.json"
+            if vlm_path.exists():
+                for s in json.load(open(vlm_path)):
+                    if s is None: continue
+                    if "skip_opening" in s.get("tags", []): continue
+                    text = s.get("description", "")
+                    cal_marker = "\n[人物校准:"
+                    if cal_marker in text:
+                        text = text[:text.index(cal_marker)]
+                    if len(text) > 10:
+                        texts.append(text)
+                        metas.append({"type": "vlm", "ep": ep, "scene_id": s.get("scene_id", 0),
+                                      "start": s["start"], "end": s["end"], "text": text[:200]})
+                        vlm_count += 1
+                    for sub in s.get("subtitles", []):
+                        if len(sub) >= 3:
+                            texts.append(sub)
+                            metas.append({"type": "sub", "ep": ep, "scene_id": s.get("scene_id", 0),
+                                          "start": s["start"], "end": s["end"], "text": sub[:200]})
         asr_path = sources_dir / f"ep{ep}" / "asr_result.json"
         if asr_path.exists():
             for a in json.load(open(asr_path)):
@@ -153,7 +189,7 @@ def build_drama_index(project_dir, drama_name):
                     metas.append({"type": "asr", "ep": ep, "start": a["start"], "end": a["end"],
                                   "text": text[:200]})
 
-    print(f"[drama] 编码 {len(texts)} 条...")
+    print(f"[drama] 编码 {len(texts)} 条 (VLM:{vlm_count} ASR:{len(texts)-vlm_count})...")
     embeddings = model.encode(texts, show_progress_bar=True, batch_size=32, normalize_embeddings=True)
     save_index(project_dir, embeddings, metas, texts)
     return embeddings, metas
