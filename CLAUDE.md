@@ -1,4 +1,4 @@
-# VibeCut — AI 影视解说/口播导演台 v1.2
+# VibeCut — AI 影视解说/口播导演台 v2.5
 
 ## 最高准则：三位一体
 
@@ -60,13 +60,23 @@ VibeCut/
 ├── vibecut-server/            ← Python 后端 (端口8765)
 │   ├── main.py                     ← FastAPI 入口 (v1.1)
 │   ├── build_index.py              ← BGE索引统一入口
-│   ├── vlm_char_calibrate.py       ← VLM人物校准 (v1.2)
-│   ├── analyze_episodes.py         ← VLM场景+ASR分析
-│   ├── cross_calibrate.py          ← ASR↔VLM交叉校准
-│   ├── clean_data.py               ← 数据清洗+场景合并
+│   ├── analyze_episodes.py         ← VLM v2.4: 三层推理 (DeepSeek→ASR→VLM)
 │   ├── script_agents.py            ← 编剧台 AI: v3+v4
 │   ├── refine_segments.py          ← 口播精切引擎
 │   ├── export_capcut.py            ← 剪映草稿导出
+│   │
+│   ├── handlers/
+│   │   ├── search.py               ← 搜索 (BGE语义/关键词/分层匹配)
+│   │   ├── dialogue.py             ← 分镜推荐 v3: scene_map结构化匹配
+│   │   ├── script_gen.py           ← AI脚本生成 (SSE)
+│   │   ├── pipeline.py             ← 后台流水线
+│   │   ├── media.py                ← 媒体服务
+│   │   └── static.py               ← SPA前端回退
+│   │
+│   └── lib/
+│       ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo/DeepSeek)
+│       ├── embeddings.py           ← BGE模型单例管理
+│       └── sse.py                  ← SSE发射器 + 心跳
 │
 ├── vibecut-web/               ← React 前端 (Vite, 端口3000)
 │   └── src/
@@ -77,7 +87,7 @@ VibeCut/
 │       │   └── Home.jsx          ← 项目
 │       ├── components/
 │       │   ├── ScriptPanel.jsx   ← 脚本面板 (精切/粗段自适应)
-│       │   ├── ChatPanel.jsx     ← AI搜索面板 (口播/影剧自适应)
+│       │   ├── ChatPanel.jsx     ← AI搜索面板 (调 storyboard_suggest)
 │       │   ├── SourceInspector.jsx ← PR风格源检视器
 │       │   └── TimelineControls.jsx ← 播放控制栏
 │       └── lib/
@@ -91,12 +101,6 @@ VibeCut/
 │
 ├── 都挺好/                    ← 电视剧数据
 ├── 杨老师教育/                ← 口播数据
-│   ├── sources/               ← 原始ASR
-│   ├── sources_clean/         ← classified / enhanced / segmented
-│   ├── proxies/               ← 代理视频 + .proxies_manifest.json
-│   ├── semantic_embeddings.npy ← BGE索引 (guest-only)
-│   └── tasks/                 ← 任务数据 (segments.json 含 sub_clips)
-│
 └── vibecut.db                 ← SQLite (不提交git)
 ```
 
@@ -105,7 +109,7 @@ VibeCut/
 ```bash
 # 后端
 cd vibecut-server
-/opt/anaconda3/bin/python3 server.py --project 杨老师教育 --task 0801学习新东方 --port 8765
+/opt/anaconda3/bin/python3 main.py --project 都挺好 --task Task0804 --port 8765
 
 # 前端
 cd vibecut-web && npm run dev
@@ -115,11 +119,13 @@ cd vibecut-web && npm run dev
 
 | 端点 | 方法 | 说明 |
 |---|---|---|
-| GET /search?q=&mode=semantic | GET | BGE语义搜索 (口播: guest-only索引) |
-| GET /segments.json?task= | GET | 任务分段 (DB→文件fallback, 含sub_clips) |
+| GET /search?q=&mode=semantic | GET | BGE语义搜索 |
+| GET /segments.json?task= | GET | 任务分段 (DB→文件fallback) |
+| POST /storyboard_suggest | POST | 分镜推荐 v3 (scene_map结构化匹配) |
 | POST /script/generate_script_stream | POST | v3搜索流水线 SSE |
 | POST /script/generate_story_first | POST | v4故事优先 SSE (口播专用) |
-| POST /script/refine | POST | 精切 SSE — 粗段→sub_clips KEEP/CUT |
+| POST /script/refine | POST | 精切 SSE |
+| GET /data/quality?project= | GET | 每集 VLM/ASR 统计 |
 | GET /proxies/manifest | GET | 代理视频清单 |
 | GET /status | GET | 健康检查 |
 
@@ -130,59 +136,58 @@ cd vibecut-web && npm run dev
 - `/:project/:task/planning` — 编剧台 (PlanningDesk)
 - `/:project/:task/vibe` — 分镜台 (VibeEdit)
 
-## 口播工作流 (v1.0)
+## 电视剧数据管线 (v2.4)
+
+### VLM 分析 — 三层推理架构
 
 ```
-编剧台:
-  ASR → content report → 输入主题 → 🧠 AI生成脚本 (粗剪14段)
-  → 审核粗段脚本 → ✂️ 精切 (refine) → sub_clips 22K+10C
-  → 粗剪/精切 页签切换审核 → 导出 CapCut
-
-分镜台:
-  打开 → 口播自动建轨 (仅KEEP sub_clips → 时间轴)
-  → 精切预览 (左面板 绿✅/红❌) → 微调
-
-导出:
-  segments.json (含sub_clips) → export_capcut.py → 剪映草稿
-  CUT项音量=5% 便于识别删除
+ASR 转写 → DeepSeek 生成 scene_map (人物+地点+事件) → VLM 只描述画面 (已知人物)
 ```
 
-## 分镜策略 (导演思维)
+| 指标 | v1.3 (旧) | v2.4 (新) | 变化 |
+|---|---|---|---|
+| VLM 调用/集 | 241 次 | 10-25 次 | ↓90% |
+| Token/集 | 692K | 43K | ↓94% |
+| 人物识别 | VLM 认人脸 (~29% 错误) | scene_map 确定 (0% 错误) | ✅ |
+| 角色照锚定 | 每10场景发送 | 废除 | ✅ |
+| 描述格式 | 7种混乱 | 统一 ≤80字 | ✅ |
 
-解说词匹配镜头不再是"按句子搜关键词"，而是：
+三层:
+1. **DeepSeek 读 ASR + synopsis** → 结构化场景-人物-时间映射 (scene_map)
+2. **ASR 关键词锚定** → 精准时间边界
+3. **VLM 只做画面理解** — 已知人物/地点/剧情，不认人
 
-1. **分析解说叙事节拍** — 谁/在哪/做什么/什么情绪
-2. **episode_marker 约束搜索范围** — 从 31,498 缩小到 500-800 候选
-3. **BGE 语义搜索** — 找情感/氛围相似的场景
-4. **frame_facts 人物过滤** — 校准后准确率 ~100%
-5. **VLM depth_analysis** — 提供导演级的场景情绪解读
+### 淘汰的管线步骤
+- `cross_calibrate.py` — ASR↔VLM 交叉校准 (scene_map 已替代)
+- `vlm_char_calibrate.py` — VLM 人物校准 T1-T4 (VLM 不再认人)
+- `clean_data.py` 的 VLM 字幕部分 — VLM 不再输出硬字幕
+- BGE 全量语义搜索 — 分镜匹配改为 scene_map 结构化搜索
 
-## 电视剧数据管线 (v1.3)
+## 分镜匹配策略 (v3 — 分层结构化匹配)
+
+**核心理念**: 解说词匹配镜头 = 在 scene_map 中查询结构化字段，不再依赖 BGE 全量语义搜索。
 
 ```
-源视频 → analyze_episodes → clean_data → build_index
-           (VLM场景+ASR)         (清洗+合并)    (BGE索引)
-           
-v1.3 VLM优化:
-  · 角色参考照锚定 (character_portraits/)
-  · 面部优先识别 → 反推场景 (严禁先判地点)
-  · 剧集概要注入 (DeepSeek生成 ep_synopsis.json)
-  · 上下文窗口传递人物 (串行分析)
-  · 跳过序幕/落幕 (前1分+后3分)
-  · 分组并发: 10场景/组, 组内串行, 多组并发
+解说词 → 提取人物/情绪关键词 → scene_map 过滤 (人物+事件+地点)
+→ VLM描述语义评分 (7类情绪关键词库) → BGE轻量精排 (仅top-20)
+→ ASR 精确时间锚定 (精确到秒)
 ```
 
-**v1.3 淘汰**:
-- cross_calibrate.py (ASR↔VLM校准) — VLM源头已解决
-- vlm_char_calibrate.py (T1-T4) — 不再需要后期校准
-- T4 LLM校准 (DeepSeek) — 不再需要
+**优势**:
+- 从 31K 候选 → ~100 段 (人物过滤)
+- 天然场景段去重 (保证多样性)
+- 响应 0.1s (vs BGE 8s)
+- 不需要 10s 切片展开
+
+**BGE 仍保留用于**: 编剧台解说词生成/策划等语义推理场景 (非实时匹配)
 
 ## 依赖
 
 - Python: /opt/anaconda3/bin/python3 (sentence-transformers, numpy)
 - MPS: Apple Silicon GPU for BGE encoding (6.8GB VRAM limit)
-- Moonshot API: MOONSHOT_API_KEY (编剧台LLM + 数据清洗 + 分镜推荐)
-- MiMo API: MIMO_API_KEY (VLM画面分析, 仅电视剧)
+- Moonshot API: MOONSHOT_API_KEY (编剧台LLM + 分镜推荐)
+- MiMo API: MIMO_API_KEY (VLM画面分析)
+- DeepSeek API: DEEPSEEK_API_KEY (scene_map 生成 + synopsis)
 - ffmpeg: 视频处理 + 代理生成
 - Node: Vite + React 前端
 
@@ -190,6 +195,8 @@ v1.3 VLM优化:
 
 | 文件 | 大小 | 说明 |
 |------|------|------|
-| `都挺好/semantic_embeddings.npy` | 92MB | BGE 嵌入 (31,498 × 768) |
-| `都挺好/semantic_metas.json` | 7.5MB | 索引元数据 (VLM描述 + 字幕 + ASR) |
-| `都挺好/sources_clean/epN/vlm_merged.json` | ~150KB/集 | VLM 场景分析 (含 frame_facts, _char_conflict) |
+| `都挺好/semantic_embeddings.npy` | 87MB | BGE 嵌入 (29,797 × 768) |
+| `都挺好/semantic_metas.json` | 7MB | 索引元数据 (VLM描述 + ASR) |
+| `都挺好/sources/epN/scene_map.json` | ~3KB/集 | DeepSeek 场景-人物-时间映射 |
+| `都挺好/sources/epN/vlm_seg_cache_v2.json` | ~4KB/集 | VLM 场景段描述 (10-25段/集) |
+| `都挺好/sources/epN/vlm_analysis_sliced.json` | ~70KB/集 | VLM 描述按10s展开 (BGE索引用) |

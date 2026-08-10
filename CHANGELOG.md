@@ -1,5 +1,83 @@
 # VibeCut 更新日志
 
+## v2.5 — VLM 分析架构重构 + 分层匹配算法 v3 (2026-08-14)
+
+### VLM 分析 v2.4: 三层推理架构
+
+从 241 次 VLM 调用/集 → 10-25 次 (↓90%), 692K tokens → 43K tokens (↓94%)。
+
+**三层推理**:
+1. **DeepSeek 读 ASR + synopsis** → 生成 scene_map (人物+地点+事件+时间)
+2. **ASR 关键词锚定** → 精准时间边界
+3. **VLM 只做画面理解** — 已知人物/地点/剧情，不认人
+
+**核心变更**:
+- 废除角色照锚定 (每10场景 6500 tokens → 0)
+- 废除 VLM 人物识别 (误识率 ~29% → 0%)
+- VLM 不再输出硬字幕和帧标签
+- 场景段驱动切分 (10-25段/集) 替代 10s 固定切片 (241/集)
+
+**新增**:
+- `analyze_episodes.py`: 完全重写 (v2.4)
+- `scene_map.json`: 每集的结构化场景-人物-时间映射
+- `vlm_seg_cache_v2.json`: VLM 场景段缓存 (原始描述)
+- `vlm_analysis_sliced.json`: VLM 描述按10s展开 (BGE索引)
+- `asr_merged.json`: ASR 相邻合并 (810段→50句)
+
+**淘汰**:
+- `cross_calibrate.py` — ASR↔VLM 交叉校准
+- `vlm_char_calibrate.py` — VLM 人物校准 T1-T4
+- `clean_data.py` 的 VLM 字幕部分
+- BGE 全量语义搜索 (分镜匹配改用 scene_map)
+
+### 分镜匹配 v3: 分层结构化匹配
+
+**核心理念**: 解说词匹配镜头 = 在 scene_map 中查询结构化字段。
+
+| 指标 | v2 (BGE) | v3 (分层匹配) |
+|---|---|---|
+| 搜索范围 | 31K 全量 | ~100 候选段 |
+| 人物准确率 | 依赖 BGE 语义 | scene_map 精确过滤 |
+| 结果多样性 | 低 (同场景多切片) | 高 (按场景段去重) |
+| 响应时间 | ~8s | ~0.1s |
+
+**五层匹配流程**:
+1. 人物提取 (从 cover + narration)
+2. scene_map 过滤 (人物+地点+事件)
+3. VLM 描述语义评分 (7类情绪关键词库)
+4. BGE 轻量精排 (仅 top-20 候选)
+5. ASR 精确时间锚定 (精确到秒)
+
+**实现**: `handlers/dialogue.py` → `storyboard_suggest()` v3
+
+### BGE 索引优化
+
+- 阈值 0.35 → 0.25 (适配短 VLM 描述)
+- top-k 30 → 200 (扩大候选池)
+- device cpu → mps (10x 编码加速)
+- 优先读 `vlm_analysis_sliced.json` (新格式)
+
+### 新增端点
+
+- `GET /data/quality?project=` — 每集 VLM/ASR 统计 (DataDesk)
+
+### 数据状态
+
+- scene_map: 46/46 集 (覆盖完整)
+- VLM v2.4: EP35/39/41 (100% 完成)
+- BGE 索引: 29,797 条 (混合新旧数据)
+
+### 版本标签
+
+```
+v2.5 ← 当前
+v1.2.0
+v1.1.0
+v1.0.0
+```
+
+---
+
 ## v1.2.0 — 产品定位正规化：四台流水线 (2026-08-09)
 
 ### 定位变更
@@ -44,65 +122,3 @@ v1.0.0
 ```
 
 ---
-
-## v1.1.0 — 后端架构重构 (2026-08-08)
-
-### 重构
-
-- **引入 FastAPI**: 替换 `http.server` 标准库，开启自动 Swagger 文档 (`/docs`)、Pydantic 输入校验、内置 CORS/文件上传
-- **拆分 server.py (2,866 行)**: God Class → `main.py` (805 行) + 13 个模块
-  - `handlers/`: 8 个聚焦模块 (search, tasks, script_gen, pipeline, media, dialogue, static)
-  - `lib/`: 5 个共享基础设施 (llm, embeddings, sse, env, subprocess_runner)
-- **消除重复代码**:
-  - LLM 调用: 10 种实现 → `lib/llm.py` 统一封装 (Moonshot + MiMo)
-  - SSE 发射器 + 心跳: 3 次逐字重复 → 通用生成器
-  - 子进程执行器: 2 套 95% 相同代码 → `lib/subprocess_runner.py` 统一
-  - `load_env()`: 4 处逐字重复 → `lib/env.py`
-- **script_agents.py 优化**: `_call_llm` 改用 `lib/llm.py`，消除 25 行重复 LLM 调用代码
-- **多模块编译 + 12 端点 API 验证通过**: GET /status, /dramas, /tasks, /search, /segments.json, /asr/classified, /proxies/manifest + POST /tasks/status, /chat, /dialogue_match
-- **LLM 成本**: DeepSeek v4 Pro, 14,307,420 tokens, ¥1.80
-
-### 架构收益
-
-| 指标 | v1.0 | v1.1 |
-|---|---|---|
-| 主入口文件 | `server.py` 2,866 行 | `main.py` 805 行 |
-| 模块总数 | 24 脚本 (无分层) | 13 新模块 + 24 脚本 |
-| 路由方式 | 手动 if/elif 链 (200 行) | FastAPI 装饰器 (每端点一行) |
-| LLM 调用实现 | 10 种 | 1 种 (`lib/llm.py`) |
-| API 文档 | ❌ | ✅ Swagger (`/docs`) |
-| CORS | 每个端点手写 | `CORSMiddleware` 一行 |
-| Multipart 上传 | 150 行手写 boundary 解析 | FastAPI `UploadFile` 自动 |
-
-### 新增文件
-
-```
-vibecut-server/
-├── main.py              ← FastAPI 入口 + 32 路由
-├── config.py            ← CLI 参数 + 项目配置 + 路径解析
-├── lib/                 ← 共享基础设施 (5 模块, 377 行)
-│   ├── llm.py           ← 统一 LLM 调用 (Moonshot/MiMo)
-│   ├── embeddings.py    ← BGE 模型单例
-│   ├── sse.py           ← SSE 发射器 + 心跳
-│   ├── env.py           ← .env 加载
-│   └── subprocess_runner.py ← 子进程执行器
-└── handlers/            ← 接口处理器 (8 模块, 2,107 行)
-    ├── search.py        ← 6 种搜索引擎
-    ├── tasks.py         ← 任务 CRUD
-    ├── script_gen.py    ← AI 脚本生成 (v3/v4/refine SSE)
-    ├── pipeline.py      ← 后台加工流水线
-    ├── media.py         ← 媒体服务
-    ├── dialogue.py      ← 对话/台词/分镜
-    └── static.py        ← SPA 前端回退
-```
-
-### 版本标签
-
-```
-v1.1.0 ← 当前
-v1.0.0 (重构前基线)
-```
-
----
-
-## v1.0.0 — 正式命名 + Agent 架构升级 (2026-08-04)
