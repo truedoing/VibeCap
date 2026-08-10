@@ -146,3 +146,36 @@ def call_mimo(system: str, user: str, **kwargs) -> dict:
                  api_key_env="MIMO_API_KEY",
                  api_url_env="MIMO_API_URL",
                  default_url="https://api.xiaomimimo.com/v1", **kwargs)
+
+
+def call_ollama(system: str, user: str, model="qwen2.5:7b", **kwargs) -> dict:
+    """调用本地 Ollama API"""
+    import json as _json, urllib.request as _ur
+    payload = _json.dumps({
+        "model": model,
+        "prompt": f"{system}\n\n{user}",
+        "stream": False,
+        "options": {"temperature": kwargs.get("temperature", 0.0),
+                     "num_predict": kwargs.get("max_tokens", 200)},
+    }).encode("utf-8")
+    try:
+        req = _ur.Request("http://localhost:11434/api/generate", data=payload,
+                          headers={"Content-Type": "application/json"})
+        with _ur.urlopen(req, timeout=kwargs.get("timeout", 60)) as resp:
+            return {"ok": True, "content": _json.loads(resp.read())["response"].strip()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def call_deepseek(system: str, user: str, **kwargs) -> dict:
+    """调用 DeepSeek API"""
+    return _call(system, user, model="deepseek-chat",
+                 api_key_env="DEEPSEEK_API_KEY",
+                 default_url="https://api.deepseek.com/v1", **kwargs)
+
+
+def call_deepseek_json(system: str, user: str, **kwargs) -> dict:
+    """调用 DeepSeek API + 解析 JSON"""
+    return call_json(system, user, model="deepseek-chat",
+                     api_key_env="DEEPSEEK_API_KEY",
+                     default_url="https://api.deepseek.com/v1", **kwargs)

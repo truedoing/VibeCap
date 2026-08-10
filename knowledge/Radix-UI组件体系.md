@@ -134,7 +134,7 @@ const buttonVariants = cva(
 | `@radix-ui/react-select` | 下拉选择 | 项目选择、模式切换 |
 | `@radix-ui/react-separator` | 分隔线 | 面板之间的分隔线 |
 | `@radix-ui/react-slot` | 插槽（多态组件） | 按钮作为链接时使用 |
-| `@radix-ui/react-tabs` | 标签页 | 策划台"粗剪/精切"页签切换 |
+| `@radix-ui/react-tabs` | 标签页 | 编剧台"粗剪/精切"页签切换 |
 | `@radix-ui/react-tooltip` | 工具提示 | 悬停提示（各处的图标说明） |
 
 ### 4. 为什么需要 Slot
@@ -181,7 +181,7 @@ function Button({ asChild, children, ...props }) {
 ## 动手实验
 
 1. **找一个 Radix 组件观察它的 DOM**
-打开浏览器 DevTools → Elements 标签 → 打开策划台的一个弹窗 → 观察 Radix Dialog 生成的 DOM 结构（portal、overlay、content 的三层结构）和自动添加的 ARIA 属性（`role="dialog"`、`aria-modal="true"`、`aria-labelledby` 等）。
+打开浏览器 DevTools → Elements 标签 → 打开编剧台的一个弹窗 → 观察 Radix Dialog 生成的 DOM 结构（portal、overlay、content 的三层结构）和自动添加的 ARIA 属性（`role="dialog"`、`aria-modal="true"`、`aria-labelledby` 等）。
 
 2. **手写一个 Radix Dialog + Tailwind**
 ```jsx

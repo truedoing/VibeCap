@@ -1,6 +1,6 @@
 /**
- * 策划台 — 口播采访剪辑策划
- * 三栏：转写素材 → 剪辑脚本 → AI 助手
+ * 编剧台 — 口播采访解说脚本策划
+ * 三栏：转写素材 → 解说脚本 → AI 助手
  * v2: 性能优化版 — 组件拆分 + memo + 虚拟滚动
  */
 import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react'
@@ -10,7 +10,7 @@ import { flexRow, panelHeader, panelRoot, title, subtitle, label, mono, btn, inp
 
 const FPS = 25
 
-// 策划台: 文字密集型工作, 字号比全局大一号
+// 编剧台: 文字密集型工作, 字号比全局大一号
 const F = { xs: 13, sm: 14, md: 15, lg: 16, xl: 18, mono: baseFont.mono }
 
 // 向后兼容别名
@@ -170,7 +170,7 @@ const SourcePanel = memo(function SourcePanel({
   )
 })
 
-// ── 中间：剪辑脚本 ──
+// ── 中间：解说脚本 ──
 const ScriptPanel = memo(function ScriptPanel({
   topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem,
   segments, setSegments, setGenResult,
@@ -201,7 +201,7 @@ const ScriptPanel = memo(function ScriptPanel({
     <>
       <div style={S.panelHeader}>
         <div style={S.flexRow}>
-          <span style={S.headerTitle}>剪辑脚本</span>
+          <span style={S.headerTitle}>解说脚本</span>
           {segments.length > 0 && <span style={{ marginLeft: 6, fontSize: F.sm, color: '#6b7280' }}>{segments.length} 段</span>}
           {/* 精切页签 */}
           {hasRefine && (
@@ -374,7 +374,7 @@ const numInputStyle = { flex: 1, padding: '2px 4px', fontSize: F.xs, fontFamily:
 const selectInputStyle = { padding: '2px 4px', fontSize: F.xs, background: S.bgPanel, color: '#e5e7eb', border: S.borderSubtle, borderRadius: 3, outline: 'none' }
 
 // ── 右侧：AI 助手 ──
-/* ── 精剪结果卡片（可展开详情）── */
+/* ── 精切结果卡片（可展开详情）── */
 function RefineResultCard({ refineResult, segments }) {
   const [show, setShow] = useState(false)
   const allSubClips = useMemo(() => {
@@ -391,7 +391,7 @@ function RefineResultCard({ refineResult, segments }) {
     <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <div style={{ fontWeight: 600, color: '#6ee7b7', fontSize: 10 }}>✅ 精剪完成</div>
+          <div style={{ fontWeight: 600, color: '#6ee7b7', fontSize: 10 }}>✅ 精切完成</div>
           <div style={{ display: 'flex', gap: 6, fontSize: 9, color: '#9ca3af', marginTop: 1 }}>
             <span style={{ color: '#6ee7b7', fontWeight: 600 }}>{refineResult.keep} 保留</span>
             <span style={{ color: '#f87171', fontWeight: 600 }}>{refineResult.cut} 删除</span>
@@ -470,7 +470,7 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
 
       {tab === 'ai' ? (
         <div style={{ flex: 1, overflow: 'auto', padding: 8, fontSize: 10 }}>
-          {/* ── 生成 + 精剪 按钮组 ── */}
+          {/* ── 生成 + 精切 按钮组 ── */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
             <button onClick={generateScript} disabled={generating || !topic?.trim()}
               style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
@@ -486,19 +486,19 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
                   cursor: refining ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
                   background: refining ? 'rgba(255,255,255,0.04)' : 'linear-gradient(135deg, rgba(16,185,129,0.25), rgba(5,150,105,0.15))',
                   color: refining ? '#6b7280' : '#6ee7b7' }}>
-                {refining ? '⏳ 精切中...' : '✂️ 精剪'}
+                {refining ? '⏳ 精切中...' : '✂️ 精切'}
               </button>
             )}
           </div>
 
-          {/* 精剪结果摘要 */}
+          {/* 精切结果摘要 */}
           {refineResult && (
             <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)' }}>
-              <div style={{ fontWeight: 600, color: '#6ee7b7', fontSize: 10 }}>✅ 精剪完成</div>
+              <div style={{ fontWeight: 600, color: '#6ee7b7', fontSize: 10 }}>✅ 精切完成</div>
               <div style={{ display: 'flex', gap: 6, fontSize: 9, color: '#9ca3af', marginTop: 1 }}>
                 <span style={{ color: '#6ee7b7', fontWeight: 600 }}>{refineResult.keep} 保留</span>
                 <span style={{ color: '#f87171', fontWeight: 600 }}>{refineResult.cut} 删除</span>
-                <span style={{ color: '#6b7280' }}>在「剪辑脚本 → 精切」查看</span>
+                <span style={{ color: '#6b7280' }}>在「解说脚本 → 精切」查看</span>
               </div>
             </div>
           )}
@@ -797,7 +797,7 @@ export default function PlanningDesk() {
     finally { setGenerating(false); setGenMsg('') }
   }, [topic])
 
-  // ── 精剪 (POST /script/refine SSE) ──
+  // ── 精切 (POST /script/refine SSE) ──
   const handleRefine = useCallback(async () => {
     if (!segments?.length) return
     setRefining(true); setRefineResult(null)

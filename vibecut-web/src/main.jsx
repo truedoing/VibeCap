@@ -47,13 +47,13 @@ function AppLayout() {
 
         {/* 第二行：功能标签 — 始终显示 */}
         <nav className="flex items-center gap-1 px-4 h-8 border-t border-border/50 bg-secondary/30">
-          {/* 任务台：始终指向根路由 */}
+          {/* 项目：始终指向根路由 */}
           <NavLink to="/" end
             className={({ isActive }) =>
               `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
-            }>任务台</NavLink>
+            }>项目</NavLink>
 
-          {/* 数据台 / 策划台 / 剪辑台：仅在任务页可点击，否则置灰 */}
+          {/* 数据台 / 编剧台 / 分镜台：仅在任务页可点击，否则置灰 */}
           {isTaskPage ? (
             <NavLink to={`/${seriesId}/${taskId}/data`}
               className={({ isActive }) =>
@@ -67,18 +67,18 @@ function AppLayout() {
             <NavLink to={`/${seriesId}/${taskId}/planning`}
               className={({ isActive }) =>
                 `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
-              }>策划台</NavLink>
+              }>编剧台</NavLink>
           ) : (
-            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">策划台</span>
+            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">编剧台</span>
           )}
 
           {isTaskPage ? (
             <NavLink to={`/${seriesId}/${taskId}/vibe`}
               className={({ isActive }) =>
                 `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm ring-1 ring-purple/30' : 'text-purple/80 hover:text-purple hover:bg-background/50'}`
-              }>沉浸剪辑</NavLink>
+              }>分镜台</NavLink>
           ) : (
-            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">沉浸剪辑</span>
+            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">分镜台</span>
           )}
         </nav>
       </header>

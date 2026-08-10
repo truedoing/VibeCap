@@ -234,7 +234,7 @@ export default function Home() {
         {/* 顶部操作栏 */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-lg font-bold text-foreground">任务台</h1>
+            <h1 className="text-lg font-bold text-foreground">项目</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
               {dramas.length > 0
                 ? `${dramas.length} 部剧 · ${dramas.reduce((s, d) => s + (d.taskList?.length || 0), 0)} 个任务`

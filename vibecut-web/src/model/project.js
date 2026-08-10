@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════
 // VibeCut 统一数据模型
-// 贯穿 匹配台 → 剪辑台 → 剪映导出 的单一数据源
+// 贯穿 编剧台 → 分镜台 → 剪映导出 的单一数据源
 // ═══════════════════════════════════════════════
 
 const STORAGE_KEY = 'vibecut-project'
@@ -67,7 +67,7 @@ export function addPick(project, sid, seq, type, clipRef) {
   } else {
     project.picks[key][type].push(clipRef)
   }
-  // 素材变了，清除时间线缓存让剪辑台重建
+  // 素材变了，清除时间线缓存让分镜台重建
   project.timeline = null
   project.mediaCache = null
   saveProject(project)

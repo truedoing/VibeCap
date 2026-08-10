@@ -51,7 +51,7 @@ class ThreadingServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True  # 主线程退出时，工作线程自动退出
 ```
 
-`HTTPServer` 默认是单线程的：处理一个请求时，其他请求排队等待。`ThreadingMixIn` 让每个请求跑在独立线程里 —— 当你同时打开策划台和剪辑台时，两个页面的请求互不阻塞。
+`HTTPServer` 默认是单线程的：处理一个请求时，其他请求排队等待。`ThreadingMixIn` 让每个请求跑在独立线程里 —— 当你同时打开编剧台和分镜台时，两个页面的请求互不阻塞。
 
 ### 2. do_GET / do_POST 路由
 

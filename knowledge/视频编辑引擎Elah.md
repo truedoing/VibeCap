@@ -130,7 +130,7 @@ store.addAsset({
 
 ## 在 VibeCut 中的应用
 
-**`VibeEdit.jsx`**（沉浸剪辑台）是 Elah 的主要消费者：
+**`VibeEdit.jsx`**（分镜台）是 Elah 的主要消费者：
 
 1. **初始化**：检测项目类型（口播/电视剧）→ 创建对应轨道布局 → `engine.loadProject()`
 2. **自动建轨**（口播）：`segments` 到达后 → `buildProjectFromProxyPicks()` 构建项目 → 加载到 engine → 持久化缓存
@@ -154,7 +154,7 @@ store.addAsset({
 ## 动手实验
 
 1. **观察 Project 数据结构**
-在 VibeEdit 页面打开浏览器 Console，输入：
+在分镜台页面打开浏览器 Console，输入：
 ```js
 window.__vibe_prg_engine.getProject()
 ```

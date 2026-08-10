@@ -20,7 +20,7 @@ created: 2026-08-04
 - **Zustand**（Elah 内部）：编辑器状态——tracks、clips、播放位置、媒体库
 - **useState / useRef**：组件本地状态——搜索框输入、UI 开关、临时缓存
 
-**SSE（Server-Sent Events）** = 服务端向客户端推送数据流的协议。VibeCut 用 SSE 接收 AI 生成的实时进度（策划台、精切引擎）。
+**SSE（Server-Sent Events）** = 服务端向客户端推送数据流的协议。VibeCut 用 SSE 接收 AI 生成的实时进度（编剧台、精切引擎）。
 
 ## 为什么需要用多层状态
 

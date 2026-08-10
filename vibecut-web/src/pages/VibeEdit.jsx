@@ -1,5 +1,5 @@
 /**
- * Vibe 沉浸式剪辑台
+ * 分镜台 — AI 解说词 → 镜头匹配工作台
  * 双引擎：程序引擎(大预览+底部时间轴) + 源引擎(AI面板内轻量定位)
  */
 import { useState, useEffect, useRef, useCallback } from 'react'

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 生成低分辨率代理视频（540p），用于 Web 端剪辑定位。
-从 1080p 原剧批量转码，为 Vibe 剪辑台提供轻量素材。
+从 1080p 原剧批量转码，为分镜台提供轻量素材。
 
 用法:
   python generate_proxies.py --drama 都挺好 --all

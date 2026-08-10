@@ -107,9 +107,9 @@ React.createElement('div', { className: 'panel' }, title)
 ## 在 VibeCut 中的应用
 
 **页面层（`src/pages/`）**：
-- `PlanningDesk.jsx` — 策划台：三栏布局（素材 | 脚本 | AI 助手），粗剪精切页签切换
-- `VibeEdit.jsx` — 沉浸剪辑台：Elah 编辑器嵌入，自动建轨，精切预览
-- `Home.jsx` — 任务台：项目列表 + 任务管理
+- `PlanningDesk.jsx` — 编剧台：三栏布局（素材 | 脚本 | AI 助手），粗剪精切页签切换
+- `VibeEdit.jsx` — 分镜台：Elah 编辑器嵌入，自动建轨，精切预览
+- `Home.jsx` — 项目：项目列表 + 任务管理
 - `DataDesk.jsx` — 数据台：流水线管理
 
 **组件层（`src/components/`）**：
@@ -129,7 +129,7 @@ React.createElement('div', { className: 'panel' }, title)
 
 ## 延伸
 
-- [[视频编辑引擎Elah]] — VibeEdit 页面的核心依赖
+- [[视频编辑引擎Elah]] — 分镜台页面的核心依赖
 - [[状态管理与SSE消费]] — ProjectContext + SSE 流式数据处理
 - [[Radix-UI组件体系]] — VibeCut 使用的 UI 原语库
 - [[HTTP服务与SSE流式]] — 前端的后端依赖
@@ -143,7 +143,7 @@ cd vibecut-web && npm run dev
 ```
 
 2. **追踪一个请求**
-打开浏览器 DevTools Network 标签，在策划台输入搜索词，观察 `/search?q=xxx&mode=semantic` 请求如何从 3000 端口代理到 8765 端口。
+打开浏览器 DevTools Network 标签，在编剧台输入搜索词，观察 `/search?q=xxx&mode=semantic` 请求如何从 3000 端口代理到 8765 端口。
 
 ## 学习资源
 

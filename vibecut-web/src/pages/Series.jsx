@@ -277,7 +277,7 @@ function TaskCard({ task, seriesId, onDelete, onStatusChange }) {
         {st.label}
       </button>
       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-        <span className="text-xs text-primary font-medium">进入策划台 →</span>
+        <span className="text-xs text-primary font-medium">进入编剧台 →</span>
       </div>
       <button
         onClick={(e) => onDelete(e, task)}

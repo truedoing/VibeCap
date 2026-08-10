@@ -242,7 +242,6 @@ def generate_story_first(topic: str, emit_progress, emit_complete, emit_error):
 
 # ── POST /script/refine (精切 SSE) ──
 def refine_segments(task_name: str, emit_progress, emit_complete, emit_error):
-    """手动触发精切 — SSE 流式"""
     from refine_segments import refine, load_data
 
     emit_progress("refine", "加载数据...")
