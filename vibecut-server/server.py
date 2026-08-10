@@ -2058,7 +2058,7 @@ class Handler(SimpleHTTPRequestHandler):
             print(f"[storyboard_suggest] LLM call failed: {e}")
             return []
 
-    # ── 策划台: 转写分析 ──
+    # ── 编剧台: 转写分析 ──
     def _handle_analyze_transcript(self):
         """POST /script/analyze_transcript — LLM 分析采访转写，标注金句+识别结构"""
         import urllib.request as _ur
@@ -2137,7 +2137,7 @@ class Handler(SimpleHTTPRequestHandler):
             print(f"[analyze_transcript] failed: {e}")
             self._json({"ok": False, "error": str(e)[:200]}, 500)
 
-    # ── 策划台: 主题+结构 → 文案生成 ──
+    # ── 编剧台: 主题+结构 → 文案生成 ──
     def _handle_generate_from_outline(self):
         """POST /script/generate_from_outline — 根据主题和结构大纲生成 segments"""
         import urllib.request as _ur
@@ -2464,7 +2464,7 @@ class Handler(SimpleHTTPRequestHandler):
                 result["script_file"] = str(script_file)
                 result["script_file_url"] = f"/tasks/文案脚本.json"
 
-                # ── v0.11: 同步写入任务级 segments.json (VibeEdit 加载此文件) ──
+                # ── v0.11: 同步写入任务级 segments.json (分镜台加载此文件) ──
                 task_dir = tasks_dir / (_args.task or "default")
                 task_dir.mkdir(parents=True, exist_ok=True)
                 seg_file = task_dir / "segments.json"
@@ -2577,7 +2577,7 @@ class Handler(SimpleHTTPRequestHandler):
                 result["script_file"] = str(script_file)
                 result["script_file_url"] = f"/tasks/文案脚本.json"
 
-                # ── v0.11: 同步写入任务级 segments.json (VibeEdit 加载此文件) ──
+                # ── v0.11: 同步写入任务级 segments.json (分镜台加载此文件) ──
                 task_dir = tasks_dir / (_args.task or "default")
                 task_dir.mkdir(parents=True, exist_ok=True)
                 seg_file = task_dir / "segments.json"
@@ -2632,7 +2632,7 @@ class Handler(SimpleHTTPRequestHandler):
             heartbeat_active[0] = False
 
     def _handle_refine(self):
-        """POST /script/refine — 从策划台手动触发精切 (SSE)"""
+        """POST /script/refine — 从编剧台手动触发精切 (SSE)"""
         task_name = _args.task or "default"
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
