@@ -130,7 +130,7 @@ def _semantic_search(query, limit=10):
     metas = semantic_metas
     q_emb = encode(query)
     scores = np.dot(emb, q_emb)
-    top = np.argsort(scores)[-30:][::-1]
+    top = np.argsort(scores)[-200:][::-1]  # 扩大取top, storyboard_suggest 需要更多候选
     results = {}
 
     if project_type == "interview":
@@ -152,7 +152,7 @@ def _semantic_search(query, limit=10):
 
     # drama 模式
     for i in top:
-        if scores[i] <= 0.35:
+        if scores[i] < 0.25:
             continue
         m = metas[i]
         asr_txt = ""

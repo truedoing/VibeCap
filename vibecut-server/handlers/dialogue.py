@@ -184,73 +184,141 @@ def _format_chat_reply(results, query):
 
 # ── POST /storyboard_suggest ──
 def storyboard_suggest(narration: str, segment_context: dict = None, cover: str = "", num: int = 3) -> list:
-    """两步生成分镜推荐：1) BGE搜索真实VLM镜头 2) LLM基于结果生成推荐"""
+    """分镜推荐 v2.6 — scene_map + VLM 直接匹配 (不依赖BGE)"""
     if not narration or not narration.strip():
         return []
 
-    from handlers.search import _semantic_search
-
     seg_ctx_str = ""
-    cover_info = ""
-    if cover and cover.strip():
-        cover_info = f"封面标题/主角线索：{cover[:200]}\n\n"
     if segment_context:
         sents = segment_context.get("sentences", [])
         if sents:
-            seg_ctx_str = "该句所在段落的所有解说词：\n" + "\n".join(
+            seg_ctx_str = "上下文解说词：\n" + "\n".join(
                 f"句{i}：{s}" for i, s in enumerate(sents)
             ) + "\n\n"
 
-    char_ctx = ""
-    try:
-        char_file = PROJECT_DIR / "characters.json"
-        if char_file.exists():
-            chars = json.load(open(char_file)).get("characters", {})
-            parts = []
-            for name, info in chars.items():
-                aliases = "/".join(info.get("static_names", []))
-                alt = "、".join(info.get("aliases", [])[:3])
-                parts.append(f"{name}（{aliases}）" + (f" 也称：{alt}" if alt else ""))
-            if parts:
-                char_ctx = "已知角色：\n" + "\n".join(parts) + "\n\n"
-    except Exception:
-        pass
+    # ── Step 1: 从解说词中推断人物 ──
+    KNOWN_CHARS = ['苏大强', '苏明哲', '苏明成', '苏明玉', '朱丽', '吴非', '小蔡', '老聂']
+    target_chars = set()
+    context_text = (cover or '') + ' ' + narration
+    if segment_context:
+        context_text += ' ' + ' '.join(segment_context.get("sentences", []))
+    for name in KNOWN_CHARS:
+        if name in context_text:
+            target_chars.add(name)
 
-    # Step 1: BGE 语义搜索
-    real_vlm_results = _semantic_search(narration, limit=8)
-    vlm_samples = ""
-    if real_vlm_results:
-        samples = real_vlm_results[:8]
-        vlm_samples = "以下是搜索到的真实VLM镜头描述（必须从这些镜头中挑选和引用）：\n"
-        for i, r in enumerate(samples):
-            ep = r.get("ep", "?")
-            t = r.get("start", 0)
-            desc = r.get("description", r.get("asr", ""))[:120]
-            vlm_samples += f"[{i+1}] EP{ep} {t:.0f}s — {desc}\n"
-        vlm_samples += "\n"
+    # ── Step 2: scene_map 匹配 — 找有目标人物的所有场景段 ──
+    import os
+    from pathlib import Path
+    sources_dir = PROJECT_DIR / "sources"
 
-    # Step 2: LLM 生成推荐
-    result = call_moonshot(
-        "你是视频剪辑分镜推荐助手。你的任务是根据一句解说词，从下方提供的"
-        "真实VLM镜头描述中挑选最匹配的几个，改写为自然的分镜推荐语。\n\n"
-        "输出格式：每行一个，格式为「镜头N：推荐描述」\n\n"
-        "核心规则：\n"
-        "1. 【必须基于真实镜头】只能从下面提供的VLM镜头中挑选，不允许编造\n"
-        "2. 【1-3个镜头】一句解说词通常对应1-3个镜头\n"
-        "3. 【自然口语化】用剪辑师的语气改写VLM描述\n"
-        "4. 【30-60字】推荐语简短有力，聚焦核心画面\n"
-        "5. 【与解说词匹配】推荐的镜头画面必须能配合这句解说词使用\n"
-        "6. 【人物准确】如果封面/上下文提到了角色名，优先推荐该角色的镜头",
+    matches = []  # [(ep, seg_info, vlm_desc)]
+    for ep_dir in sources_dir.iterdir():
+        if not ep_dir.is_dir() or not ep_dir.name.startswith("ep"):
+            continue
+        ep = int(ep_dir.name[2:])
+        sm_file = ep_dir / "scene_map.json"
+        vlm_file = ep_dir / "vlm_seg_cache_v2.json"  # 优先VLM描述
+        if not sm_file.exists():
+            continue
+        try:
+            sm = json.load(open(sm_file))
+            vlm = json.load(open(vlm_file)) if vlm_file.exists() else {}
+            for i, seg in enumerate(sm):
+                seg_chars = set(seg.get('characters', []))
+                # 如果有目标人物且匹配, 或无目标人物(不限)
+                if target_chars and not (seg_chars & target_chars):
+                    continue
+                # 获取VLM描述(如有)
+                vlm_desc = vlm.get(str(i), {}).get('description', '') if vlm else ''
+                if not vlm_desc:
+                    vlm_desc = seg.get('event', '')
+                matches.append({
+                    'ep': ep,
+                    'scene_id': i,
+                    'start': seg.get('time_range', [0, 0])[0],
+                    'end': seg.get('time_range', [0, 0])[1],
+                    'location': seg.get('location', ''),
+                    'chars': list(seg_chars),
+                    'event': seg.get('event', ''),
+                    'vlm_desc': vlm_desc,
+                })
+        except Exception:
+            pass
 
-        f"{cover_info}{char_ctx}{seg_ctx_str}{vlm_samples}解说词：{narration}\n\n请基于真实VLM镜头生成分镜推荐：",
-        temperature=0.5, max_tokens=1200, timeout=30, label="storyboard",
-    )
+    # ── Step 3: 关键词重排 — 从 VLM描述中匹配情绪/情境 ──
+    # 从解说词和上下文中提取情绪关键词
+    emotion_kw_map = {
+        '愤怒_对峙': ['对峙', '质问', '愤怒', '冲突', '紧绷', '剑拔弩张', '激动', '攥拳', '瞪眼', '怒视', '愤懑'],
+        '压抑_低落': ['压抑', '低落', '落寞', '沮丧', '痛苦', '绝望', '憔悴', '颓废'],
+        '温馨_日常': ['温馨', '日常', '聊天', '微笑', '平和', '宁静', '亲密', '期待'],
+        '谈判_说理': ['谈判', '谈判', '说服', '解释', '陈述', '讨论', '协商'],
+        '冲突_争执': ['争执', '争吵', '吵架', '指责', '斥责', '激动', '拍桌'],
+    }
+    # 从解说词 extract emotion context
+    all_text = narration + ' ' + context_text
+    emotion_scores = {}
+    for category, kws in emotion_kw_map.items():
+        emotion_scores[category] = sum(1 for kw in kws if kw in all_text)
 
-    if result["ok"]:
-        lines = [l.strip() for l in result["content"].strip().split("\n")
-                 if l.strip() and len(l.strip()) > 15 and re.match(r'^镜头\d+[：:]', l.strip())]
-        return lines[:num]
-    return []
+    # 对每个场景评分
+    scored = []
+    for m in matches:
+        score = 0
+        desc = (m['vlm_desc'] + ' ' + m['event'] + ' ' + m['location'])
+        # 人物精确匹配
+        if target_chars and set(m['chars']) & target_chars:
+            score += 10
+        # 情绪关键词匹配
+        for cat, cat_score in emotion_scores.items():
+            if cat_score > 0:
+                for kw in emotion_kw_map[cat]:
+                    if kw in desc:
+                        score += 1
+        # 地点匹配 (解说词中提到办公室/家/医院?)
+        for loc_kw in ['办公室', '家中', '医院', '客厅', '餐厅']:
+            if loc_kw in all_text and loc_kw in m['location']:
+                score += 2
+
+        if score > 0:
+            scored.append((score, m))
+
+    scored.sort(key=lambda x: -x[0])
+
+    # ── Step 4: 格式化返回 ──
+    # 去重: 同一 scene_id 只取最高分
+    seen = set()
+    top = []
+    for score, m in scored:
+        key = f"{m['ep']}_{m['scene_id']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        # 格式化为 LLM 友好的描述
+        if m['vlm_desc']:
+            desc = m['vlm_desc'][:100]
+        else:
+            desc = f"{m['location']}。人物: {', '.join(m['chars'])}。{m['event']}"
+        top.append(f"EP{m['ep']} {m['start']:.0f}s-{m['end']:.0f}s {desc}")
+        if len(top) >= num * 2:  # 返回稍多的候选
+            break
+
+    # ── Step 5: LLM 精排 (可选) ──
+    if top and len(top) > num:
+        from lib.llm import call_moonshot
+        candidates = "\n".join(f"[{i+1}] {t}" for i, t in enumerate(top[:8]))
+        result = call_moonshot(
+            "你是视频剪辑分镜助手。根据解说词，从候选镜头中挑选最匹配的3个。"
+            "直接输出「镜头N：推荐描述」格式，每行一个。",
+            f"解说词：{narration}\n{seg_ctx_str}候选镜头：\n{candidates}\n\n请选择最匹配的3个镜头：",
+            temperature=0.5, max_tokens=600, timeout=30, label="storyboard",
+        )
+        if result["ok"]:
+            lines = [l.strip() for l in result["content"].strip().split("\n")
+                     if l.strip() and len(l.strip()) > 15 and re.match(r'^镜头\d+[：:]', l.strip())]
+            if lines:
+                return lines[:num]
+
+    return top[:num]
 
 
 # ── POST /script/analyze_transcript ──

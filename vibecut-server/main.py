@@ -706,6 +706,38 @@ async def api_refine(request: Request):
 # POST 端点 — 流水线 + 导出
 # ═══════════════════════════════════════════════════════════════
 
+@app.get("/data/quality")
+def api_data_quality(project: str = "都挺好"):
+    """返回每集的数据质量统计，供 DataDesk 展示"""
+    import os, json
+    from pathlib import Path
+
+    drama_dir = Path(__file__).resolve().parent.parent / project
+    episodes = []
+    for ep in range(1, 47):
+        ep_dir = drama_dir / "sources" / f"ep{ep}"
+        vlm = None; asr = None
+        if (ep_dir / "vlm_analysis_sliced.json").exists():
+            vlm = len(json.load(open(ep_dir / "vlm_analysis_sliced.json")))
+        elif (ep_dir / "vlm_merged.json").exists():
+            vlm = len(json.load(open(ep_dir / "vlm_merged.json")))
+        elif (ep_dir / "vlm_analysis.json").exists():
+            data = json.load(open(ep_dir / "vlm_analysis.json"))
+            vlm = sum(1 for x in data if x and x.get("description","").strip())
+
+        if (ep_dir / "asr_result.json").exists():
+            asr_data = json.load(open(ep_dir / "asr_result.json"))
+            asr = len(asr_data)
+
+        episodes.append({
+            "ep": ep,
+            "vlm": vlm or 0,
+            "asr": asr or 0,
+            "has_sliced": (ep_dir / "vlm_analysis_sliced.json").exists(),
+        })
+
+    return {"project": project, "episodes": episodes, "total": len(episodes)}
+
 @app.post("/data/process")
 async def api_data_process(request: Request):
     from handlers.pipeline import run_pipeline, run_interview_pipeline, get_process_status

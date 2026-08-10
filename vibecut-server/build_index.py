@@ -13,16 +13,11 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 ROOT_DIR = Path(__file__).parent.parent  # VibeCut
 
-# 如果清洗数据不存在，降级到原始数据
-if not SOURCES_DIR.exists() or not any(SOURCES_DIR.iterdir()):
-    SOURCES_DIR = ROOT_DIR / DRAMA / "sources"
-    print("[build_index] 使用原始数据源")
-
 from sentence_transformers import SentenceTransformer
 
 def build_index():
     print("加载 BGE-base-zh-v1.5 模型 (CPU)...")
-    model = SentenceTransformer("BAAI/bge-base-zh-v1.5", device="cpu")
+    model = SentenceTransformer("BAAI/bge-base-zh-v1.5", device="mps")
 
     # 自动发现所有集数
     eps = sorted(set(
@@ -36,8 +31,10 @@ def build_index():
     vlm_count = asr_count = sub_count = 0
 
     for ep in eps:
-        # 优先读取合并后的 VLM（clean_data 产出），fallback 原版
-        vlm_path = SOURCES_DIR / f"ep{ep}" / "vlm_merged.json"
+        # v2.4: 优先读取 sliced (新算法产出), fallback vlm_merged → vlm_analysis
+        vlm_path = SOURCES_DIR / f"ep{ep}" / "vlm_analysis_sliced.json"
+        if not vlm_path.exists():
+            vlm_path = SOURCES_DIR / f"ep{ep}" / "vlm_merged.json"
         if not vlm_path.exists():
             vlm_path = SOURCES_DIR / f"ep{ep}" / "vlm_analysis.json"
         if vlm_path.exists():
@@ -51,12 +48,12 @@ def build_index():
                     texts.append(text)
                     metas.append({
                         "type": "vlm", "ep": ep,
-                        "scene_id": s["scene_id"],
+                        "scene_id": s.get("scene_id", 0),
                         "start": s["start"], "end": s["end"],
                         "text": text[:200]
                     })
                     vlm_count += 1
-                # VLM 结构化字幕 → 权重 2x（精确匹配源）
+                # v2.4: subtitles 字段已不再产出, 跳过 sub 类型
                 for sub in s.get("subtitles", []):
                     if len(sub) >= 3:
                         texts.append(sub)
@@ -123,7 +120,9 @@ def build_drama_index(project_dir, drama_name):
 
     texts, metas = [], []
     for ep in eps:
-        vlm_path = sources_dir / f"ep{ep}" / "vlm_merged.json"
+        vlm_path = sources_dir / f"ep{ep}" / "vlm_analysis_sliced.json"
+        if not vlm_path.exists():
+            vlm_path = sources_dir / f"ep{ep}" / "vlm_merged.json"
         if not vlm_path.exists():
             vlm_path = sources_dir / f"ep{ep}" / "vlm_analysis.json"
         if vlm_path.exists():
@@ -131,14 +130,19 @@ def build_drama_index(project_dir, drama_name):
                 if s is None: continue
                 if "skip_opening" in s.get("tags", []): continue
                 text = s.get("description", "")
+                # 去掉可能存在的校准后缀（纯文本后缀不影响语义，但保持索引干净）
+                cal_marker = "\n[人物校准:"
+                if cal_marker in text:
+                    text = text[:text.index(cal_marker)]
                 if len(text) > 10:
                     texts.append(text)
-                    metas.append({"type": "vlm", "ep": ep, "scene_id": s["scene_id"],
+                    metas.append({"type": "vlm", "ep": ep, "scene_id": s.get("scene_id", 0),
                                   "start": s["start"], "end": s["end"], "text": text[:200]})
+                # subtitles 字段 v2.4 已不再产出, 保留兼容
                 for sub in s.get("subtitles", []):
                     if len(sub) >= 3:
                         texts.append(sub)
-                        metas.append({"type": "sub", "ep": ep, "scene_id": s["scene_id"],
+                        metas.append({"type": "sub", "ep": ep, "scene_id": s.get("scene_id", 0),
                                       "start": s["start"], "end": s["end"], "text": sub[:200]})
         asr_path = sources_dir / f"ep{ep}" / "asr_result.json"
         if asr_path.exists():
