@@ -184,141 +184,189 @@ def _format_chat_reply(results, query):
 
 # ── POST /storyboard_suggest ──
 def storyboard_suggest(narration: str, segment_context: dict = None, cover: str = "", num: int = 3) -> list:
-    """分镜推荐 v2.6 — scene_map + VLM 直接匹配 (不依赖BGE)"""
+    """分镜推荐 v3 — 分层结构化匹配: scene_map人物过滤 + VLM描述语义评分 + ASR时间锚定"""
     if not narration or not narration.strip():
         return []
 
-    seg_ctx_str = ""
-    if segment_context:
-        sents = segment_context.get("sentences", [])
-        if sents:
-            seg_ctx_str = "上下文解说词：\n" + "\n".join(
-                f"句{i}：{s}" for i, s in enumerate(sents)
-            ) + "\n\n"
+    import os, re
+    from pathlib import Path
 
-    # ── Step 1: 从解说词中推断人物 ──
     KNOWN_CHARS = ['苏大强', '苏明哲', '苏明成', '苏明玉', '朱丽', '吴非', '小蔡', '老聂']
-    target_chars = set()
+    sources_dir = PROJECT_DIR / "sources"
+
+    # ── Step 1: 提取目标人物 ──
     context_text = (cover or '') + ' ' + narration
     if segment_context:
         context_text += ' ' + ' '.join(segment_context.get("sentences", []))
-    for name in KNOWN_CHARS:
-        if name in context_text:
-            target_chars.add(name)
+    target_chars = {name for name in KNOWN_CHARS if name in context_text}
 
-    # ── Step 2: scene_map 匹配 — 找有目标人物的所有场景段 ──
-    import os
-    from pathlib import Path
-    sources_dir = PROJECT_DIR / "sources"
-
-    matches = []  # [(ep, seg_info, vlm_desc)]
+    # ── Step 2: scene_map 人物过滤 ──
+    matches = []
     for ep_dir in sources_dir.iterdir():
         if not ep_dir.is_dir() or not ep_dir.name.startswith("ep"):
             continue
         ep = int(ep_dir.name[2:])
         sm_file = ep_dir / "scene_map.json"
-        vlm_file = ep_dir / "vlm_seg_cache_v2.json"  # 优先VLM描述
+        vlm_file = ep_dir / "vlm_seg_cache_v2.json"
         if not sm_file.exists():
             continue
         try:
             sm = json.load(open(sm_file))
             vlm = json.load(open(vlm_file)) if vlm_file.exists() else {}
-            for i, seg in enumerate(sm):
-                seg_chars = set(seg.get('characters', []))
-                # 如果有目标人物且匹配, 或无目标人物(不限)
-                if target_chars and not (seg_chars & target_chars):
-                    continue
-                # 获取VLM描述(如有)
-                vlm_desc = vlm.get(str(i), {}).get('description', '') if vlm else ''
-                if not vlm_desc:
-                    vlm_desc = seg.get('event', '')
-                matches.append({
-                    'ep': ep,
-                    'scene_id': i,
-                    'start': seg.get('time_range', [0, 0])[0],
-                    'end': seg.get('time_range', [0, 0])[1],
-                    'location': seg.get('location', ''),
-                    'chars': list(seg_chars),
-                    'event': seg.get('event', ''),
-                    'vlm_desc': vlm_desc,
-                })
         except Exception:
-            pass
+            continue
+        for i, seg in enumerate(sm):
+            seg_chars = set(seg.get('characters', []))
+            if target_chars and not (seg_chars & target_chars):
+                continue
+            vlm_desc = vlm.get(str(i), {}).get('description', '') or seg.get('event', '')
+            matches.append({
+                'ep': ep, 'scene_id': i,
+                'start': seg.get('time_range', [0, 0])[0],
+                'end': seg.get('time_range', [0, 0])[1],
+                'location': seg.get('location', ''),
+                'chars': list(seg_chars),
+                'event': seg.get('event', ''),
+                'vlm_desc': vlm_desc,
+            })
 
-    # ── Step 3: 关键词重排 — 从 VLM描述中匹配情绪/情境 ──
-    # 从解说词和上下文中提取情绪关键词
-    emotion_kw_map = {
-        '愤怒_对峙': ['对峙', '质问', '愤怒', '冲突', '紧绷', '剑拔弩张', '激动', '攥拳', '瞪眼', '怒视', '愤懑'],
-        '压抑_低落': ['压抑', '低落', '落寞', '沮丧', '痛苦', '绝望', '憔悴', '颓废'],
-        '温馨_日常': ['温馨', '日常', '聊天', '微笑', '平和', '宁静', '亲密', '期待'],
-        '谈判_说理': ['谈判', '谈判', '说服', '解释', '陈述', '讨论', '协商'],
-        '冲突_争执': ['争执', '争吵', '吵架', '指责', '斥责', '激动', '拍桌'],
+    # ── Step 3: 语义评分 ──
+    KW_MAP = {
+        '愤怒_对峙': ['对峙','质问','愤怒','冲突','紧绷','剑拔弩张','激动','攥拳','瞪眼','怒视','愤懑','持刀','失控','闯入'],
+        '压抑_低落': ['压抑','低落','落寞','沮丧','痛苦','绝望','憔悴','颓废','孤独','悲哀','无助','凄凉'],
+        '温馨_期待': ['温馨','日常','微笑','平和','宁静','亲密','期待','温暖','商量','领证','试衣'],
+        '谈判_智斗': ['谈判','说服','解释','陈述','协商','智退','冷静','假装','支持','房贷','月供','贷款'],
+        '争执_冲突': ['争执','争吵','指责','斥责','拍桌','激动','争辩','反对','不同意','抗议'],
+        '出走_决绝': ['离家','出走','卖房','行李','背影','孤独','决绝','陌生','流浪','街头','蜷缩'],
+        '家庭_日常': ['电话','通知','商量','反思','讨论','对话','劝说','劝解'],
     }
-    # 从解说词 extract emotion context
     all_text = narration + ' ' + context_text
-    emotion_scores = {}
-    for category, kws in emotion_kw_map.items():
-        emotion_scores[category] = sum(1 for kw in kws if kw in all_text)
 
-    # 对每个场景评分
+    # 计算解说词触发的情绪类别
+    active_cats = {}
+    for cat, kws in KW_MAP.items():
+        hits = sum(1 for kw in kws if kw in all_text)
+        if hits:
+            active_cats[cat] = hits
+
     scored = []
     for m in matches:
         score = 0
-        desc = (m['vlm_desc'] + ' ' + m['event'] + ' ' + m['location'])
-        # 人物精确匹配
+        desc = m['vlm_desc'] + ' ' + m['event'] + ' ' + m['location']
+        # 人物匹配 (核心权重, 不再必须)
         if target_chars and set(m['chars']) & target_chars:
-            score += 10
-        # 情绪关键词匹配
-        for cat, cat_score in emotion_scores.items():
-            if cat_score > 0:
-                for kw in emotion_kw_map[cat]:
-                    if kw in desc:
-                        score += 1
-        # 地点匹配 (解说词中提到办公室/家/医院?)
-        for loc_kw in ['办公室', '家中', '医院', '客厅', '餐厅']:
+            score += 15
+        elif target_chars:
+            score -= 5  # 弱惩罚, 但不排除
+        # 情绪关键词匹配: 只在解说道触发的情绪类别中匹配
+        for cat, hits in active_cats.items():
+            for kw in KW_MAP[cat]:
+                if kw in desc:
+                    score += 1.5  # 提高评分精度
+        # 从VLM描述中匹配所有情绪词 (即使解说词没有)
+        for cat, kws in KW_MAP.items():
+            score += sum(0.3 for kw in kws if kw in desc)  # 基础情绪分数
+        # 地点锚定
+        for loc_kw in ['办公室','客厅','餐厅','医院','派出所','机场','家中']:
             if loc_kw in all_text and loc_kw in m['location']:
                 score += 2
-
-        if score > 0:
-            scored.append((score, m))
-
+        scored.append((score, m))
     scored.sort(key=lambda x: -x[0])
 
-    # ── Step 4: 格式化返回 ──
-    # 去重: 同一 scene_id 只取最高分
+    # 取 top-20 候选, 保证多样性
+    top20 = []
     seen = set()
-    top = []
     for score, m in scored:
         key = f"{m['ep']}_{m['scene_id']}"
-        if key in seen:
-            continue
+        if key in seen: continue
         seen.add(key)
-        # 格式化为 LLM 友好的描述
-        if m['vlm_desc']:
-            desc = m['vlm_desc'][:100]
-        else:
-            desc = f"{m['location']}。人物: {', '.join(m['chars'])}。{m['event']}"
-        top.append(f"EP{m['ep']} {m['start']:.0f}s-{m['end']:.0f}s {desc}")
-        if len(top) >= num * 2:  # 返回稍多的候选
+        top20.append((score, m))
+        if len(top20) >= 20: break
+
+    # ── Step 3.5: BGE 轻量重排 (仅对 top20 候选) ──
+    if len(top20) > num:
+        try:
+            from handlers.search import _semantic_search
+            bge_results = _semantic_search(narration, limit=50)
+            # 建立 EP_start → BGE rank 映射
+            bge_rank = {}
+            for rank, r in enumerate(bge_results):
+                key = f"{r.get('ep',0)}_{(r.get('start',0)//60)*60}"
+                if key not in bge_rank:
+                    bge_rank[key] = rank
+            # 用 BGE rank 调整分数
+            for idx, (score, m) in enumerate(top20):
+                key = f"{m['ep']}_{(m['start']//60)*60}"
+                bge_r = bge_rank.get(key, 999)
+                if bge_r < 10:   score += 5
+                elif bge_r < 20: score += 3
+                elif bge_r < 30: score += 1
+                top20[idx] = (score, m)
+            top20.sort(key=lambda x: -x[0])
+        except Exception:
+            pass
+
+    # ── Step 4: 去重 + ASR 时间精确定位 ──
+    seen2 = set()
+    results = []
+    for score, m in top20:
+        key = f"{m['ep']}_{m['scene_id']}"
+        if key in seen2:
+            continue
+        seen2.add(key)
+
+        # ASR 精确定位: 在场景段内找最优对话锚点
+        asr_time = None
+        asr_text = ""
+        try:
+            asr_file = sources_dir / f"ep{m['ep']}" / "asr_result.json"
+            if asr_file.exists():
+                asr_data = json.load(open(asr_file))
+                # 在场景段的时间范围内找情绪相关的ASR段落
+                best_asr = None
+                for a in asr_data:
+                    if m['start'] <= a['start'] <= m['end']:
+                        kw_score = sum(1 for kws in KW_MAP.values() for kw in kws if kw in a.get('text',''))
+                        if best_asr is None or kw_score > best_asr[0]:
+                            best_asr = (kw_score, a)
+                if best_asr and best_asr[0] > 0:
+                    asr_time = best_asr[1]['start']
+                    asr_text = best_asr[1]['text'][:80]
+        except Exception:
+            pass
+
+        # 格式化输出
+        desc = m['vlm_desc'] or f"{m['location']}。人物: {', '.join(m['chars'])}。{m['event']}"
+        time_info = f" [{asr_time:.0f}s]" if asr_time else f" [{m['start']:.0f}s-{m['end']:.0f}s]"
+        entry = f"EP{m['ep']}{time_info} {desc[:100]}"
+        if asr_text:
+            entry += f" | ASR: \"{asr_text}\""
+        results.append(entry)
+        if len(results) >= num * 2:
             break
 
-    # ── Step 5: LLM 精排 (可选) ──
-    if top and len(top) > num:
+    # ── Step 5: LLM 精排 (可选, 候选>num触发) ──
+    if results and len(results) > num:
         from lib.llm import call_moonshot
-        candidates = "\n".join(f"[{i+1}] {t}" for i, t in enumerate(top[:8]))
-        result = call_moonshot(
-            "你是视频剪辑分镜助手。根据解说词，从候选镜头中挑选最匹配的3个。"
+        seg_ctx_str = ""
+        if segment_context and segment_context.get("sentences"):
+            seg_ctx_str = "上下文:\n" + "\n".join(
+                f"句{i}: {s}" for i, s in enumerate(segment_context["sentences"])
+            ) + "\n\n"
+        candidates = "\n".join(f"[{i+1}] {t}" for i, t in enumerate(results[:8]))
+        llm_result = call_moonshot(
+            "你是视频剪辑分镜助手。根据解说词从候选镜头中挑选最匹配的3个。"
             "直接输出「镜头N：推荐描述」格式，每行一个。",
             f"解说词：{narration}\n{seg_ctx_str}候选镜头：\n{candidates}\n\n请选择最匹配的3个镜头：",
             temperature=0.5, max_tokens=600, timeout=30, label="storyboard",
         )
-        if result["ok"]:
-            lines = [l.strip() for l in result["content"].strip().split("\n")
+        if llm_result["ok"]:
+            lines = [l.strip() for l in llm_result["content"].strip().split("\n")
                      if l.strip() and len(l.strip()) > 15 and re.match(r'^镜头\d+[：:]', l.strip())]
             if lines:
                 return lines[:num]
 
-    return top[:num]
+    return results[:num]
 
 
 # ── POST /script/analyze_transcript ──
