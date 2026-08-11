@@ -85,8 +85,12 @@ async def lifespan(app: FastAPI):
         import pickle as _pk
         for ep in range(1, 47):
             ep_str = f"{ep:02d}"
-            # ASR
-            asr_file = SOURCES_DIR / f"asr_ep{ep_str}.json"
+            # ASR — 优先从 ep{N}/asr_result.json 加载，兼容旧路径
+            asr_file = SOURCES_DIR / f"ep{ep}" / "asr_result.json"
+            if not asr_file.exists():
+                asr_file = SOURCES_DIR / f"ep{ep_str}" / "asr_result.json"
+            if not asr_file.exists():
+                asr_file = SOURCES_DIR / f"asr_ep{ep_str}.json"
             if not asr_file.exists():
                 asr_file = SOURCES_DIR / f"asr_{ep_str}.json"
             if asr_file.exists():

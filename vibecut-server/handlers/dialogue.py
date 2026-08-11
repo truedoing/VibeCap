@@ -14,19 +14,72 @@ from handlers.media import serve_preview
 # ── POST /dialogue_match ──
 
 def dialogue_match(dialogue: str) -> dict:
-    """拆解台词 + 匹配原剧 ASR"""
+    """拆解台词 + 匹配原剧 ASR
+
+    对于高亮台词（原剧台词改编），直接取开头关键词锚定 ASR，
+    不需要 LLM 拆解生成变体——因为高亮台词就是从原剧对话来的。
+    """
     if not dialogue or not dialogue.strip():
         return {"lines": []}
 
-    lines = _dialogue_split_normalize(dialogue)
+    # 只用第一句锚定 (取第一个标点前的内容，或者前15字)
+    # 长对话中后面的内容可能有省略/改编，但开头一定和原剧台词接近
+    import re as _re
+    clean = _re.sub(r'[，。！？、\s"\"''「」『』【】《》（）]', '', dialogue)
+    # 取第一句：遇到标点就截断，否则取前15字
+    first_sentence = dialogue.split('"')[1] if dialogue.count('"') >= 2 else dialogue
+    first_sentence = _re.sub(r'[，。！？、\s"\"''「」『』【】《》（）]', '', first_sentence)
+    anchor = first_sentence[:15]
 
+    kws = []
+    for n in [2, 3, 4]:
+        for i in range(len(anchor) - n + 1):
+            kw = anchor[i:i+n]
+            if kw not in _ASR_STOPWORDS:
+                kws.append(kw)
+
+    results = []
+    from handlers.search import search_asr_anchor
+    matches = search_asr_anchor(kws, limit=10)
+
+    if matches:
+        best = matches[0]
+        # 以最高分 ASR 片段的时间点作为锚定结果
+        results.append({
+            "original": dialogue[:80],
+            "normalized": best["text"][:80],
+            "confident": True,
+            "variant_used": dialogue[:20],
+            "matches": [{"ep": best["ep"], "start": best["start"],
+                         "end": best["end"], "text": best["text"][:120],
+                         "score": best["score"]}],
+        })
+    else:
+        # Fallback: 用原始 LLM 拆解方案
+        return _dialogue_match_fallback(dialogue)
+
+    return {"lines": results}
+
+
+# ASR 关键词锚点中的常见停用词 (高频但无语义的2-3字滑窗)
+# 注意: 只过滤真正的语法噪音，不要过滤剧情关键词!
+_ASR_STOPWORDS = {
+    '一个','这个','那个','什么','怎么','就是','还是','可以','已经',
+    '因为','所以','但是','不过','虽然','如果','只是','还不','不了',
+    '哪个','哪儿','不是','我们','我是','他们','你想','想去',
+    '去跟','跟他','还不',
+}
+
+
+def _dialogue_match_fallback(dialogue: str) -> dict:
+    """降级: LLM 拆解台词 + 生成变体"""
+    lines = _dialogue_split_normalize(dialogue)
     results = []
     for line in lines:
         original = line.get("original", "")
         variants = line.get("variants", [original])
         best_match = None
         best_variant = ""
-
         for v in variants:
             matches = search_asr_text(v, limit=1)
             if matches:
@@ -34,14 +87,12 @@ def dialogue_match(dialogue: str) -> dict:
                 if not best_match or m["score"] > best_match["score"]:
                     best_match = m
                     best_variant = v
-
         if best_match and best_match["score"] >= 5:
             normalized = best_match["text"][:80]
             confident = True
         else:
             normalized = variants[0] if variants else original
             confident = False
-
         results.append({
             "original": original,
             "normalized": normalized,
@@ -49,7 +100,6 @@ def dialogue_match(dialogue: str) -> dict:
             "variant_used": best_variant,
             "matches": [best_match] if best_match and confident else [],
         })
-
     return {"lines": results}
 
 

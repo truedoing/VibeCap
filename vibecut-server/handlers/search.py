@@ -459,3 +459,50 @@ def search_asr_text(query, limit=3):
                 results[k] = r
 
     return sorted(results.values(), key=lambda x: -x["score"])[:limit]
+
+
+def search_asr_anchor(kws: list, limit: int = 10) -> list:
+    """用 2-4 字关键词列表在 ASR 中快速锚定台词位置
+
+    用于高亮台词（原剧对话）的定位。
+
+    策略: cluster scoring — 在同一集内密集出现的高分片段
+    比孤立的偶然匹配更可靠。对每集所有命中求和 + cluster density bonus。
+    """
+    # Phase 1: 收集所有命中
+    ep_hits = {}
+    for ep, asr_list in asr_data.items():
+        hits = []
+        for a in asr_list:
+            text = a["text"]
+            score = sum(text.count(k) * (3 if len(k) >= 3 else 2) for k in kws)
+            if score > 5:
+                hits.append((score, a))
+        if hits:
+            ep_hits[ep] = sorted(hits, key=lambda x: -x[0])
+
+    if not ep_hits:
+        return []
+
+    # Phase 2: 对每集计算 cluster total score
+    ep_scores = {}
+    for ep, hits in ep_hits.items():
+        top = hits[0]
+        top_time = top[1]["start"]
+        # total score: 所有 >10 分的命中加总
+        total = sum(s for s, a in hits if s > 10)
+        # cluster bonus: 前30s内有多少个 >10 分的命中
+        cluster = sum(1 for s, a in hits
+                      if s > 10 and abs(a["start"] - top_time) < 30)
+        ep_scores[ep] = (total + cluster * 10, top)
+
+    # Phase 3: 按 ep 总得分排序
+    ranked = sorted(ep_scores.items(), key=lambda x: -x[1][0])
+
+    results = []
+    for ep, (ep_total, (score, a)) in ranked[:limit]:
+        results.append({
+            "ep": ep, "start": a["start"], "end": a["end"],
+            "text": a["text"][:200], "score": score,
+        })
+    return results
