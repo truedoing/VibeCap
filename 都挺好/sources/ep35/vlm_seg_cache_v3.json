@@ -2,22 +2,22 @@
   "0": {
     "scene_map_index": 0,
     "start": 300,
-    "end": 510,
-    "visual_summary": "小蔡身着碎花围裙，手持诗稿神情激动地赞叹；苏大强坐在书桌前，注视着小蔡。",
+    "end": 540,
+    "visual_summary": "小蔡手持诗稿赞赏苏大强的诗歌，鼓励出版，场景温馨，两人互动愉悦。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "兴奋崇拜",
-    "intensity": 4,
-    "lighting": "自然光",
+    "emotional_tone": "温馨愉悦",
+    "intensity": 3,
+    "lighting": "暖调",
     "actions": [
-      "小蔡看着诗稿赞叹",
-      "苏大强注视小蔡"
+      "小蔡手持诗稿阅读",
+      "小蔡手放胸口表达崇拜"
     ],
     "_tokens": {
-      "prompt_tokens": 1499,
-      "completion_tokens": 609,
-      "total_tokens": 2108
+      "prompt_tokens": 1498,
+      "completion_tokens": 1203,
+      "total_tokens": 2701
     },
     "_chars": [
       "苏大强",
@@ -26,24 +26,23 @@
   },
   "1": {
     "scene_map_index": 1,
-    "start": 510,
-    "end": 780,
-    "visual_summary": "苏明成身穿深绿色衬衫，眼神游移、神情急切，正向长辈解释费用问题，试图用言辞说服对方投资入股。",
-    "shot_size": "中景",
-    "composition": "单人",
+    "start": 540,
+    "end": 810,
+    "visual_summary": "舅舅吴明腾站着，手指向苏明成质问，苏明成坐在床边回应，气氛对峙。",
+    "shot_size": "近景",
+    "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "狡辩诱导",
+    "emotional_tone": "紧张对峙",
     "intensity": 4,
     "lighting": "自然光",
     "actions": [
-      "神情急切辩解",
-      "眼神闪躲游移",
-      "嘴角微动说话"
+      "指责",
+      "辩解"
     ],
     "_tokens": {
-      "prompt_tokens": 1536,
-      "completion_tokens": 562,
-      "total_tokens": 2098
+      "prompt_tokens": 1528,
+      "completion_tokens": 713,
+      "total_tokens": 2241
     },
     "_chars": [
       "苏明成"
@@ -51,48 +50,45 @@
   },
   "2": {
     "scene_map_index": 2,
-    "start": 780,
+    "start": 810,
     "end": 900,
-    "visual_summary": "朱丽坐沙发左侧，神情严肃与苏明成、灰衣男子争执；苏明成低头摆弄薯片袋回避，灰衣男子侧身关注。",
-    "shot_size": "中景",
-    "composition": "三人",
+    "visual_summary": "灰衣吴明腾皱眉抬手急切辩解，玫红上衣的吴明腾妻子怒形于色，厉声质问，现场对峙气氛剑拔弩张。",
+    "shot_size": "近景",
+    "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "愤怒争执",
-    "intensity": 4,
+    "emotional_tone": "愤怒坚决",
+    "intensity": 5,
     "lighting": "自然光",
     "actions": [
-      "朱丽严肃开口争执",
-      "苏明成低头摆弄薯片袋"
+      "吴明腾抬手急切辩解",
+      "吴明腾妻子侧头怒斥"
     ],
     "_tokens": {
-      "prompt_tokens": 1537,
-      "completion_tokens": 726,
-      "total_tokens": 2263
+      "prompt_tokens": 1538,
+      "completion_tokens": 1359,
+      "total_tokens": 2897
     },
-    "_chars": [
-      "苏明成",
-      "朱丽"
-    ]
+    "_chars": []
   },
   "3": {
     "scene_map_index": 3,
     "start": 900,
     "end": 1020,
-    "visual_summary": "苏明玉身着黑色西装，在会议桌前端坐，神情严肃，目光直视前方，似在聆听或回应。会议室内环境正式。",
-    "shot_size": "近景",
-    "composition": "单人",
+    "visual_summary": "众城公司会议室，苏明玉、老袁、小李、小蒙总围坐讨论迪斯项目低价，苏明玉严肃宣布处理老袁，现场气氛紧张。",
+    "shot_size": "中景",
+    "composition": "群像",
     "angle": "平视",
-    "emotional_tone": "严肃质询",
+    "emotional_tone": "严肃紧张",
     "intensity": 4,
     "lighting": "冷调",
     "actions": [
-      "端坐倾听",
-      "目光直视"
+      "苏明玉发言宣布决定",
+      "老袁面色凝重反应"
     ],
     "_tokens": {
-      "prompt_tokens": 1537,
-      "completion_tokens": 732,
-      "total_tokens": 2269
+      "prompt_tokens": 1555,
+      "completion_tokens": 1256,
+      "total_tokens": 2811
     },
     "_chars": [
       "苏明玉"
@@ -102,7 +98,7 @@
     "scene_map_index": 4,
     "start": 1020,
     "end": 1080,
-    "visual_summary": "小蔡在苏大强家照顾他创作，桌上书籍散落，小蔡专注查看资料，苏大强写作，氛围温馨。",
+    "visual_summary": "苏大强家客厅内，小蔡穿着花围裙俯身查看桌上的书籍和钞票，苏大强坐在桌旁专注写作，背景有鱼缸和植物，氛围温暖。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
@@ -110,13 +106,13 @@
     "intensity": 3,
     "lighting": "暖调",
     "actions": [
-      "小蔡查看资料",
-      "苏大强写作"
+      "小蔡俯身查看书籍",
+      "苏大强伏案创作"
     ],
     "_tokens": {
-      "prompt_tokens": 1531,
-      "completion_tokens": 1017,
-      "total_tokens": 2548
+      "prompt_tokens": 1540,
+      "completion_tokens": 1215,
+      "total_tokens": 2755
     },
     "_chars": [
       "苏大强",
@@ -125,149 +121,148 @@
   },
   "5": {
     "scene_map_index": 5,
-    "start": 1560,
-    "end": 1770,
-    "visual_summary": "众城公司办公室中，苏明玉穿红色外套激动指责，苏明成穿黑色皮夹克面对，舅舅在背景西装革履观察，气氛紧张冲突激烈。",
-    "shot_size": "中景",
-    "composition": "三人",
-    "angle": "平视",
-    "emotional_tone": "愤怒争执",
-    "intensity": 5,
-    "lighting": "高调",
-    "actions": [
-      "说话指责",
-      "站立倾听",
-      "旁观观察"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1534,
-      "completion_tokens": 1209,
-      "total_tokens": 2743
-    },
-    "_chars": [
-      "苏明成",
-      "苏明玉"
-    ]
-  },
-  "6": {
-    "scene_map_index": 6,
-    "start": 1770,
-    "end": 1830,
-    "visual_summary": "身着黑色皮夹克的苏明成身体前倾撑桌，紧绷又无奈地直视对面的苏明玉，办公室内气氛压抑，满是被开除后的愤怒与无力感。",
+    "start": 1110,
+    "end": 1530,
+    "visual_summary": "穿军绿外套男子坐于餐桌前手搭桌面，穿深蓝格纹衬衫外搭针织背心男子坐椅上，二人神情凝重。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "愤怒无奈",
-    "intensity": 4,
-    "lighting": "自然光",
+    "emotional_tone": "忐忑凝重",
+    "intensity": 3,
+    "lighting": "暖调",
     "actions": [
-      "身体前倾撑桌",
-      "紧绷直视对方"
+      "手置餐桌桌面",
+      "眉峰微蹙",
+      "端坐于椅上"
     ],
     "_tokens": {
-      "prompt_tokens": 1541,
-      "completion_tokens": 697,
-      "total_tokens": 2238
+      "prompt_tokens": 1536,
+      "completion_tokens": 1255,
+      "total_tokens": 2791
+    },
+    "_chars": []
+  },
+  "6": {
+    "scene_map_index": 6,
+    "start": 1560,
+    "end": 1740,
+    "visual_summary": "苏明成（军绿皮夹克）在办公室神情激动地质问，吴明腾妻子（红色大衣）张口激烈回应，双方处于紧张对峙中。",
+    "shot_size": "近景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "愤怒质问",
+    "intensity": 5,
+    "lighting": "自然光",
+    "actions": [
+      "站立指责",
+      "激烈辩驳"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1550,
+      "completion_tokens": 701,
+      "total_tokens": 2251
     },
     "_chars": [
-      "苏明成",
-      "苏明玉"
+      "苏明成"
     ]
   },
   "7": {
     "scene_map_index": 7,
-    "start": 1830,
-    "end": 1980,
-    "visual_summary": "办公室内，苏明成身着黑色皮夹克，身体前倾撑桌，紧绷直视老袁质疑升职，苏明玉在场，气氛压抑。",
+    "start": 1740,
+    "end": 1860,
+    "visual_summary": "苏明玉独自坐在办公椅上，表情严肃冷静，注视着办公室外的争执。萧总不在画面内。",
     "shot_size": "中景",
-    "composition": "三人",
+    "composition": "单人",
     "angle": "平视",
-    "emotional_tone": "愤怒质疑",
-    "intensity": 4,
-    "lighting": "冷调",
+    "emotional_tone": "冷静审视",
+    "intensity": 3,
+    "lighting": "自然光",
     "actions": [
-      "身体前倾撑桌",
-      "直视对方",
-      "紧绷表情"
+      "端坐椅上",
+      "双臂交叉"
     ],
     "_tokens": {
-      "prompt_tokens": 1548,
-      "completion_tokens": 1564,
-      "total_tokens": 3112
+      "prompt_tokens": 1550,
+      "completion_tokens": 696,
+      "total_tokens": 2246
     },
     "_chars": [
-      "苏明成",
       "苏明玉"
     ]
   },
   "8": {
     "scene_map_index": 8,
-    "start": 1980,
+    "start": 1860,
     "end": 2070,
-    "visual_summary": "苏大强家客厅，苏明成（黑皮夹克）身体前倾、眉头紧皱，对着沙发的苏大强（衣色模糊）抱怨，手部激动，表情愤懑，背景有绿植、沙发等陈设。",
-    "shot_size": "近景",
-    "composition": "双人",
-    "angle": "平视",
-    "emotional_tone": "抱怨不满",
-    "intensity": 4,
-    "lighting": "自然光",
-    "actions": [
-      "倾身抱怨",
-      "手部激动比划"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1543,
-      "completion_tokens": 911,
-      "total_tokens": 2454
-    },
-    "_chars": [
-      "苏大强",
-      "苏明成"
-    ]
-  },
-  "10": {
-    "scene_map_index": 10,
-    "start": 2250,
-    "end": 2340,
-    "visual_summary": "办公室内，苏明玉站在会议桌前，正对老袁与数位同事。她神情肃穆，手持文件，宣读任命。老袁坐于桌首，面色郑重。",
+    "visual_summary": "医院收费窗口前，苏明成（深色西装）不耐烦地掏手机付款。吴明腾（浅色衬衫）低头回避，吴明腾妻子红着眼眶攥紧检查单。众邦（病号服）害怕地躲在母亲身后。",
     "shot_size": "中景",
     "composition": "群像",
     "angle": "平视",
-    "emotional_tone": "正式、权威",
+    "emotional_tone": "焦躁无奈",
     "intensity": 4,
     "lighting": "冷调",
     "actions": [
-      "苏明玉宣读文件",
-      "老袁站起致意"
+      "苏明成快速操作手机付款",
+      "吴明腾妻子擦拭眼角",
+      "众邦抓紧母亲衣角"
     ],
     "_tokens": {
-      "prompt_tokens": 1553,
-      "completion_tokens": 561,
-      "total_tokens": 2114
+      "prompt_tokens": 1536,
+      "completion_tokens": 559,
+      "total_tokens": 2095
     },
     "_chars": [
-      "苏明玉"
+      "苏明成"
     ]
   },
   "9": {
     "scene_map_index": 9,
     "start": 2070,
-    "end": 2250,
-    "visual_summary": "医院诊室内，卡其色夹克的舅舅对着医生开口，黑皮夹克的苏明成、深色大衣的人旁立，红衣服的舅妈扶着头上缠白绷带的众邦，众邦低头看手机，氛围紧张",
+    "end": 2280,
+    "visual_summary": "苏明玉和苏大强在苏大强家客厅，苏明玉手持文件平静解释公司情况，苏大强专注聆听，氛围温和信任。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "平静信任",
+    "intensity": 2,
+    "lighting": "暖调",
+    "actions": [
+      "苏明玉手持文件解释",
+      "苏大强认真倾听"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1561,
+      "completion_tokens": 1339,
+      "total_tokens": 2900
+    },
+    "_chars": [
+      "苏大强",
+      "苏明玉"
+    ]
+  },
+  "10": {
+    "scene_map_index": 10,
+    "start": 2280,
+    "end": 2340,
+    "visual_summary": "众城公司会议室，苏明玉坐主持位宣布老袁升职，老袁站立聆听，员工围桌鼓掌，氛围冷静深沉。",
     "shot_size": "中景",
     "composition": "群像",
     "angle": "平视",
-    "emotional_tone": "焦灼争执",
+    "emotional_tone": "冷静深沉",
     "intensity": 3,
-    "lighting": "自然光",
-    "actions": [],
+    "lighting": "冷调",
+    "actions": [
+      "苏明玉冷静宣布",
+      "老袁接受职位",
+      "员工鼓掌回应"
+    ],
     "_tokens": {
-      "prompt_tokens": 1560,
-      "completion_tokens": 1800,
-      "total_tokens": 3360
+      "prompt_tokens": 1541,
+      "completion_tokens": 963,
+      "total_tokens": 2504
     },
     "_chars": [
-      "苏明成"
+      "苏明玉"
     ]
   }
 }
