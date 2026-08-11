@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse, parse_qs
 from typing import Optional
 from contextlib import asynccontextmanager
+from pydantic import BaseModel
 
 import numpy as np
 from fastapi import FastAPI, Request, Query, UploadFile, File, Form, HTTPException
@@ -713,6 +714,50 @@ async def api_refine(request: Request):
                              headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
 
+class DramaScriptRequest(BaseModel):
+    topic: str
+    episodes: Optional[list[int]] = None
+    target_duration: int = 480
+    drama: Optional[str] = None
+
+
+@app.post("/script/generate_drama_script")
+async def api_generate_drama_script(body: DramaScriptRequest):
+    """编剧Agent SSE — 电视剧解说脚本生成"""
+    from handlers.script_drama import generate_drama_script
+
+    topic = body.topic.strip()
+    if not topic:
+        return JSONResponse({"ok": False, "error": "请提供选题描述 (topic)"}, status_code=400)
+
+    drama_name = body.drama or project_name
+    focus_episodes = body.episodes
+    target_duration = body.target_duration
+
+    def _run(topic, emit):
+        def emit_progress(step, msg, data=None):
+            emit("progress", {"step": step, "status": "running", "msg": msg, **(data or {})})
+
+        def emit_complete(result):
+            emit("complete", result)
+
+        def emit_error(error, detail=""):
+            emit("error", {"error": error, "detail": detail})
+
+        generate_drama_script(
+            topic=topic,
+            emit_progress=emit_progress,
+            emit_complete=emit_complete,
+            emit_error=emit_error,
+            drama_name=drama_name,
+            focus_episodes=focus_episodes,
+            target_duration=target_duration,
+        )
+
+    return StreamingResponse(_sse_gen(_run, topic), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+
+
 # ═══════════════════════════════════════════════════════════════
 # POST 端点 — 流水线 + 导出
 # ═══════════════════════════════════════════════════════════════
@@ -725,32 +770,88 @@ def api_data_quality(project: str = "都挺好"):
 
     drama_dir = Path(__file__).resolve().parent.parent / project
     episodes = []
+
     for ep in range(1, 47):
         ep_dir = drama_dir / "sources" / f"ep{ep}"
-        vlm = None; asr = None
-        # v3: 读场景段级缓存, fallback sliced/旧格式
-        if (ep_dir / "vlm_seg_cache_v3.json").exists():
-            vlm = len(json.load(open(ep_dir / "vlm_seg_cache_v3.json")))
-        elif (ep_dir / "vlm_analysis_sliced.json").exists():
-            vlm = len(json.load(open(ep_dir / "vlm_analysis_sliced.json")))
-        elif (ep_dir / "vlm_merged.json").exists():
-            vlm = len(json.load(open(ep_dir / "vlm_merged.json")))
-        elif (ep_dir / "vlm_analysis.json").exists():
-            data = json.load(open(ep_dir / "vlm_analysis.json"))
-            vlm = sum(1 for x in data if x and x.get("description","").strip())
 
-        if (ep_dir / "asr_result.json").exists():
-            asr_data = json.load(open(ep_dir / "asr_result.json"))
-            asr = len(asr_data)
+        # ── 检测数据文件 ──
+        has_vlm = (ep_dir / "vlm_seg_cache_v3.json").exists()
+        has_asr = (ep_dir / "asr_result.json").exists()
+        has_scene_map = (ep_dir / "scene_map.json").exists()
+        has_synopsis = (ep_dir / "ep_synopsis.json").exists()
+
+        # ── 计数 ──
+        vlm_count = 0
+        if has_vlm:
+            try:
+                vlm_count = len(json.load(open(ep_dir / "vlm_seg_cache_v3.json")))
+            except: pass
+
+        asr_count = 0
+        if has_asr:
+            try:
+                asr_count = len(json.load(open(ep_dir / "asr_result.json")))
+            except: pass
+
+        scene_map_count = 0
+        scene_map_quality = 0  # 场景描述完整度: 0-100
+        if has_scene_map:
+            try:
+                sm = json.load(open(ep_dir / "scene_map.json"))
+                scene_map_count = len(sm)
+                # 计算场景描述的完整度: event + mood 都有 = 高分
+                complete = sum(1 for s in sm if s.get("event") and s.get("mood"))
+                scene_map_quality = round(complete / max(scene_map_count, 1) * 100, 1)
+            except: pass
+
+        # ── 综合评分 ──
+        # 四个维度: ASR(25%) + VLM(30%) + scene_map(30%) + synopsis(15%)
+        asr_score = min(100, asr_count * 0.1) if asr_count > 0 else 0  # 每10句ASR≈1分
+        vlm_score = min(100, vlm_count * 4) if vlm_count > 0 else 0   # 每段VLM≈4分，25段=100
+        sm_score = scene_map_quality                                     # 场景完整度
+        syn_score = 100 if has_synopsis else 0
+
+        overall = round(
+            asr_score * 0.25 +
+            vlm_score * 0.30 +
+            sm_score * 0.30 +
+            syn_score * 0.15
+        , 1)
 
         episodes.append({
             "ep": ep,
-            "vlm": vlm or 0,
-            "asr": asr or 0,
-            "has_vlm": (ep_dir / "vlm_seg_cache_v3.json").exists() or (ep_dir / "vlm_analysis_sliced.json").exists(),
+            "vlm": vlm_count,
+            "asr": asr_count,
+            "scene_map": scene_map_count,
+            "has_vlm": has_vlm,
+            "has_asr": has_asr,
+            "has_scene_map": has_scene_map,
+            "has_synopsis": has_synopsis,
+            "vlm_score": round(vlm_score, 1),
+            "asr_score": round(asr_score, 1),
+            "scene_map_score": sm_score,
+            "synopsis_score": syn_score,
+            "overall_score": overall,
         })
 
-    return {"project": project, "episodes": episodes, "total": len(episodes)}
+    # 汇总
+    total_eps = 46
+    eps_with_data = sum(1 for e in episodes if e["has_vlm"] or e["has_asr"])
+    avg_score = round(sum(e["overall_score"] for e in episodes) / total_eps, 1)
+
+    return {
+        "project": project,
+        "episodes": episodes,
+        "total": total_eps,
+        "summary": {
+            "total_eps": total_eps,
+            "eps_with_data": eps_with_data,
+            "avg_score": avg_score,
+            "total_vlm_scenes": sum(e["vlm"] for e in episodes),
+            "total_asr_segments": sum(e["asr"] for e in episodes),
+            "total_scene_maps": sum(e["scene_map"] for e in episodes),
+        },
+    }
 
 @app.post("/data/process")
 async def api_data_process(request: Request):

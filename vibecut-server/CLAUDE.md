@@ -1,28 +1,30 @@
 ---
 name: vibecut-server
-description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + AI流水线 v1.2
+description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + AI流水线 v3.0
 ---
 
-## VibeCut Server v1.2
+## VibeCut Server v3.0
 
 ### 架构
 ```
 vibecut-server/
-├── main.py                     ← FastAPI 入口 + 路由注册 + 生命周期 (847行)
+├── main.py                     ← FastAPI 入口 + 路由注册 + 生命周期
 ├── config.py                   ← CLI参数 + 项目配置 + 路径解析 (94行)
 ├── db.py                       ← SQLite: dramas/episodes/tasks/task_segments/index_entries
 │
 ├── handlers/
 │   ├── search.py               ← BGE语义搜索 + ASR关键词/锚定搜索 (485行)
-│   ├── tasks.py                ← 任务 CRUD (创建/状态/删除/列表)
+│   ├── tasks.py                ← 任务 CRUD (创建/状态/删除/列表, 支持无docx创建)
 │   ├── dialogue.py             ← 对话匹配 + AI聊天 (184行)
 │   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY 分镜 (581行)
-│   ├── script_gen.py           ← AI脚本生成 (v3流水线/v4故事优先/精切 SSE)
+│   ├── script_gen.py           ← interview AI脚本生成 (v3流水线/v4故事优先/精切 SSE)
+│   ├── script_drama.py         ← drama AI脚本生成 SSE handler (新 v3.0)
 │   ├── pipeline.py             ← 后台加工流水线 (电视剧+口播)
 │   ├── media.py                ← 媒体服务 (代理视频/片段提取/预览/导出)
 │   ├── static.py               ← SPA前端回退 + 任务目录文件服务
 │   └── prompts/
-│       └── director.py         ← DIRECTOR_PROMPT 模板 (150行)
+│       ├── director.py         ← DIRECTOR_PROMPT 模板 (150行)
+│       └── script_drama.py     ← 编剧Agent Prompt模板 (故事师/策划师/文案师) (新 v3.0)
 │
 ├── lib/
 │   ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo/DeepSeek)
@@ -31,11 +33,16 @@ vibecut-server/
 │   ├── env.py                  ← 统一.env加载
 │   ├── vlm_cache.py            ← VLM 场景缓存懒加载 (111行)
 │   ├── storyboard_match.py     ← 分镜匹配引擎 — 多维度结构化评分 (195行)
-│   └── scene_map.py            ← 场记Agent: scene_map + synopsis 生成 (198行)
+│   └── scene_map.py            ← 场记Agent: scene_map + synopsis生成 (优化～260行)
 │
-├── script_agents.py            ← 编剧台 AI Agent
+├── script_agents.py            ← interview编剧台 AI Agent
 │   ├── run_pipeline()          ← v3 搜索流水线
 │   └── story_first_pipeline()  ← v4 故事优先 (口播专用)
+├── drama_script_agents.py      ← drama编剧台 AI Agent (新 v3.0)
+│   ├── story_master_agent()    ← 故事师: 全剧概要→故事地图
+│   ├── narrative_planner_agent() ← 策划师: 故事地图→章节方案
+│   ├── script_writer_agent()   ← 文案师: 章节+scene_map→解说词+scene_query
+│   └── run_drama_pipeline()    ← 编排器: 协调三个Agent+程序校验
 ├── refine_segments.py          ← 口播精切引擎
 ├── build_index.py              ← BGE索引统一入口 (--project)
 ├── clean_interview_data.py     ← 口播: LLM清洗+说话人识别
@@ -43,9 +50,6 @@ vibecut-server/
 ├── export_capcut.py            ← 剪映草稿导出
 ├── generate_proxies.py         ← 540p代理视频
 ├── analyze_episodes.py         ← 电视剧: 场景+ASR+VLM
-├── cross_calibrate.py          ← 电视剧: ASR↔VLM校准 (已废弃)
-├── vlm_char_calibrate.py       ← 电视剧: VLM人物校准 (字幕称呼词 + 场景连续性)
-├── clean_data.py               ← 电视剧: 数据清洗
 └── ...                         ← 其他独立脚本
 ```
 
@@ -54,8 +58,8 @@ vibecut-server/
 ```bash
 cd vibecut-server
 
-# FastAPI (推荐, v1.1)
-/opt/anaconda3/bin/python3 main.py --project 杨老师教育 --task 0801学习新东方 --port 8765
+# FastAPI (推荐)
+/opt/anaconda3/bin/python3 main.py --project 都挺好 --task Task0804 --port 8765
 
 # 兼容旧版 (server.py 仍然可用, 但功能冻结)
 /opt/anaconda3/bin/python3 server.py --project 杨老师教育 --task 0801学习新东方 --port 8765
@@ -70,12 +74,14 @@ cd vibecut-server
 | /segments.json?task= | GET | 任务分段 (DB→文件fallback) |
 | /dramas | GET | 项目列表 |
 | /tasks?drama= | GET | 任务列表 |
-| /tasks/create | POST | 创建任务 (JSON或multipart) |
+| /tasks/create | POST | 创建任务 (支持无docx, AI编剧模式) |
+| /tasks/create_json | POST | 创建任务 JSON (无需上传文件) |
 | /tasks/status | POST | 更新任务状态 |
 | /tasks/delete | POST | 删除任务 |
 | /script/generate_script | POST | v3 三步混编 (JSON响应) |
 | /script/generate_script_stream | POST | v3 搜索流水线 SSE |
-| /script/generate_story_first | POST | v4 故事优先 SSE (口播专用) |
+| /script/generate_story_first | POST | v4 故事优先 SSE (interview) |
+| /script/generate_drama_script | POST | **v1 编剧Agent SSE (drama) — 新 v3.0** |
 | /script/refine | POST | 精切 SSE |
 | /script/analyze_transcript | POST | LLM 转写分析 |
 | /script/generate_from_outline | POST | 大纲→segments |
@@ -91,88 +97,61 @@ cd vibecut-server
 | /asr/classified?project= | GET | LLM分类后的ASR |
 | /data/process | POST | 启动后台加工流水线 |
 | /data/status?task_id= | GET | 流水线进度 |
+| /data/quality?project= | GET | 每集数据质量 (ASR+VLM+scene_map+概要) |
 | /export/extract_clips | POST | 批量提取高清片段 |
 | /picks | POST | 同步picks到SQLite |
 | /{filename}?task= | GET | 任务目录文件 (SPA兜底) |
 
-### 电视剧数据管线 (v1.3 优化后)
+### 编剧Agent v1 — Drama脚本生成 (新 v3.0)
+
+**核心理念**: 三个独立Agent角色协作，人提供创意方向（选题+选集+时长），Agent负责执行。
 
 ```
-源视频 → analyze_episodes → VLM 场景分析 (vlm_analysis.json)
+选题+选集+时长 → 故事师(全剧概要→故事地图) → 策划师(故事地图→章节方案)
+                                                    │
+                                                    ▼
+                                          文案师(章节+scene_map→解说词+scene_query)
+                                                    │
+                                                    ▼
+                                          程序校验(scene_query↔scene_map一致性)
+                                                    │
+                                                    ▼
+                                          segments.json (含episode_marker+source_start/end)
+```
+
+**7层写作结构**: 核心视角 / 开场钩子(≤50字) / 原剧台词 / 解说节奏 / 语言风格(网感) / 人物心理 / 结尾金句
+
+**审核**: 程序校验替代LLM审核 (scene_query与scene_map精确匹配，0 LLM调用，节省~70s)
+
+**API**: `POST /script/generate_drama_script`
+```json
+{"topic": "苏明成人物线", "episodes": [1,3,21,39,41,45], "target_duration": 240}
+```
+
+### 电视剧数据管线 (v3.1)
+
+```
+源视频 → analyze_episodes → VLM 场景分析 (vlm_seg_cache_v3.json)
     │         (场景+ASR+VLM)         │
-    │         v1.3优化:               │
-    │         · 角色参考照锚定         │
-    │         · 面部优先→反推场景      │
-    │         · 剧集概要注入           │
-    │         · 上下文窗口传递人物      │
-    │         · 跳过序幕/落幕          │
-    │                                │
     │                                ▼
-    │                         clean_data.py
-    │                         数据清洗 + 场景合并
-    │                         (sources_clean/epN/)
+    │                         scene_map.json (46集1511场景, 100%完整)
     │                                │
     │                                ▼
     └─────────────────────── build_index.py
-                            BGE 语义索引
-                            (31498 条, 768维)
+                            BGE 语义索引 (29854条, 768维)
 ```
 
-**v1.3 新增**:
-- VLM分析提示词优化: 角色参考照 + 面部识别优先 + 剧集概要
-- 淘汰 cross_calibrate.py (ASR↔VLM校准)
-- 淘汰 vlm_char_calibrate.py (T1-T4校准) — VLM源头已解决人物识别问题
-- 淘汰 T4 LLM校准 (DeepSeek) — 不再需要
-
-```
-ASR → classify_transcript → clean_interview_data → build_index
-       (LLM四层分类)         (清洗+说话人)          (BGE)
-                                                       ↓
-                                               story_first (粗段)
-                                                       ↓
-                                               POST /script/refine
-                                               refine_segments.py
-                                               (精切: sub_clips KEEP/CUT)
-                                                       ↓
-                                               export_capcut.py
-                                               (剪映草稿, CUT音量=5%)
-```
-
-### 目录约定
-
-- 项目数据: `<BASE_DIR>/<项目名>/` (sources/, sources_clean/, proxies/, tasks/)
-- 项目配置: `projects/<项目名>.json`
-- 数据库: `<BASE_DIR>/vibecut.db`
-- 前端构建: `../vibecut-web/dist/`
+**scene_map 质量**: 46集共1511个场景，event/mood/location/characters 完整率 100%
 
 ### 依赖
 
 - Python 3.12 (`/opt/anaconda3/bin/python3`)
-- FastAPI + Uvicorn (conda install)
+- FastAPI + Uvicorn
 - sentence-transformers (BGE, HF_HUB_OFFLINE=1)
-- Moonshot API (编剧台LLM + 数据清洗)
+- DeepSeek API (编剧Agent + scene_map生成)
+- Moonshot API (interview编剧台LLM)
 - MiMo API (VLM, 仅电视剧)
 - MPS (Apple Silicon GPU, 6.8GB VRAM)
-
-### VLM 画面分析策略 (analyze_episodes.py v1.3)
-
-**核心优化**:
-
-1. **角色参考照锚定**: 从 `character_portraits/` 加载角色肖像照，每10场景发送一次作为面孔对比参考
-2. **面部优先识别**: prompt 明确要求"先对比面孔与参考照→再反推场景地点"，**严禁先判地点再反推人物**
-3. **剧集概要注入**: 通过 DeepSeek 生成每集剧情概要(ep_synopsis.json)，VLM 分析时注入 prompt，提供剧情上下文
-4. **上下文窗口**: 串行分析时，前场景的VLM结果（人物+字幕）传递给当前场景，维持对话连贯性
-5. **跳过序幕/落幕**: 跳过前1分钟(6场景)片头和后3分钟(18场景)片尾
-
-**精度提升路径**: 原始VLM(苏大强+苏明成) → +角色照(苏明哲+苏明成) → +面孔优先(吴非+苏明哲) ✅
-
-**速度优化**:
-- 15s/场景切分，每场景1-2帧
-- 分组并发：10场景一组，组内串行(继承上下文)，多组并发(最多4组)
-- 每10场景发送一次角色照锚定，中间场景仅依赖上下文
-- 预计 25-30 分钟/集
-
-**依赖**: `.env` 中 `MIMO_API_KEY` + `DEEPSEEK_API_KEY` (仅生成剧集概要)
 
 ### 分镜搜索策略 (导演Agent v8.5)
 
@@ -186,5 +165,3 @@ ASR → classify_transcript → clean_interview_data → build_index
 - `handlers/prompts/director.py` — DIRECTOR_PROMPT 模板
 
 **评分维度**: 剧集锚定(三层权重) + 人物精确匹配 + 场景情绪冲突补偿(v8.5) + 情绪关键词 + 强度 + 景别距离补偿 + 地点模糊匹配 + 动作滑窗匹配
-
-**台词定位**: `dialogue_match` 第一句锚定 ASR (2-4字滑窗 + cluster scoring, 0ms 延迟)

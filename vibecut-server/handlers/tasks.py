@@ -104,7 +104,15 @@ def create_task(data: dict, docx_bytes: bytes = None, audio_bytes: bytes = None,
 
         docx_file = task_dir / "解说文案.docx"
         if not docx_file.exists():
-            return {"ok": False, "error": "未找到解说文案.docx"}
+            # docx 不是必需的 — 新任务允许不传解说文案，由 AI 编剧生成
+            print(f"[create_task] 无解说文案.docx，跳过A1解析步骤 ({task_name})")
+            drama_id = db.get_drama_id(drama_name)
+            if not drama_id:
+                drama_id = db.ensure_drama(drama_name)
+            if drama_id:
+                db.create_task(drama_id, task_name)
+            return {"ok": True, "task": task_name, "steps": [],
+                    "note": "未上传docx，脚本可由AI编剧生成"}
 
         results = {"ok": True, "task": task_name, "steps": []}
 

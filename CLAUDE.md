@@ -1,4 +1,4 @@
-# VibeCut — AI 影视解说/口播导演台 v2.5
+# VibeCut — AI 影视解说/口播导演台 v3.0
 
 ## 最高准则：三位一体
 
@@ -43,25 +43,26 @@
 |---|---|---|
 | 项目 | 制片 | 选项目，管进度 |
 | 数据台 | DIT | 建索引，跑管线 |
-| 编剧台 | 编剧 | 写解说词，生成脚本 |
+| 编剧台 | 编剧 | 写解说词，生成脚本 (interview + drama双模式) |
 | 分镜台 | 导演/分镜师 | 解说词 → 镜头匹配 |
 
 ## 项目类型
 
-| 类型 | 项目 | 源素材 | 索引方式 |
+| 类型 | 项目 | 源素材 | 编剧模式 |
 |---|---|---|---|
-| drama | 都挺好 | 46集 1080p | BGE (ASR + VLM) |
-| interview | 杨老师教育 | 口播采访 | BGE (ASR, guest-only, speaker边界) |
+| drama | 都挺好 | 46集 1080p | AI编剧Agent (故事师+策划师+文案师, scene_map驱动) |
+| interview | 杨老师教育 | 口播采访 | AI选句编排 (v3/v4 pipeline) |
 
 ## 目录
 
 ```
 VibeCut/
 ├── vibecut-server/            ← Python 后端 (端口8765)
-│   ├── main.py                     ← FastAPI 入口 (v1.1)
+│   ├── main.py                     ← FastAPI 入口 (v3.0)
 │   ├── build_index.py              ← BGE索引统一入口
 │   ├── analyze_episodes.py         ← VLM v2.4: 三层推理 (DeepSeek→ASR→VLM)
-│   ├── script_agents.py            ← 编剧台 AI: v3+v4
+│   ├── script_agents.py            ← interview编剧台 AI: v3+v4
+│   ├── drama_script_agents.py      ← drama编剧台 AI: 故事师+策划师+文案师 (新)
 │   ├── refine_segments.py          ← 口播精切引擎
 │   ├── export_capcut.py            ← 剪映草稿导出
 │   │
@@ -69,12 +70,14 @@ VibeCut/
 │   │   ├── search.py               ← 搜索 (BGE语义/ASR关键词/ASR锚定)
 │   │   ├── dialogue.py             ← 对话匹配 + AI聊天 (184行)
 │   │   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY (581行)
-│   │   ├── script_gen.py           ← AI脚本生成 (SSE)
+│   │   ├── script_gen.py           ← interview AI脚本生成 (SSE)
+│   │   ├── script_drama.py         ← drama AI脚本生成 SSE handler (新)
 │   │   ├── pipeline.py             ← 后台流水线
 │   │   ├── media.py                ← 媒体服务
 │   │   ├── static.py               ← SPA前端回退
 │   │   └── prompts/
-│   │       └── director.py         ← DIRECTOR_PROMPT 模板 (150行)
+│   │       ├── director.py         ← DIRECTOR_PROMPT 模板 (150行)
+│   │       └── script_drama.py     ← 编剧Agent Prompt模板 (新)
 │   │
 │   └── lib/
 │       ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo/DeepSeek)
@@ -82,14 +85,14 @@ VibeCut/
 │       ├── sse.py                  ← SSE发射器 + 心跳
 │       ├── vlm_cache.py            ← VLM 场景缓存加载 (111行)
 │       ├── storyboard_match.py     ← 分镜匹配引擎 (195行)
-│       └── scene_map.py            ← 场记Agent (198行)
+│       └── scene_map.py            ← 场记Agent: scene_map + synopsis生成
 │
 ├── vibecut-web/               ← React 前端 (Vite, 端口3000)
 │   └── src/
 │       ├── pages/
-│       │   ├── PlanningDesk.jsx  ← 编剧台: 脚本→精切→导出
+│       │   ├── PlanningDesk.jsx  ← 编剧台: interview+drama双模式
 │       │   ├── VibeEdit.jsx      ← 分镜台: 解说词→镜头匹配
-│       │   ├── DataDesk.jsx      ← 数据台: 流水线管理
+│       │   ├── DataDesk.jsx      ← 数据台: 流水线管理+质量评分
 │       │   └── Home.jsx          ← 项目
 │       ├── components/
 │       │   ├── ScriptPanel.jsx   ← 脚本面板 (精切/粗段自适应)
@@ -129,10 +132,12 @@ cd vibecut-web && npm run dev
 | GET /segments.json?task= | GET | 任务分段 (DB→文件fallback) |
 | POST /storyboard_suggest | POST | 分镜推荐 v8.5 (导演Agent: beats+PRIMARY+SECONDARY) |
 | POST /dialogue_match | POST | 台词→ASR锚定 (第一句滑窗, 无需LLM) |
-| POST /script/generate_script_stream | POST | v3搜索流水线 SSE |
-| POST /script/generate_story_first | POST | v4故事优先 SSE (口播专用) |
+| POST /script/generate_script_stream | POST | v3搜索流水线 SSE (interview) |
+| POST /script/generate_story_first | POST | v4故事优先 SSE (interview) |
+| POST /script/generate_drama_script | POST | **v1 编剧Agent SSE (drama) — 新** |
 | POST /script/refine | POST | 精切 SSE |
-| GET /data/quality?project= | GET | 每集 VLM/ASR 统计 |
+| POST /tasks/create_json | POST | 创建任务 (支持无docx, AI编剧模式) |
+| GET /data/quality?project= | GET | 每集数据质量统计 (ASR+VLM+scene_map+概要) |
 | GET /proxies/manifest | GET | 代理视频清单 |
 | GET /status | GET | 健康检查 |
 
@@ -140,7 +145,7 @@ cd vibecut-web && npm run dev
 
 - `/` — 项目 (Home)
 - `/:project/:task/data` — 数据台 (DataDesk)
-- `/:project/:task/planning` — 编剧台 (PlanningDesk)
+- `/:project/:task/planning` — 编剧台 (PlanningDesk, interview+drama双模式)
 - `/:project/:task/vibe` — 分镜台 (VibeEdit)
 
 ## 电视剧数据管线 (v3.1)
@@ -165,11 +170,60 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 2. **ASR 关键词锚定** → 精准时间边界
 3. **VLM 画面理解** — mood 锚定 + 结构化JSON输出
 
-### 淘汰的管线步骤
-- `cross_calibrate.py` — ASR↔VLM 交叉校准 (scene_map 已替代)
-- `vlm_char_calibrate.py` — VLM 人物校准 T1-T4 (VLM 不再认人)
-- `clean_data.py` 的 VLM 字幕部分 — VLM 不再输出硬字幕
-- BGE 全量语义搜索 — 分镜匹配改为 scene_map 结构化搜索
+### scene_map 数据质量
+
+- 46集共1511个场景，event/mood完整率 100%
+- 场景维度: time_range, location, characters, event, mood
+- 每个场景对话段60-120s，相邻场景间隔≤15s
+
+## 编剧Agent v1 — Drama脚本生成 (新)
+
+**核心理念**: 三个独立Agent角色协作，将46集剧情结构化数据转化为影视解说脚本。人提供创意方向（选题+选集+时长），Agent负责执行。
+
+```
+选题+选集+时长 → 故事师(全剧概要→故事地图) → 策划师(故事地图→章节方案)
+                                                        │
+                                                        ▼
+                                              文案师(章节+scene_map→解说词+scene_query)
+                                                        │
+                                                        ▼
+                                              程序校验(scene_query↔scene_map 一致性)
+                                                        │
+                                                        ▼
+                                              segments.json (带episode_marker+source_start/end)
+```
+
+**核心Agent**:
+- **故事师** (`story_master_agent`) — 通读46集剧情概要 → 提取人物弧光/转折点/高光场景/选题建议
+- **策划师** (`narrative_planner_agent`) — 故事地图+选题→4-7章叙事方案(每章含场景锚点+导演手法+时长估算)
+- **文案师** (`script_writer_agent`) — 章节方案+scene_map→解说词+scene_query(含原剧台词highlight_text)
+
+**7层写作结构**:
+1. 核心视角 — 每章聚焦单一人物/主题
+2. 开场钩子 — ≤50字观点句，3秒抓住注意力
+3. 原剧台词 — highlight_text作为"原声证据"
+4. 解说节奏 — 钩子→背景→事件→高潮→升华
+5. 语言风格 — 网感+幽默+金句，禁止干巴复述
+6. 人物心理 — 分析动机，不只讲"发生了什么"
+7. 结尾金句 — 价值观升华，制造共鸣和转发欲
+
+**审核策略**: 程序校验替代LLM审核（scene_query与scene_map精确匹配，修正time_range偏移，0 LLM调用节省约70s）
+
+**关键模块**:
+- `drama_script_agents.py` — 三个Agent + 编排器 `run_drama_pipeline()`
+- `handlers/script_drama.py` — SSE端点处理函数
+- `handlers/prompts/script_drama.py` — Prompt模板 (故事师/策划师/文案师)
+- `lib/scene_map.py` — 场记Agent (scene_map已优化至100% event/mood覆盖)
+
+**API**: `POST /script/generate_drama_script`
+```json
+{"topic": "苏明成人物线：从妈宝到守护者", "episodes": [1,3,21,39,41,45], "target_duration": 240}
+```
+
+**产出**: segments.json (兼容VibeEdit/ScriptPanel/Storyboard)
+```json
+{"narration_text": "...", "highlight_text": "...", "scene_query": {"episode":21, "time_range":[240,330], "characters":["苏明成","苏明玉"], "mood":"愤怒"}, "episode_marker":{"episode":21, "approx_minute":4.0}, "source_start":240.0, "source_end":330.0, "mode":"A"}
+```
 
 ## 分镜匹配策略 (v8.5 — 导演Agent)
 
@@ -204,9 +258,9 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 
 - Python: /opt/anaconda3/bin/python3 (sentence-transformers, numpy)
 - MPS: Apple Silicon GPU for BGE encoding (6.8GB VRAM limit)
-- Moonshot API: MOONSHOT_API_KEY (编剧台LLM + 分镜推荐)
+- DeepSeek API: DEEPSEEK_API_KEY (编剧Agent + scene_map + 分镜推荐)
+- Moonshot API: MOONSHOT_API_KEY (interview编剧台LLM)
 - MiMo API: MIMO_API_KEY (VLM画面分析)
-- DeepSeek API: DEEPSEEK_API_KEY (scene_map 生成 + synopsis)
 - ffmpeg: 视频处理 + 代理生成
 - Node: Vite + React 前端
 
@@ -216,7 +270,8 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 |------|------|------|
 | `都挺好/semantic_embeddings.npy` | 87MB | BGE 嵌入 (29,797 × 768) |
 | `都挺好/semantic_metas.json` | 7MB | 索引元数据 (VLM描述 + ASR) |
-| `都挺好/sources/epN/scene_map.json` | ~3KB/集 | 场记Agent: 场景-人物-事件-情绪-时间映射 |
+| `都挺好/sources/epN/scene_map.json` | ~3KB/集 | 场记Agent: 场景-人物-事件-情绪-时间映射 (46集1511场景, 100%完整) |
 | `都挺好/sources/epN/vlm_seg_cache_v3.json` | ~10KB/集 | VLM 画面分析 (25段/集, mood锚定) |
 | `都挺好/sources/epN/ep_synopsis.json` | ~500B/集 | DeepSeek 剧情概要 |
 | `都挺好/sources/epN/asr_result.json` | ~70KB/集 | faster-whisper ASR 转写 |
+| `都挺好/tasks/文案脚本.json` | ~5KB | AI编剧生成的脚本 (兼容VibeEdit/ScriptPanel) |

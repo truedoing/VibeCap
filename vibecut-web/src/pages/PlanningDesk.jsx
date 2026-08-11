@@ -1,7 +1,7 @@
 /**
- * 编剧台 — 口播采访解说脚本策划
- * 三栏：转写素材 → 解说脚本 → AI 助手
- * v2: 性能优化版 — 组件拆分 + memo + 虚拟滚动
+ * 编剧台 — 口播/电视剧 解说脚本策划
+ * 三栏：素材 → 解说脚本 → AI 助手
+ * v3: drama 模式 — 选题+选集 → 编剧Agent生成
  */
 import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react'
 import { useParams } from 'react-router-dom'
@@ -170,13 +170,110 @@ const SourcePanel = memo(function SourcePanel({
   )
 })
 
-// ── 中间：解说脚本 ──
+// ── 左侧（drama 模式）：选题 + 剧集多选 ──
+const DramaSourcePanel = memo(function DramaSourcePanel({
+  projectName, topic, setTopic, targetDuration, setTargetDuration,
+  selectedEps, toggleEp, epQuickSelect, quickRanges,
+  segments, generating, generateDramaScript,
+  onCollapse,
+}) {
+  const allChecked = selectedEps.size === 46
+  const toggleAll = () => {
+    if (allChecked) { const s = new Set(); setSelectedEps(s) }
+    else { const s = new Set(); for (let i = 1; i <= 46; i++) s.add(i); setSelectedEps(s) }
+  }
+
+  return (
+    <>
+      <div style={S.panelHeader}>
+        <div style={S.flexRow}>
+          <span style={S.headerTitle}>📺 选题配置</span>
+          <span style={{ marginLeft: 6, fontSize: F.xs, color: '#6b7280' }}>
+            {projectName} · {selectedEps.size}集选中
+          </span>
+        </div>
+        <div style={{ ...S.flexRow, gap: 4 }}>
+          <button onClick={onCollapse} style={{ ...S.headerBtn(false), fontSize: 11, padding: '1px 6px' }} title="折叠">◀</button>
+        </div>
+      </div>
+
+      <div style={{ padding: '8px 10px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
+        <div style={{ fontSize: F.xs, color: '#9ca3af', marginBottom: 4, fontWeight: 600 }}>📝 选题描述</div>
+        <textarea value={topic} onChange={e => setTopic(e.target.value)}
+          placeholder="例如：苏明成人物线：从妈宝到守护者。围绕 EP1/21/35/39/41 的核心事件..."
+          rows={3}
+          style={{ width: '100%', padding: '5px 8px', fontSize: F.sm, background: S.bgPanel, color: '#e5e7eb',
+            border: `1px solid ${topic ? '#a78bfa' : '#232938'}`, borderRadius: 4, outline: 'none', resize: 'vertical',
+            lineHeight: 1.5, marginBottom: 6 }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>⏱ 目标时长</span>
+          <input type="range" min="60" max="900" step="30" value={targetDuration}
+            onChange={e => setTargetDuration(Number(e.target.value))}
+            style={{ flex: 1, accentColor: '#a78bfa' }} />
+          <span style={{ fontSize: F.sm, color: '#c4b5fd', fontWeight: 600, minWidth: 48, textAlign: 'right' }}>
+            {Math.floor(targetDuration/60)}分
+          </span>
+        </div>
+      </div>
+
+      <div style={{ padding: '8px 10px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>🎬 剧集选择</span>
+          <div style={{ display: 'flex', gap: 3 }}>
+            <button onClick={toggleAll} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, cursor: 'pointer',
+              background: allChecked ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.04)', color: allChecked ? '#c4b5fd' : '#9ca3af',
+              border: '1px solid rgba(139,92,246,0.15)' }}>
+              {allChecked ? '✕ 全清' : '全选'}
+            </button>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 3, marginBottom: 6, flexWrap: 'wrap' }}>
+          {quickRanges.map(([label, eps]) => (
+            <button key={label} onClick={() => epQuickSelect(eps)}
+              style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, cursor: 'pointer',
+                background: 'rgba(255,255,255,0.03)', color: '#9ca3af', border: '1px solid rgba(255,255,255,0.06)' }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 3, maxHeight: 220, overflowY: 'auto' }}>
+          {Array.from({length: 46}, (_, i) => i + 1).map(ep => (
+            <button key={ep} onClick={() => toggleEp(ep)}
+              style={{ fontSize: 10, padding: '3px 0', borderRadius: 3, cursor: 'pointer', textAlign: 'center',
+                background: selectedEps.has(ep) ? 'rgba(139,92,246,0.25)' : 'rgba(255,255,255,0.02)',
+                color: selectedEps.has(ep) ? '#c4b5fd' : '#6b7280', fontWeight: selectedEps.has(ep) ? 700 : 400,
+                border: `1px solid ${selectedEps.has(ep) ? 'rgba(139,92,246,0.4)' : 'rgba(255,255,255,0.04)'}` }}>
+              {ep}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding: '10px', flexShrink: 0 }}>
+        <button onClick={generateDramaScript}
+          disabled={generating || !topic.trim() || selectedEps.size === 0}
+          style={{ width: '100%', padding: '10px 0', borderRadius: 8, border: 'none',
+            cursor: (generating || !topic.trim() || selectedEps.size === 0) ? 'not-allowed' : 'pointer',
+            fontSize: 14, fontWeight: 700,
+            background: (!generating && topic.trim() && selectedEps.size > 0)
+              ? 'linear-gradient(135deg, rgba(139,92,246,0.35), rgba(34,197,94,0.25))' : 'rgba(255,255,255,0.04)',
+            color: (!generating && topic.trim() && selectedEps.size > 0) ? '#e5e7eb' : '#6b7280' }}>
+          {generating ? '⏳ Agent 工作中...' : '🧠 AI 编剧 — 生成解说脚本'}
+        </button>
+      </div>
+    </>
+  )
+})
+
+// ── 中间：解说脚本（兼容 interview + drama） ──
 const ScriptPanel = memo(function ScriptPanel({
   topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem,
   segments, setSegments, setGenResult,
   selectedIdx, setSelectedIdx, editingIdx, setEditingIdx,
   moveSegment, removeSegment, updateSegment,
   generating, genMsg, exportJSON,
+  isDrama, chapterStructure,
 }) {
   const [scriptTab, setScriptTab] = useState('coarse')  // 'coarse' | 'refine'
   const hasRefine = useMemo(() => segments.some(s => s.sub_clips?.length > 0), [segments])
@@ -201,8 +298,11 @@ const ScriptPanel = memo(function ScriptPanel({
     <>
       <div style={S.panelHeader}>
         <div style={S.flexRow}>
-          <span style={S.headerTitle}>解说脚本</span>
+          <span style={S.headerTitle}>{isDrama ? '📜 解说脚本' : '解说脚本'}</span>
           {segments.length > 0 && <span style={{ marginLeft: 6, fontSize: F.sm, color: '#6b7280' }}>{segments.length} 段</span>}
+          {isDrama && chapterStructure?.chapters?.length > 0 && (
+            <span style={{ marginLeft: 6, fontSize: F.xs, color: '#6b7280' }}>{chapterStructure.chapters.length} 章</span>
+          )}
           {/* 精切页签 */}
           {hasRefine && (
             <div style={{ display: 'flex', marginLeft: 10, gap: 0 }}>
@@ -231,27 +331,50 @@ const ScriptPanel = memo(function ScriptPanel({
         </div>
       </div>
 
-      {/* 主题 + 大纲 */}
+      {/* 主题 + 大纲（interview模式）/ 章节概览（drama模式） */}
       <div style={{ padding: '4px 8px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
-        <textarea value={topic} onChange={e => setTopic(e.target.value)}
-          placeholder="视频主题…"
-          rows={2}
-          style={{ width: '100%', padding: '4px 6px', fontSize: F.xs, fontWeight: 600, background: S.bgPanel, color: '#e5e7eb',
-            border: `1px solid ${topic ? '#a78bfa' : '#232938'}`, borderRadius: 4, outline: 'none', marginBottom: 3, resize: 'vertical' }} />
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
-          {outline.map((o, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 1, padding: '1px 3px', borderRadius: 3, background: S.purpleBg, border: '1px solid rgba(139,92,246,0.15)' }}>
-              <select value={o.narrative_role} onChange={e => updateOutlineItem(i, 'narrative_role', e.target.value)}
-                style={{ fontSize: F.xs, padding: '0 1px', background: 'transparent', color: '#a78bfa', border: 'none', outline: 'none', cursor: 'pointer' }}>
-                {['hook_tension','hook_promise','personal_reveal','empathy','evidence','bridge','turn','proof','insight'].map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-              <input value={o.label} onChange={e => updateOutlineItem(i, 'label', e.target.value)}
-                style={{ fontSize: F.xs, padding: '0 2px', background: 'transparent', color: '#d1d5db', border: 'none', outline: 'none', width: o.label.length * 8 + 16, minWidth: 36 }} />
-              <button onClick={() => removeOutlineItem(i)} style={{ fontSize: F.xs, padding: '0 2px', cursor: 'pointer', background: 'none', border: 'none', color: '#6b7280' }}>×</button>
+        {isDrama ? (
+          <>
+            {chapterStructure?.title && (
+              <div style={{ fontSize: F.sm, fontWeight: 700, color: '#c4b5fd', marginBottom: 4 }}>{chapterStructure.title}</div>
+            )}
+            {chapterStructure?.chapters?.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                {chapterStructure.chapters.map((ch, i) => (
+                  <span key={i} style={{ fontSize: F.xs, padding: '2px 6px', borderRadius: 3,
+                    background: S.purpleBg, color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>
+                    Ch{i+1}: {ch.title}
+                  </span>
+                ))}
+              </div>
+            )}
+            {!chapterStructure && segments.length === 0 && (
+              <div style={{ fontSize: F.xs, color: '#6b7280' }}>在左侧填选题→选剧集→点生成</div>
+            )}
+          </>
+        ) : (
+          <>
+            <textarea value={topic} onChange={e => setTopic(e.target.value)}
+              placeholder="视频主题…"
+              rows={2}
+              style={{ width: '100%', padding: '4px 6px', fontSize: F.xs, fontWeight: 600, background: S.bgPanel, color: '#e5e7eb',
+                border: `1px solid ${topic ? '#a78bfa' : '#232938'}`, borderRadius: 4, outline: 'none', marginBottom: 3, resize: 'vertical' }} />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
+              {outline.map((o, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 1, padding: '1px 3px', borderRadius: 3, background: S.purpleBg, border: '1px solid rgba(139,92,246,0.15)' }}>
+                  <select value={o.narrative_role} onChange={e => updateOutlineItem(i, 'narrative_role', e.target.value)}
+                    style={{ fontSize: F.xs, padding: '0 1px', background: 'transparent', color: '#a78bfa', border: 'none', outline: 'none', cursor: 'pointer' }}>
+                    {['hook_tension','hook_promise','personal_reveal','empathy','evidence','bridge','turn','proof','insight'].map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <input value={o.label} onChange={e => updateOutlineItem(i, 'label', e.target.value)}
+                    style={{ fontSize: F.xs, padding: '0 2px', background: 'transparent', color: '#d1d5db', border: 'none', outline: 'none', width: o.label.length * 8 + 16, minWidth: 36 }} />
+                  <button onClick={() => removeOutlineItem(i)} style={{ fontSize: F.xs, padding: '0 2px', cursor: 'pointer', background: 'none', border: 'none', color: '#6b7280' }}>×</button>
+                </div>
+              ))}
+              <button onClick={addOutlineItem} style={{ fontSize: F.xs, padding: '1px 5px', borderRadius: 3, cursor: 'pointer', background: 'rgba(255,255,255,0.04)', color: '#9ca3af', border: '1px dashed #374151' }}>+ 段落</button>
             </div>
-          ))}
-          <button onClick={addOutlineItem} style={{ fontSize: F.xs, padding: '1px 5px', borderRadius: 3, cursor: 'pointer', background: 'rgba(255,255,255,0.04)', color: '#9ca3af', border: '1px dashed #374151' }}>+ 段落</button>
-        </div>
+          </>
+        )}
       </div>
 
       {/* 脚本列表 / 精切视图 */}
@@ -296,8 +419,10 @@ const ScriptPanel = memo(function ScriptPanel({
           segments.length === 0 ? (
             <div style={{ textAlign: 'center', color: '#6b7280', fontSize: F.sm, marginTop: 50 }}>
               <div style={{ fontSize: 32, marginBottom: 8 }}>📝</div>
-              填入主题后点「AI 生成」<br />
-              <span style={{ fontSize: F.sm, color: '#4b5563' }}>或从左侧素材栏点 + 手动添加</span>
+              {isDrama ? '左侧填选题 + 选剧集 → 点「AI 编剧」' : '填入主题后点「AI 生成」'}<br />
+              <span style={{ fontSize: F.sm, color: '#4b5563' }}>
+                {isDrama ? '' : '或从左侧素材栏点 + 手动添加'}
+              </span>
             </div>
           ) : (
             segments.map((seg, idx) => (
@@ -313,6 +438,7 @@ const ScriptPanel = memo(function ScriptPanel({
                 onUpdate={(f, v) => updateSegment(idx, f, v)}
                 canMoveUp={idx > 0}
                 canMoveDown={idx < segments.length - 1}
+                isDrama={isDrama}
               />
             ))
           )
@@ -322,7 +448,8 @@ const ScriptPanel = memo(function ScriptPanel({
   )
 })
 
-const SegmentCard = memo(function SegmentCard({ seg, idx, isSelected, isEditing, onSelect, onEdit, onMoveUp, onMoveDown, onRemove, onUpdate, canMoveUp, canMoveDown }) {
+const SegmentCard = memo(function SegmentCard({ seg, idx, isSelected, isEditing, onSelect, onEdit, onMoveUp, onMoveDown, onRemove, onUpdate, canMoveUp, canMoveDown, isDrama }) {
+  const sq = seg.scene_query
   return (
     <div onClick={onSelect}
       style={{ marginBottom: 6, borderRadius: 5, cursor: 'pointer',
@@ -331,9 +458,12 @@ const SegmentCard = memo(function SegmentCard({ seg, idx, isSelected, isEditing,
         overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: 'rgba(0,0,0,0.2)', borderBottom: S.borderSubtle }}>
         <span style={{ fontSize: F.xs, fontWeight: 700, color: '#e5e7eb', minWidth: 20 }}>S{idx}</span>
+        {idx === 0 && isDrama && <span style={{ fontSize: F.xs, padding: '1px 5px', borderRadius: 2, background: 'rgba(249,115,22,0.2)', color: '#fb923c', fontWeight: 700 }}>🎣 钩子</span>}
+        {seg.chapter_title && <span style={{ fontSize: F.xs, padding: '1px 5px', borderRadius: 2, background: S.purpleBg, color: '#a78bfa' }}>{seg.chapter_title}</span>}
         {seg.topic && <span style={{ fontSize: F.xs, padding: '1px 5px', borderRadius: 2, background: S.purpleBg, color: '#a78bfa' }}>{seg.topic}</span>}
+        {sq?.episode && <span style={{ fontSize: F.xs, fontFamily: 'monospace', color: '#fbbf24' }}>EP{sq.episode}</span>}
         <span style={{ fontSize: F.xs, fontFamily: 'monospace', color: '#6b7280' }}>{tc(seg.source_start)}-{tc(seg.source_end)}</span>
-        <div style={{ flex: 1 }} />
+        <div style={{ flex: 1 }} />{isDrama && sq?.episode && <span style={{ fontSize: 9, color: '#6b7280' }}>{sq.mood}</span>}
         <button onClick={onMoveUp} disabled={!canMoveUp} style={smallBtn(canMoveUp)}>↑</button>
         <button onClick={onMoveDown} disabled={!canMoveDown} style={smallBtn(canMoveDown)}>↓</button>
         <button onClick={onEdit} style={{ ...smallBtn(true), background: isEditing ? 'rgba(96,165,250,0.2)' : 'rgba(255,255,255,0.05)', color: isEditing ? '#60a5fa' : '#9ca3af' }}>{isEditing ? '收' : '编'}</button>
@@ -341,8 +471,9 @@ const SegmentCard = memo(function SegmentCard({ seg, idx, isSelected, isEditing,
       </div>
       {isEditing ? (
         <div style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <textarea value={seg.highlight_text} onChange={e => onUpdate('highlight_text', e.target.value)}
+          <textarea value={seg.narration_text || seg.highlight_text} onChange={e => onUpdate(isDrama ? 'narration_text' : 'highlight_text', e.target.value)}
             style={{ width: '100%', minHeight: 36, padding: 4, fontSize: F.sm, fontFamily: 'monospace', resize: 'vertical', background: S.bgPanel, color: '#e5e7eb', border: S.borderSubtle, borderRadius: 3, outline: 'none' }} />
+          {!isDrama && <>
           <div style={{ display: 'flex', gap: 6 }}>
             <input type="number" step="0.1" value={seg.source_start} onChange={e => onUpdate('source_start', parseFloat(e.target.value) || 0)}
               style={numInputStyle} placeholder="入点" />
@@ -358,11 +489,49 @@ const SegmentCard = memo(function SegmentCard({ seg, idx, isSelected, isEditing,
           <input value={seg.narration_text || ''} onChange={e => onUpdate('narration_text', e.target.value)}
             placeholder="旁白过渡（可选）"
             style={{ width: '100%', padding: '3px 4px', fontSize: F.xs, fontFamily: 'monospace', background: S.bgPanel, color: '#e5e7eb', border: S.borderSubtle, borderRadius: 3, outline: 'none' }} />
+          </>}
+          {isDrama && <>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input type="number" step="0.1" value={seg.source_start || (sq?.time_range?.[0] || 0)} onChange={e => onUpdate('source_start', parseFloat(e.target.value) || 0)}
+              style={numInputStyle} placeholder="入点秒" />
+            <input type="number" step="0.1" value={seg.source_end || (sq?.time_range?.[1] || 0)} onChange={e => onUpdate('source_end', parseFloat(e.target.value) || 0)}
+              style={numInputStyle} placeholder="出点秒" />
+            <select value={seg.mode || 'A'} onChange={e => onUpdate('mode', e.target.value)}
+              style={{ ...selectInputStyle, flex: 1 }}>
+              <option value="A">A 剧情再现</option>
+              <option value="B">B 闪回补充</option>
+              <option value="C">C 纯叙事</option>
+            </select>
+          </div>
+          <input value={seg.highlight_text || ''} onChange={e => onUpdate('highlight_text', e.target.value)}
+            placeholder="原剧台词（可选）"
+            style={{ width: '100%', padding: '3px 4px', fontSize: F.xs, fontFamily: 'monospace', background: S.bgPanel, color: '#e5e7eb', border: S.borderSubtle, borderRadius: 3, outline: 'none' }} />
+          </>}
         </div>
       ) : (
         <div style={{ padding: '4px 6px', fontSize: F.sm, color: '#e5e7eb', lineHeight: 1.4 }}>
-          {seg.highlight_text}
-          {seg.narration_text && <div style={{ fontSize: F.xs, color: '#60a5fa', marginTop: 2 }}>💬 {seg.narration_text}</div>}
+          {isDrama ? (
+            <>
+              {idx === 0 && (
+                <div style={{ fontSize: F.xs, color: '#fb923c', fontWeight: 700, marginBottom: 3, padding: '2px 4px', borderRadius: 3,
+                  background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.2)' }}>
+                  🎣 开篇钩子 · 封面主题观点
+                </div>
+              )}
+              <div style={{ marginBottom: 2 }}>{seg.narration_text || seg.highlight_text}</div>
+              {seg.highlight_text && <div style={{ fontSize: F.xs, color: '#fbbf24', marginBottom: 2 }}>💬 {seg.highlight_text}</div>}
+              {sq?.episode && <div style={{ fontSize: F.xs, color: '#6b7280', marginTop: 3 }}>
+                📍 EP{sq.episode} · {sq.location} · {sq.event?.substring(0,30)} · {sq.mood}
+                {sq.intensity && ` · 强度${sq.intensity}/5`}
+              </div>}
+              {seg.note && <div style={{ fontSize: F.xs, color: '#9ca3af', marginTop: 1 }}>{seg.note}</div>}
+            </>
+          ) : (
+            <>
+              {seg.highlight_text}
+              {seg.narration_text && <div style={{ fontSize: F.xs, color: '#60a5fa', marginTop: 2 }}>💬 {seg.narration_text}</div>}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -445,15 +614,15 @@ function RefineResultCard({ refineResult, segments }) {
 }
 
 const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, setTopic, genLog, generating, generateScript, topic,
-  refining, refineResult, handleRefine }) {
+  refining, refineResult, handleRefine, isDrama }) {
   const [tab, setTab] = useState('ai')
   const [selTheme, setSelTheme] = useState(null)
 
   const stats = useMemo(() => [
-    { label: '总句', val: asrStats.content || 0 },
+    { label: isDrama ? '字数' : '总句', val: isDrama ? genResult?.total_chars || segments.reduce((s, seg) => s + (seg.narration_text?.length || 0), 0) : (asrStats.content || 0) },
     { label: '脚本', val: segments.length },
-    { label: '金句', val: segments.filter(s => s.highlight_text?.length < 15 && s.highlight_text?.includes('学')).length },
-  ], [asrStats, segments])
+    { label: isDrama ? '预估' : '金句', val: isDrama ? (genResult?.time_estimate?.estimated_sec ? `${genResult.time_estimate.estimated_sec}s` : '?') : segments.filter(s => s.highlight_text?.length < 15 && s.highlight_text?.includes('学')).length },
+  ], [asrStats, segments, genResult, isDrama])
 
   return (
     <>
@@ -472,15 +641,22 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
         <div style={{ flex: 1, overflow: 'auto', padding: 8, fontSize: 10 }}>
           {/* ── 生成 + 精切 按钮组 ── */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-            <button onClick={generateScript} disabled={generating || !topic?.trim()}
-              style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
-                cursor: (generating || !topic?.trim()) ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
-                background: (!generating && topic?.trim()) ? 'linear-gradient(135deg, rgba(139,92,246,0.3), rgba(34,197,94,0.2))' : 'rgba(255,255,255,0.04)',
-                color: (!generating && topic?.trim()) ? '#e5e7eb' : '#6b7280' }}>
-              {generating ? '⏳ 生成中...' : '🧠 AI 生成脚本'}
-            </button>
+            {!isDrama && (
+              <button onClick={generateScript} disabled={generating || !topic?.trim()}
+                style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
+                  cursor: (generating || !topic?.trim()) ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
+                  background: (!generating && topic?.trim()) ? 'linear-gradient(135deg, rgba(139,92,246,0.3), rgba(34,197,94,0.2))' : 'rgba(255,255,255,0.04)',
+                  color: (!generating && topic?.trim()) ? '#e5e7eb' : '#6b7280' }}>
+                {generating ? '⏳ 生成中...' : '🧠 AI 生成脚本'}
+              </button>
+            )}
+            {isDrama && genResult && (
+              <div style={{ fontSize: F.xs, color: '#6b7280', padding: '5px 0', flex: 1, textAlign: 'center' }}>
+                在左侧选题→选剧集→点「AI 编剧」
+              </div>
+            )}
 
-            {segments.length > 0 && (
+            {segments.length > 0 && !isDrama && (
               <button onClick={handleRefine} disabled={refining}
                 style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
                   cursor: refining ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
@@ -512,8 +688,36 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
             ))}
           </div>
 
-          {/* 生成结果 */}
-          {genResult && (
+          {/* 生成结果 — drama 模式 */}
+          {isDrama && genResult && (
+            <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
+              <div style={{ fontWeight: 600, color: '#4ade80', marginBottom: 3 }}>
+                ✅ {genResult.pipeline} · {segments.length} 段
+              </div>
+              {genResult.time_estimate && (
+                <div style={{ display: 'flex', gap: 6, marginBottom: 3, fontSize: 9 }}>
+                  <span style={{ color: '#fbbf24' }}>📝 {genResult.total_chars} 字</span>
+                  <span style={{ color: genResult.time_estimate.status === 'ok' ? '#4ade80' : '#f87171', fontWeight: 600 }}>
+                    🎯 {genResult.time_estimate.estimated_sec}s ({genResult.time_estimate.estimated_min})
+                  </span>
+                  <span style={{ color: '#9ca3af' }}>审核: {genResult.review_verdict}</span>
+                </div>
+              )}
+              {genResult.review_issues?.length > 0 && (
+                <div style={{ marginTop: 4, padding: 4, borderRadius: 3, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
+                  <div style={{ fontSize: F.xs, fontWeight: 600, color: '#fbbf24', marginBottom: 2 }}>⚠️ 审核发现 {genResult.review_issues.length} 个问题</div>
+                  {genResult.review_issues.slice(0, 5).map((iss, i) => (
+                    <div key={i} style={{ fontSize: F.xs, color: '#d1d5db', padding: '1px 0' }}>
+                      [{iss.severity}] {iss.detail}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 生成结果 — interview 模式 */}
+          {!isDrama && genResult && (
             <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
               <div style={{ fontWeight: 600, color: '#4ade80', marginBottom: 3 }}>
                 ✅ 生成完成 · {genResult.sections?.length || 0} 段
@@ -544,8 +748,8 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
             </div>
           )}
 
-          {/* 内容报告 */}
-          {report && (
+          {/* 内容报告 — 仅 drama 模式展示 */}
+          {!isDrama && report && (
             <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: S.purpleBg, border: '1px solid rgba(139,92,246,0.12)' }}>
               <div style={{ fontSize: F.sm, fontWeight: 600, color: '#a78bfa', marginBottom: 4 }}>📋 内容分析</div>
               <div style={{ fontSize: F.xs, color: '#d1d5db', lineHeight: 1.5, marginBottom: 8 }}>{report.summary}</div>
@@ -570,12 +774,17 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
           {/* 生成进度 */}
           {generating && genLog.length > 0 && (
             <div style={{ marginBottom: 10, padding: 8, borderRadius: 5, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
-              <div style={{ fontSize: F.sm, fontWeight: 600, color: '#a78bfa', marginBottom: 5 }}>⚙️ 生成进度</div>
+              <div style={{ fontSize: F.sm, fontWeight: 600, color: '#a78bfa', marginBottom: 5 }}>⚙️ {isDrama ? '编剧Agent 进度' : '生成进度'}</div>
               {genLog.map((entry, i) => {
                 const isNew = i === genLog.length - 1
-                const icon = entry.step === 'planning' ? '📐' : entry.step === 'planning_done' ? '✅' :
-                             entry.step === 'writing' ? '✍️' : entry.step === 'writing_done' ? '✅' :
+                const icon = entry.step === 'story' ? '📖' : entry.step === 'story_done' ? '✅' :
+                             entry.step === 'planning' ? '📐' : entry.step === 'planning_done' ? '✅' :
+                             entry.step === 'writing' ? '✍️' : entry.step === 'writing_chapter_done' ? '📝' :
+                             entry.step === 'writing_done' ? '✅' :
                              entry.step === 'review' ? '🔍' : entry.step === 'review_done' ? '📊' :
+                             entry.step === 'review_issue' ? (entry.msg?.includes('🔴') ? '🔴' : '🟡') :
+                             entry.step === 'init' ? '🎬' : entry.step === 'done' ? '🎉' :
+                             entry.step === 'planning' ? '📐' : entry.step === 'planning_done' ? '✅' :
                              entry.step === 'editing' ? '✂️' : entry.step === 'editing_done' ? '✅' : '·'
                 return (
                   <div key={i} style={{ fontSize: F.xs, color: isNew ? '#e5e7eb' : '#6b7280', padding: '1px 0',
@@ -617,6 +826,9 @@ export default function PlanningDesk() {
   const projectName = seriesId === 'doutinghao' ? '都挺好' : seriesId === 'yanglaoshi' ? '杨老师教育' : decodeURIComponent(seriesId || '')
   const projectParam = `project=${encodeURIComponent(projectName)}`
 
+  // ── 项目类型检测 ──
+  const isDrama = projectName === '都挺好'
+
   // ── 数据状态 ──
   const [transcript, setTranscript] = useState('')
   const [sentences, setSentences] = useState([])
@@ -636,11 +848,33 @@ export default function PlanningDesk() {
   ])
   const [generating, setGenerating] = useState(false)
   const [refining, setRefining] = useState(false)
-  const [refineResult, setRefineResult] = useState(null)  // { keep, cut, keep_duration, cut_duration }
+  const [refineResult, setRefineResult] = useState(null)
 
   const [segments, setSegments] = useState([])
   const [editingIdx, setEditingIdx] = useState(null)
   const [selectedIdx, setSelectedIdx] = useState(null)
+
+  // ── drama 专用状态 ──
+  const [selectedEps, setSelectedEps] = useState(() => {
+    const s = new Set(); for (let i = 1; i <= 46; i++) s.add(i); return s
+  })
+  const [targetDuration, setTargetDuration] = useState(300)
+  const [chapterStructure, setChapterStructure] = useState(null)
+  const quickRanges = useMemo(() => [
+    ['苏母线 1-5', [1,2,3,4,5]],
+    ['投资被骗 10-15', [10,11,12,13,14,15]],
+    ['买房风波 16-20', [16,17,18,19,20]],
+    ['暴力冲突 21-25', [21,22,23,24,25]],
+    ['离婚失业 30-35', [30,31,32,33,34,35]],
+    ['骗婚事件 40-41', [40,41]],
+    ['和解收尾 44-46', [44,45,46]],
+  ], [])
+  const toggleEp = useCallback((ep) => {
+    setSelectedEps(prev => { const s = new Set(prev); if (s.has(ep)) s.delete(ep); else s.add(ep); return s })
+  }, [])
+  const epQuickSelect = useCallback((eps) => {
+    setSelectedEps(new Set(eps))
+  }, [])
 
   // ── 素材状态 ──
   const [asrLoaded, setAsrLoaded] = useState(false)
@@ -750,13 +984,13 @@ export default function PlanningDesk() {
   }, [])
 
   const exportJSON = useCallback(() => {
-    const out = { task_type: 'interview', total_segments: segments.length, segments }
+    const out = { task_type: isDrama ? 'drama' : 'interview', total_segments: segments.length, segments }
     const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'segments.json'; a.click()
     URL.revokeObjectURL(a.href)
-  }, [segments])
+  }, [segments, isDrama])
 
-  // ── AI 生成 (SSE 流式) ──
+  // ── AI 生成 (SSE 流式 — 口播用) ──
   const [genMsg, setGenMsg] = useState('')
   const [genLog, setGenLog] = useState([])
   const generateScript = useCallback(async () => {
@@ -835,6 +1069,56 @@ export default function PlanningDesk() {
   const removeOutlineItem = useCallback((idx) => { setOutline(prev => prev.filter((_, i) => i !== idx)) }, [])
   const toggleGroup = useCallback((gi) => setCollapsedGroups(prev => ({ ...prev, [gi]: !prev[gi] })), [])
 
+  // ── AI 编剧 (drama SSE) ──
+  const generateDramaScript = useCallback(async () => {
+    if (!topic.trim() || selectedEps.size === 0) return
+    setGenerating(true); setError(''); setGenResult(null); setGenLog([])
+    setChapterStructure(null)
+    const eps = Array.from(selectedEps).sort((a, b) => a - b)
+    try {
+      const resp = await fetch('/script/generate_drama_script', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: topic.trim(), episodes: eps, target_duration: targetDuration }),
+      })
+      const reader = resp.body.getReader(); const decoder = new TextDecoder()
+      let buf = ''; let currentEvent = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n'); buf = lines.pop() || ''
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (trimmed.startsWith('event: ')) { currentEvent = trimmed.slice(7); continue }
+          if (!trimmed.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(trimmed.slice(6))
+            if (currentEvent === 'progress') {
+              setGenLog(prev => [...prev, { step: data.step, msg: data.msg, ts: Date.now() }])
+              // 接收章节结构（策划师完成后）
+              if (data.chapter_structure) setChapterStructure(data.chapter_structure)
+            } else if (currentEvent === 'complete') {
+              if (data.ok && data.segments) {
+                setSegments(data.segments.map((s, i) => ({ ...s, seg_id: i })))
+                setGenResult({
+                  pipeline: 'drama-agent-v1', topic: data.topic, cover: data.cover,
+                  review_verdict: data.review_verdict, review_issues: data.review_issues || [],
+                  time_estimate: data.time_estimate,
+                  total_chars: data.total_chars,
+                })
+                if (data.chapter_structure) setChapterStructure(data.chapter_structure)
+                setGenLog(prev => [...prev, { step: 'done', msg: `✅ 完成 · ${data.total}段 · ${data.total_chars}字 · 预估${data.time_estimate?.estimated_sec || '?'}s`, ts: Date.now() }])
+              }
+            } else if (currentEvent === 'error') {
+              setError(data.error || '生成失败')
+            }
+          } catch {}
+        }
+      }
+    } catch (e) { setError('网络错误: ' + e.message) }
+    finally { setGenerating(false) }
+  }, [topic, selectedEps, targetDuration])
+
   // ── 快捷键 ──
   useEffect(() => {
     const k = (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); exportJSON() } }
@@ -852,17 +1136,21 @@ export default function PlanningDesk() {
       ) : (
         <>
           <div style={{ width: leftPanelW, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: S.border, overflow: 'hidden' }}>
-            <SourcePanel {...{ transcript, asrLoaded, asrGroups, asrStats, classifiedSegs, filterMode, setFilterMode, collapsedGroups, setCollapsedGroups, toggleGroup, searchInputRef, searchQuery, setSearchQuery, searchMode, setSearchMode, doSearch, searching, searchResults, setSearchResults, matchSet, isMatch, hl, segments, selectedIdx, addSegmentFromLine, onCollapse: () => setLeftCollapsed(true) }} />
+            {isDrama ? (
+              <DramaSourcePanel {...{ projectName, topic, setTopic, targetDuration, setTargetDuration, selectedEps, setSelectedEps, toggleEp, epQuickSelect, quickRanges, segments, generating, generateDramaScript, onCollapse: () => setLeftCollapsed(true) }} />
+            ) : (
+              <SourcePanel {...{ transcript, asrLoaded, asrGroups, asrStats, classifiedSegs, filterMode, setFilterMode, collapsedGroups, setCollapsedGroups, toggleGroup, searchInputRef, searchQuery, setSearchQuery, searchMode, setSearchMode, doSearch, searching, searchResults, setSearchResults, matchSet, isMatch, hl, segments, selectedIdx, addSegmentFromLine, onCollapse: () => setLeftCollapsed(true) }} />
+            )}
           </div>
           <Divider onDrag={dragX(() => leftW, setLeftW, 360)} />
         </>
       )}
       <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON }} />
+        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON, isDrama, chapterStructure }} />
       </div>
       <Divider onDrag={dragX(() => rightW, setRightW, 360)} />
       <div style={{ width: rightW, flexShrink: 0, display: rightW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: S.border, overflow: 'hidden' }}>
-        <AIPanel report={report} genResult={genResult} segments={segments} asrStats={asrStats} setTopic={setTopic} genLog={genLog} generating={generating} generateScript={generateScript} topic={topic} refining={refining} refineResult={refineResult} handleRefine={handleRefine} />
+        <AIPanel report={report} genResult={genResult} segments={segments} asrStats={asrStats} setTopic={setTopic} genLog={genLog} generating={generating} generateScript={isDrama ? generateDramaScript : generateScript} topic={topic} refining={refining} refineResult={refineResult} handleRefine={handleRefine} isDrama={isDrama} />
       </div>
     </div>
   )

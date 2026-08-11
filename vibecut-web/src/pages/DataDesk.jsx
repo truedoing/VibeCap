@@ -28,9 +28,10 @@ function qualityLabel(score) {
 // ── 分集质量条 ──
 function EpQualityBar({ ep, report, indexed }) {
   const score = report?.overall_score || 0
-  const summary = report?.summary || ''
   const asrScore = report?.asr_score || 0
   const vlmScore = report?.vlm_score || 0
+  const sceneMapScore = report?.scene_map_score || 0
+  const synopsisScore = report?.synopsis_score || 0
 
   return (
     <div className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-accent/30 transition-colors">
@@ -52,13 +53,13 @@ function EpQualityBar({ ep, report, indexed }) {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-muted-foreground">
-            ASR {asrScore} · VLM {vlmScore}
+            ASR {asrScore} · VLM {vlmScore} · 场景 {sceneMapScore} · 概要 {synopsisScore}
           </span>
-          {summary && summary !== '数据质量良好' && (
-            <span className="text-[10px] text-yellow-400/80 truncate">{summary}</span>
+          {report?.has_scene_map && report?.has_synopsis && asrScore > 0 && (
+            <span className="text-[10px] text-green-400/70">完整</span>
           )}
-          {!indexed && (
-            <span className="text-[10px] text-red-400">未索引</span>
+          {(!report?.has_scene_map || !report?.has_asr) && (
+            <span className="text-[10px] text-yellow-400/70">缺数据</span>
           )}
         </div>
       </div>
@@ -97,8 +98,8 @@ export default function DataDesk() {
   // 从 quality 数据中获取所有集数及其状态
   const allEpisodes = quality?.episodes || []
   const hasData = (ep) => {
-    const e = allEpisodes.find(e => e.ep_number === ep)
-    return e && (e.asr_raw_count > 0 || e.vlm_scene_count > 0)
+    const e = allEpisodes.find(e => e.ep === ep)
+    return e && (e.asr > 0 || e.vlm > 0)
   }
 
   useEffect(() => {
@@ -157,13 +158,13 @@ export default function DataDesk() {
   }
 
   const summary = quality?.summary || {}
-  const reports = quality?.reports || []
   const episodes = quality?.episodes || []
 
-  const avgScore = reports.length > 0
-    ? Math.round(reports.filter(r => r.overall_score > 0).reduce((s, r) => s + r.overall_score, 0)
-        / Math.max(1, reports.filter(r => r.overall_score > 0).length))
-    : 0
+  const avgScore = summary?.avg_score
+    ?? (episodes.length > 0
+      ? Math.round(episodes.filter(e => e.overall_score > 0).reduce((s, e) => s + e.overall_score, 0)
+          / Math.max(1, episodes.filter(e => e.overall_score > 0).length))
+      : 0)
 
   // 收集所有步骤的日志行（用于统一日志输出区）
   const allLogs = procSteps.flatMap(s => s.log_lines || [])
@@ -188,18 +189,18 @@ export default function DataDesk() {
           <div className="rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-2 mb-1">
               <Tv size={14} className="text-blue-400" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">已索引</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">有数据的集</span>
             </div>
-            <span className="text-xl font-bold text-foreground">{summary.indexed_eps || 0}</span>
+            <span className="text-xl font-bold text-foreground">{summary.eps_with_data || 0}</span>
             <span className="text-xs text-muted-foreground ml-1">/ {summary.total_eps || 0} 集</span>
           </div>
           <div className="rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-2 mb-1">
               <Database size={14} className="text-purple-400" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">索引条目</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">VLM场景</span>
             </div>
-            <span className="text-xl font-bold text-foreground">{summary.total_indexed || 0}</span>
-            <span className="text-xs text-muted-foreground ml-1">条</span>
+            <span className="text-xl font-bold text-foreground">{summary.total_vlm_scenes || 0}</span>
+            <span className="text-xs text-muted-foreground ml-1">段</span>
           </div>
           <div className="rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-2 mb-1">
@@ -212,9 +213,9 @@ export default function DataDesk() {
           <div className="rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-2 mb-1">
               <BarChart3 size={14} className="text-yellow-400" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">字幕提取</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">ASR片段</span>
             </div>
-            <span className="text-xl font-bold text-foreground">{summary.total_subtitles || 0}</span>
+            <span className="text-xl font-bold text-foreground">{summary.total_asr_segments || 0}</span>
             <span className="text-xs text-muted-foreground ml-1">条</span>
           </div>
         </div>
@@ -227,20 +228,17 @@ export default function DataDesk() {
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border shrink-0">
               <Database size={14} className="text-muted-foreground" />
               <h3 className="text-sm font-medium text-foreground">分集数据质量</h3>
-              <span className="text-[9px] text-muted-foreground/50 ml-auto">ASR35+VLM40+字幕10+索引15</span>
+              <span className="text-[10px] text-muted-foreground/50 ml-auto">ASR25%+VLM30%+场景30%+概要15%</span>
             </div>
             <div className="divide-y divide-border/50 flex-1 overflow-y-auto custom-scrollbar">
-              {episodes.map(ep => {
-                const report = reports.find(r => r.ep_number === ep.ep_number)
-                return (
+              {episodes.map(ep => (
                   <EpQualityBar
-                    key={ep.ep_number}
-                    ep={ep.ep_number}
-                    report={report}
-                    indexed={ep.indexed}
+                    key={ep.ep}
+                    ep={ep.ep}
+                    report={ep}
+                    indexed={ep.has_scene_map && ep.has_asr}
                   />
-                )
-              })}
+              ))}
             </div>
           </div>
 
@@ -259,26 +257,26 @@ export default function DataDesk() {
                 <div className="space-y-2">
                   <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto custom-scrollbar">
                     {allEpisodes.map(ep => {
-                      const isSelected = selectedEps.includes(ep.ep_number)
-                      const hasAnalysis = hasData(ep.ep_number)
+                      const isSelected = selectedEps.includes(ep.ep)
+                      const hasAnalysis = hasData(ep.ep)
                       return (
                         <button
-                          key={ep.ep_number}
+                          key={ep.ep}
                           disabled={procSteps.some(s => s.status === 'running')}
                           onClick={() => setSelectedEps(prev =>
-                            prev.includes(ep.ep_number) ? prev.filter(e => e !== ep.ep_number) : [...prev, ep.ep_number]
+                            prev.includes(ep.ep) ? prev.filter(e => e !== ep.ep) : [...prev, ep.ep]
                           )}
                           className={`w-8 h-5.5 rounded text-[10px] font-mono transition-all border flex items-center justify-center ${
                             isSelected ? 'bg-blue-500/20 text-blue-400 border-blue-500/40' :
                             hasAnalysis ? 'bg-card text-foreground/70 border-green-500/30 hover:border-green-500/50' :
                             'bg-secondary text-muted-foreground border-border hover:border-primary/30 hover:text-foreground'
                           } disabled:opacity-50`}
-                        >{ep.ep_number}</button>
+                        >{ep.ep}</button>
                       )
                     })}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => setSelectedEps(allEpisodes.map(e => e.ep_number))}
+                    <button onClick={() => setSelectedEps(allEpisodes.map(e => e.ep))}
                       disabled={procSteps.some(s => s.status === 'running')}
                       className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50">全选</button>
                     <button onClick={() => setSelectedEps([])}
@@ -366,7 +364,6 @@ export default function DataDesk() {
 
           </div>
         </div>
-
       </div>
     </div>
   )
