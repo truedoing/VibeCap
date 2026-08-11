@@ -140,8 +140,9 @@ SCENE_MAP_PROMPT = """你是《都挺好》的场记。根据 ASR 对话和剧�
 规则:
 1. 人物全名: 苏大强/苏明哲/苏明成/苏明玉/朱丽/吴非/小蔡/老聂
 2. 按对话话题转换点切分, 每段 60-90s
-3. 覆盖第一句到末句的完整时间线
-4. 通过称呼词推断说话人（"明哲"→吴非在说话,"爸"→子女在说话）"""
+3. 覆盖第一句到末句的完整时间线，不得遗漏任何对话段落
+4. 通过称呼词推断说话人（"明哲"→吴非在说话,"爸"→子女在说话）
+5. ★ 时间连续性检查: 相邻场景时间不得断开超过 60s，若 ASR 有对话必须生成对应场景"""
 
 
 def build_scene_map(asr_segments, synopsis, work_dir):
@@ -174,8 +175,32 @@ def build_scene_map(asr_segments, synopsis, work_dir):
     if json_match:
         try:
             scene_map = json.loads(json_match.group(0))
-            # 过滤掉过长的段(>200s)和过短的段(<15s)
+            # 过滤掉过长的段(>300s)和过短的段(<15s)
             scene_map = [sm for sm in scene_map if 15 < sm['time_range'][1] - sm['time_range'][0] < 300]
+
+            # v3.2: 时间连续性校验 — 检测 >120s 的空隙并补充 fallback 场景
+            scene_map.sort(key=lambda x: x['time_range'][0])
+            filled = []
+            last_end = scene_map[0]['time_range'][0] if scene_map else 0
+            for sm_item in scene_map:
+                gap = sm_item['time_range'][0] - last_end
+                if gap > 120:
+                    # 在空隙中间插入一个 fallback 场景段
+                    mid_start = last_end + 30
+                    mid_end = sm_item['time_range'][0] - 30
+                    if mid_end - mid_start > 15:
+                        filled.append({
+                            "time_range": [mid_start, mid_end],
+                            "location": "未知",
+                            "characters": [],
+                            "event": "(ASR有对话, DeepSeek遗漏的场景)",
+                            "mood": "待确认"
+                        })
+                        print(f"  ⚠ 补漏: {gap}s 空隙 [{last_end}-{sm_item['time_range'][0]}]")
+                filled.append(sm_item)
+                last_end = sm_item['time_range'][1]
+            scene_map = filled
+
             json.dump(scene_map, open(cache_file, 'w'), ensure_ascii=False, indent=2)
             print(f"  → {len(scene_map)} 段")
             for sm in scene_map:
@@ -278,18 +303,36 @@ def _generate_synopsis(asr_segments, ep):
 # ═══════════════════════════════════ Step 5: VLM 画面分析 ═══════════════════════════════════
 
 def pick_keyframes_for_segment(sm, frames, frame_times, max_frames=2):
-    """每段取1-2帧，减少 VLM 内部思考消耗"""
+    """每段取1-2帧用于 VLM 分析。
+
+    采样策略（v3.1）：
+    - 1帧 → 取场景中点帧
+    - 2帧 → 取 1/3 和 2/3 位置，避开首尾切点边界（场景切换处画面不稳）
+    - ≥3帧 → 均匀分布
+
+    旧版取首尾帧的策略在冲突场景中严重缺陷：首帧可能落在上一场景的尾巴
+    （如场景4的温和画面），尾帧可能落在下一场景的开始，恰好错过高潮动作。
+    """
     start, end = sm['time_range']
     seg_frames = sorted(
         [f for f in frames if start <= frame_times.get(f, -1) <= end],
         key=lambda f: frame_times.get(f, 0))
-    if not seg_frames:
+    n = len(seg_frames)
+    if n == 0:
         mid_t = (start + end) / 2
         seg_frames = [min(frames, key=lambda f: abs(frame_times.get(f, 999) - mid_t))]
-    if len(seg_frames) <= max_frames:
+    elif n <= max_frames:
         return seg_frames
-    step = (len(seg_frames) - 1) / (max_frames - 1)
-    return [seg_frames[int(i * step)] for i in range(max_frames)]
+    elif max_frames == 1:
+        # 取中点 — 最可能代表场景核心内容
+        return [seg_frames[n // 2]]
+    elif max_frames == 2:
+        # 取 1/3 和 2/3 — 覆盖场景主体，避开首尾切点边界
+        return [seg_frames[n // 3], seg_frames[2 * n // 3]]
+    else:
+        # 均匀采样
+        step = (n - 1) / (max_frames - 1)
+        return [seg_frames[int(i * step)] for i in range(max_frames)]
 
 
 def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
@@ -305,12 +348,17 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
     chars_str = '、'.join(sm.get('characters', [])) or '未知'
     loc_str = sm.get('location', '未知')
     event_str = sm.get('event', '未知')
+    mood_str = sm.get('mood', '')
 
-    # v3: 结构化JSON输出 — 导演级视觉元数据
+    # v3.1: 结构化JSON输出 + scene_map mood 情绪锚定
+    # 将 mood 注入为指令约束：情绪输出必须与事件基调一致
+    mood_hint = f"  情绪基调: {mood_str}  " if mood_str else ""
     prompt = (
-        f"角色={chars_str}  地点={loc_str}  事件={event_str}\n"
+        f"角色={chars_str}  地点={loc_str}  事件={event_str}{mood_hint}\n"
         f"只用上述角色名，看不清就写衣色。\n"
-        f"分析画面，输出 JSON（不要 markdown 代码块）:\n"
+        f"★ 情绪要求: 这是一场" + (f'「{mood_str}」' if mood_str else '待判断') + "的戏，"
+        f"emotional_tone 和 intensity 必须反映这个情绪基调，不能输出相反的温和情绪。\n"
+        f"输出 JSON（不要 markdown）:\n"
         f'{{\n'
         f'  "visual_summary": "≤80字画面描述",\n'
         f'  "shot_size": "特写/近景/中景/全景/远景/大远景",\n'
@@ -330,7 +378,7 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
     payload = {
         "model": VLM_MODEL,
         "messages": [{"role": "user", "content": content_parts}],
-        "max_tokens": 1200,  # v3: 结构化JSON + 2帧描述 → 需要充足空间
+        "max_tokens": 1800,  # v3.1: mood 锚定指令需要更多输出空间，避免截断
     }
 
     raw = ""

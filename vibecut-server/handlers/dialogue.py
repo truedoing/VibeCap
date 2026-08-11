@@ -207,6 +207,25 @@ DIRECTOR_PROMPT = """你是电视剧《都挺好》的分镜导演。根据解�
     emotion   — 情绪/表情（如"愤怒""落寞"）→ 需要表情画面
     context   — 评述/解释 → 不生成分镜，仅留白
     punchline — 金句/主题句 → 需情绪强烈画面
+    argument  — 论证/主题句（如"不光X也Y""表面X实际Y""没X没Y就没Z"）
+                解说词在论证一个观点，必须拆解为 ≥2 个 PRIMARY shot
+                每个 PRIMARY 对应论证的一个面（两面/多面对比）
+
+  ★ 论证式拆解特别规则:
+    - 识别标记: "不光X也Y" "没X没Y" "表面X实际Y" "不是X而是Y"
+    - beat type 设为 argument，一个 argument beat 拆 ≥2 个 PRIMARY shot
+    - shot1 对应论证前半（如"窝里横"→找家庭内部冲突场景）
+    - shot2 对应论证后半（如"在外狂"→找外部对峙场景）
+    - 可叠加 CONTRAST: 家庭内 vs 外部 对比并置
+
+  论证拆解示例:
+    "他不光窝里横，在外边他也照样狂"
+      → beat1 type=argument, text="论证：窝里横+在外狂"
+      → shot1 PRIMARY: purpose="在家发狠", location_hint="苏家场景",
+           emotional_tone=["愤怒","凶横"], match_type="character"
+      → shot2 PRIMARY: purpose="对外嚣张", location_hint="外部",
+           emotional_tone=["冲突","狂妄"], match_type="character"
+      → 可加 CONTRAST: 家内凶横 vs 外部嚣张 对比并置
 
 第2步：导演手法运用 (v8.1)
   根据解说词的叙事特点，在适当位置运用以下导演手法。这些手法让画面层次更丰富。
@@ -388,6 +407,12 @@ def _match_shot_query(query: dict, num: int = 5, used_scene_keys: set = None,
     elif focus:
         focus_layers = [(10, focus)]  # 旧版兼容: 统一+10
 
+    # ── v8.5: scene_map mood 高冲突词 / VLM 低能情绪词 ──
+    HIGH_CONFLICT_MOODS = {'激烈', '愤怒', '争执', '冲突', '激动', '绝望', '对峙',
+                           '质问', '对峙', '愤怒无奈', '紧张争执', '冲突激烈'}
+    LOW_ENERGY_VLM_TONES = {'温和', '平静', '轻松', '日常', '关切', '温馨', '柔和', '自然',
+                            '温和关切', '平静正式', '轻松日常'}
+
     for ep, ep_data in cache.items():
         for idx, s in ep_data.items():
             score = 0
@@ -424,6 +449,102 @@ def _match_shot_query(query: dict, num: int = 5, used_scene_keys: set = None,
                 score -= 4
             if len(s["visual_summary"]) > 30:
                 score += 2
+
+            # ── v8.5: scene_map mood vs VLM 情绪冲突检测 ──
+            # 当 scene_map 记录了高冲突 mood，但 VLM 输出低能情绪时，
+            # 很可能是 VLM 采样帧未捕捉到冲突画面（选帧偏差）。
+            # 给予补偿分，让 scene_map 的结构化先验修正 VLM 数据误差。
+            #
+            # v8.5.1: 补偿仅在 location 可关联时生效
+            # 防止"地点无关但 mood 补偿"的噪声场景超过地点正确的内容场景
+            effective_intensity = s["intensity"]  # 用于强度匹配的有效强度
+            scene_mood = s.get("mood", "")
+            vlm_tone = str(s.get("emotional_tone", ""))
+            vlm_intensity = s.get("intensity", 3)
+
+            # 检测冲突：scene_map 高冲突 + VLM 低能情绪
+            mood_high = any(m in scene_mood for m in HIGH_CONFLICT_MOODS)
+            tone_low = any(t in vlm_tone for t in LOW_ENERGY_VLM_TONES) or vlm_intensity <= 2
+
+            # 先算 location 是否匹配（在 mood 补偿前，用作补偿门槛）
+            loc_relevant = False
+            if location_hint:
+                loc = s.get("location", "")
+                if location_hint in loc or loc in location_hint:
+                    loc_relevant = True
+                else:
+                    stop_suffixes = ['客厅','餐厅','卧室','厨房','走廊','门口','会议室','办公室']
+                    hc, lc = location_hint, loc
+                    for sfx in stop_suffixes:
+                        hc = hc[:-len(sfx)] if hc.endswith(sfx) else hc
+                        lc = lc[:-len(sfx)] if lc.endswith(sfx) else lc
+                    if hc and lc and (hc in lc or lc in hc):
+                        loc_relevant = True
+            else:
+                loc_relevant = True  # 没有 location 约束时不限制
+
+            if mood_high and tone_low and loc_relevant:
+                # 情绪穿透补偿：相信 scene_map 的情绪标注
+                score += 8
+                # 强度补偿：使用合理的最低强度值
+                effective_intensity = max(vlm_intensity, 3)
+                # 如果 scene_map mood 明确包含目标情绪词，额外加分
+                for te in target_emotions:
+                    if te in scene_mood:
+                        score += 5  # 半额情绪命中分 (vs 正常的 +8)
+
+            # 1.6 情绪匹配 (使用有效强度)
+            for emo in target_emotions:
+                if emo in desc:
+                    score += 8
+            # 强度匹配
+            if effective_intensity >= min_intensity:
+                score += max(0, (effective_intensity - min_intensity + 1)) * 3
+            # 景别匹配 — v8.5.1: 放宽距离补偿
+            # 1级距离(近景↔中景)补偿从 +3-dist 提升到 +5，减少"精确但不相关内容"
+            # 因 shot_size 精确匹配而击败"地点正确"场景的情况
+            if target_shot and s.get("shot_size", "") == target_shot:
+                score += 6
+            elif target_shot and s.get("shot_size", ""):
+                # 距离补偿: 近景↔特写 距离=1, 近景↔全景 距离=2
+                shot_order = ["特写", "近景", "中景", "全景", "远景"]
+                try:
+                    ts_i = shot_order.index(target_shot)
+                    ss_i = shot_order.index(s.get("shot_size", ""))
+                    dist = abs(ts_i - ss_i)
+                    score += max(0, 5 - dist)  # v8.5.1: 更宽松的补偿
+                except ValueError:
+                    pass
+            # 地点匹配 — v8.5.1: 双向子串匹配 + 同义词
+            # "苏大强家客厅" in "苏大强家" → False (子串反了)
+            # 改为: hint 的任意非停用词片段出现在 location 中即命中
+            if location_hint:
+                loc_lower = s.get("location", "")
+                hint_lower = location_hint
+                # 精确子串
+                if hint_lower in loc_lower or loc_lower in hint_lower:
+                    score += 4
+                else:
+                    # 去掉 "客厅""办公室""餐厅" 等后缀后模糊匹配
+                    stop_suffixes = ['客厅','餐厅','卧室','厨房','走廊','门口','会议室','办公室']
+                    hint_core = hint_lower
+                    loc_core = loc_lower
+                    for sfx in stop_suffixes:
+                        if hint_core.endswith(sfx):
+                            hint_core = hint_core[:-len(sfx)]
+                        if loc_core.endswith(sfx):
+                            loc_core = loc_core[:-len(sfx)]
+                    if hint_core and loc_core and (hint_core in loc_core or loc_core in hint_core):
+                        score += 3  # 半额命中
+            # 动作匹配 — v8.5.1: 关键词子串匹配
+            if action_hint:
+                # 拆为 2-3 字关键词，命中半数即加分
+                action_kws = [action_hint[i:i+2] for i in range(0, len(action_hint), 2) if len(action_hint[i:i+2]) >= 2]
+                hits = sum(1 for kw in action_kws if kw in desc)
+                if hits >= len(action_kws) * 0.5:
+                    score += 4
+                elif hits >= 2:
+                    score += 2  # 部分命中
 
             scored.append((score, s))
 
