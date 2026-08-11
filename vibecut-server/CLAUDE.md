@@ -1,6 +1,6 @@
 ---
 name: vibecut-server
-description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + AI流水线 v3.0
+description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + AI流水线 v1.2
 ---
 
 ## VibeCut Server v3.0
