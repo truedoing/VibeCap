@@ -1,6 +1,6 @@
-"""VibeCut Server v1.1 — FastAPI 主入口
+"""VibeCut Server v1.2 — FastAPI 主入口
 
-重构自 server.py (2,866行 → 模块化架构)
+drama编剧Agent + interview编剧台 + 导演Agent分镜匹配
 """
 
 import json
