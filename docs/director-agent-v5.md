@@ -1,19 +1,20 @@
-# 导演Agent v5 — 分镜锚定引擎
+# 导演Agent v8.5 — 分镜锚定引擎
 
 ## 概述
 
-导演Agent 是分镜台的核心推理引擎，负责将解说词转化为结构化的分镜方案，并从原剧中匹配最合适的视频片段。
+导演Agent 是分镜台的核心推理引擎，负责将解说词转化为结构化的分镜方案（PRIMARY+SECONDARY 主辅镜头），并从原剧中匹配最合适的视频片段。
 
-**核心理念**：解说脚本具有天然的三层结构——前后段的高亮台词引用原剧对话（ASR锚定），中间的解说词承上启下。利用这个结构可以大幅缩小搜索空间，提高匹配精度。
+**核心理念 v8**：LLM 是导演，而非搜索查询生成器。它将解说词拆解为叙事节拍（beats），运用六种导演手法（REACTION/FLASHBACK/CONTRAST/CUTAWAY/ARC/CROSS），为每个节拍生成结构化的 shot query，然后通过匹配引擎在 VLM 场景缓存中找到最优画面。
 
 ```
-前段高亮(原剧台词) ──→ ASR关键词匹配 ──→ 锚定剧集 EP_N
-     │
-     ▼
-当前解说词(桥接) ──→ LLM导演理解 + synopsis ──→ 结构化分镜查询
-     │
-     ▼
-后段高亮(原剧台词) ──→ ASR关键词匹配 ──→ 锚定剧集 EP_N+1
+解说词 → LLM导演叙事分析 → beats (节拍) + shots (分镜查询)
+                              │
+                              ▼
+                      匹配引擎 (storyboard_match)
+                      多维度评分: 剧集 + 人物 + 场景情绪 + 景别 + 地点 + 动作
+                              │
+                              ▼
+                      最优候选镜头 (PRIMARY + SECONDARY)
 ```
 
 ## 数据流
@@ -22,193 +23,145 @@
 前端 VibeEdit/StoryboardSequence
   │
   │  POST /storyboard_suggest
-  │  { narration, cover, prev_highlight, next_highlight,
-  │    segment_context: { seg_id, sentences } }
+  │  { narration, cover, segment_context, focus_episodes }
   │
   ▼
-后端 storyboard_suggest() [handlers/dialogue.py]
+handlers/storyboard.py        ← 导演Agent 入口
   │
-  ├─ Step 0: ASR台词锚定 _anchor_highlight_episodes()
-  │     ├─ 2-4字滑动窗口 × 46集ASR
-  │     ├─ 前段高亮 → 锚定剧集 EP_prev
-  │     └─ 后段高亮 → 锚定剧集 EP_next
+  ├─ _director_agent()
+  │   ├─ DeepSeek → { main_char, beats[], shots[] }
+  │   ├─ 人物交叉校验 (cover vs LLM)
+  │   ├─ PRIMARY 匹配 → lib/storyboard_match.py
+  │   └─ SECONDARY 匹配 → 根据角色(REACTION/FLASHBACK/CONTRAST)灵活搜索
   │
-  ├─ Step 0.5: 加载锚定剧集剧情概要 ep_synopsis.json
-  │
-  ├─ Step 1: LLM导演推理 (DeepSeek)
-  │     ├─ 输入: 解说词 + cover + 角色出场统计 + 剧情概要 + 锚定信息
-  │     ├─ 输出: { main_char, shots: [{ purpose, characters, shot_size,
-  │     │           emotional_tone, intensity_min, location_hint,
-  │     │           action_hint, prefer_episodes, match_type }] }
-  │     └─ match_type: narrative(叙事性) vs character(表现性)
-  │
-  ├─ Step 2: 人物交叉校验
-  │     └─ cover中的人物 > LLM推断, 修正所有分镜的 characters
-  │
-  └─ Step 3: 结构化匹配 _match_shot_query()
-        ├─ 遍历指定剧集的VLM场景缓存
-        ├─ 多维度评分: 剧集锚定 + 人物 + VLM画面 + 情绪 + 强度 + 景别 + 地点 + 动作
-        ├─ 分镜级剧集分配 (前两镜→prev_ep, 后一镜→next_ep)
-        ├─ 跨镜去重 (used_scene_keys)
-        └─ 降级: 无结果→放宽景别/场景→去掉剧集限制→全量保底
+  └─ storyboard_suggest()
+      ├─ 格式化 suggestions 文本
+      └─ Fallback: v3 分层匹配 (_fallback_storyboard_suggest)
+
+lib/vlm_cache.py              ← 46集 VLM 场景缓存懒加载
+lib/storyboard_match.py       ← 结构化匹配引擎 (纯函数)
+handlers/prompts/director.py  ← DIRECTOR_PROMPT 模板
+lib/scene_map.py              ← 场记Agent: scene_map + synopsis 生成
 ```
 
 ## 核心算法
 
-### 1. ASR台词锚定 (`_anchor_highlight_episodes`)
+### 1. 叙事节拍拆解 (LLM DeepSeek)
 
-```
-输入: prev_highlight (前段高亮台词), next_highlight (后段高亮台词)
-输出: { prev_ep, next_ep, focus_eps, anchor_text }
+解说词 → 5 种节拍类型:
+- **action**: 动作/事件 → 必须有原剧画面
+- **emotion**: 情绪/表情 → 需要表情画面
+- **context**: 评述/解释 → 不生成分镜，仅留白
+- **punchline**: 金句/主题句 → 需情绪强烈画面
+- **argument**: 论证/主题句（如"不光X也Y"）→ 拆解为 ≥2 PRIMARY shot
 
-算法:
-  对每句高亮台词:
-    1. 去标点, 提取2-4字滑动窗口作为关键词
-    2. 过滤停用词 (你想/什么/怎么/还是...)
-    3. 遍历46集ASR, 计算每集的关键词命中总分
-    4. 取最高分剧集作为锚定结果
-    5. 阈值: best_score > 10 视为命中
+### 2. 导演手法 (v8.1)
 
-性能:
-  - 46集 × ~700条/集 ≈ 32000条ASR记录
-  - 纯字符串匹配, <50ms完成
-```
+| 手法 | 用途 | 搜索策略 |
+|------|------|---------|
+| REACTION | 人物情绪/反应特写 | 标的集±3 |
+| FLASHBACK | 过去关键画面 | prefer_episodes 可跳出标的集 |
+| CONTRAST | 对立状态并置 | 全局搜索 |
+| CUTAWAY | 空镜留白 | 不匹配画面 |
+| ARC | 情绪递进 | intensity_min 递增 |
+| CROSS | 交叉剪辑 | note 标注 |
 
-### 2. 结构化匹配评分 (`_match_shot_query`)
+### 3. 匹配引擎评分 (`lib/storyboard_match.py`)
 
 对指定剧集的每个 VLM 场景逐一评分:
 
 | 维度 | 权重 | 说明 |
 |------|------|------|
 | 跨镜去重 | -30 | 已在前置分镜中使用的场景大幅惩罚 |
-| 剧集锚定 | +15/+6 | narrative强约束, character弱偏好 |
-| 非锚定惩罚 | -8/0 | narrative换集就错, character可灵活 |
+| 剧集锚定 | +15/+5/+2 | 三层权重: 承上启下 > 标的集 > 邻近集 |
 | 人物匹配 | +15×N | 每个目标人物交叠+15, 无交叠-10 |
-| VLM画面补偿 | +6→+5→+2 | 主角在visual_summary中出现但不在characters中 |
-| 画面主体验证 | +5/-4 | VLM描述了主角+5, 主角在场但未描述-4 |
-| 情绪匹配 | +8×N | 每个情绪标签命中+8 |
-| 强度匹配 | +(intensity-min+1)×3 | 强度不低于要求即加分 |
-| 景别精确匹配 | +6 | 精确匹配+6, 距离越远分数越低 |
-| 地点提示匹配 | +4 | location_hint 在 scene_locations 中 |
-| 动作提示匹配 | +4 | action_hint 在 actions 或 visual_summary 中 |
-| 描述丰富度 | +2 | visual_summary > 30字 |
+| 画面主体验证 | +5/-4 | 主角在 visual_summary 中+5 |
+| 场景情绪冲突检测 (v8.5) | +8 | scene_map mood 高冲突但 VLM 低能情绪 → 补偿 |
+| 情绪关键词命中 | +8×N | 目标情绪词在 desc 中 |
+| 强度匹配 | (int-min+1)×3 | 有效强度≥要求即加分 |
+| 景别匹配 | +6/+5-dist | 精确匹配+6, 距离补偿 max(0,5-dist) |
+| 地点匹配 | +4/+3 | 双向子串 + 去后缀模糊匹配 |
+| 动作匹配 | +4/+2 | 步长1的2字+3字滑窗 |
 
-### 3. 分镜类型自适应 (v5.1)
+### 4. 情绪冲突补偿 (v8.5)
 
-```
-narrative (叙事性分镜):
-  - 适用: 锚定特定事件/冲突 (如"打架桥段", "拍桌冲突")
-  - 锚定策略: 强约束, anchor_bonus=+15, penalty=-8
-  - 降级: 不触发全局重搜, 保持锚定
+**问题**: VLM 关键帧采样偏差导致高冲突场景被误标为低能情绪。
 
-character (表现性分镜):
-  - 适用: 表现人物特质/情绪状态 (如"愤怒特写", "冷漠眼神")
-  - 锚定策略: 弱偏好, anchor_bonus=+6, penalty=0
-  - 降级: 锚定内最高分 < 20 → 全局对比, 全局分高出4分即替换
-```
+**修复**: 当 scene_map mood (DeepSeek 从对话推断) 标记为"激烈/愤怒/冲突"等，但 VLM 输出"温和/平静/关切"等低能情绪时，给予 +8 补偿分 + 强度修正。补偿仅在 location 可关联时触发（防止无关场景靠补偿上位）。
 
-### 4. VLM画面人物补偿 (v5.3)
+### 5. 开篇/总论点模式 (v8.5.4)
 
-**问题**: scene_map.json 的 characters 字段只包含有 ASR 台词的人物。无台词出场的角色（仅通过VLM画面识别）会被漏标。
-
-**修复**: 当 visual_summary 中明确描述了主角名，但 scene_map characters 中没有他时:
-```
-has_main_in_visual:
-  → 人物匹配补偿 +6 (替代原本的 -10 惩罚)
-  → 画面验证 +5 (原逻辑保留)
-  → 漏标补偿 +2 (额外)
-  → 总计 +13 (vs 之前在此类场景中得分约 -10-4 = -14)
-```
+当解说词为视频开篇总论点且 focus_episodes 包含多个剧集时，LLM 强制为每个标的集生成独立 PRIMARY shot，直接从 context 中提取已有事件作为查询目标。
 
 ## 数据依赖
 
 | 数据文件 | 路径 | 用途 |
 |----------|------|------|
-| scene_map.json | sources/ep{N}/ | 场景元数据: characters, event, mood, location, time_range |
-| vlm_seg_cache_v3.json | sources/ep{N}/ | VLM视觉分析: visual_summary, shot_size, emotional_tone, intensity, lighting, actions |
-| ep_synopsis.json | sources/ep{N}/ | DeepSeek生成的剧情概要 (v5.2+) |
-| asr_result.json | sources/ep{N}/ | ASR转写, 用于高亮台词锚定剧集 |
+| scene_map.json | sources/ep{N}/ | DeepSeek 场记Agent 生成: 场景-人物-事件-情绪-时间 |
+| vlm_seg_cache_v3.json | sources/ep{N}/ | MiMo VLM 画面分析: visual_summary, shot_size, emotional_tone, intensity, actions |
+| ep_synopsis.json | sources/ep{N}/ | DeepSeek 剧情概要 (注入 LLM 上下文) |
+| asr_result.json | sources/ep{N}/ | faster-whisper ASR 转写 (dialogue_match 台词锚定) |
+
+## VLM 管线优化 (v8.5)
+
+### 关键帧采样
+- **v8.5前**: 取场景首尾帧 → 切点边界处画面不稳，常错过高潮动作
+- **v8.5后**: 取 1/3 + 2/3 位置 → 覆盖场景核心内容
+
+### 情绪锚定
+- VLM prompt 注入 scene_map mood 作为情绪基调提示
+- "emotional_tone 和 intensity 必须反映这个情绪基调，不能输出相反的温和情绪"
+
+### max_tokens
+- 1200 → 1800，防止情绪锚定指令导致 JSON 截断
+
+### 场记Agent (`lib/scene_map.py`)
+- DeepSeek 读取 ASR + 概要 → scene_map
+- 时间连续性检查 → >120s 空隙自动补漏
+- 降级: 关键词规则 fallback
+
+## 代码架构
+
+```
+vibecut-server/
+├── handlers/
+│   ├── dialogue.py          (184行) — dialogue_match + chat
+│   ├── storyboard.py        (581行) — 导演Agent + 分镜推荐
+│   ├── prompts/
+│   │   └── director.py      (150行) — DIRECTOR_PROMPT 模板
+│   └── search.py            (485行) — BGE语义搜索 + ASR锚定搜索
+├── lib/
+│   ├── vlm_cache.py         (111行) — VLM 场景缓存加载
+│   ├── storyboard_match.py  (195行) — 结构化匹配引擎
+│   └── scene_map.py         (198行) — 场记Agent
+├── analyze_episodes.py      (592行) — VLM 管线 (抽帧/VLM分析)
+└── main.py                  (847行) — FastAPI 路由
+```
 
 ## API
 
 ### POST /storyboard_suggest
 
-**请求**:
-```json
-{
-  "narration": "解说词文本",
-  "cover": "苏明成/炸弹视角",
-  "num": 3,
-  "prev_highlight": "前段高亮台词",
-  "next_highlight": "后段高亮台词",
-  "segment_context": {
-    "seg_id": 5,
-    "sentences": ["解说词切句1", "解说词切句2"]
-  }
-}
-```
+请求: { narration, cover, segment_context, focus_episodes, num }
 
-**响应**:
-```json
-{
-  "suggestions": ["镜头1: ... | EP41 [2070s] ... [中景]", ...],
-  "shots": [
-    {
-      "purpose": "展现苏明成持刀威胁的狂态",
-      "query": {
-        "characters": ["苏明成"],
-        "shot_size": "中景",
-        "emotional_tone": ["冲突", "愤怒"],
-        "intensity_min": 4,
-        "location_hint": "苏大强家客厅",
-        "action_hint": "苏明成手持菜刀...",
-        "prefer_episodes": [41],
-        "match_type": "narrative"
-      },
-      "candidates": [
-        {
-          "ep": 41,
-          "start": 2070,
-          "end": 2130,
-          "visual_summary": "苏明成在办公室双手合十...",
-          "shot_size": "中景",
-          "emotional_tone": "焦虑恳切",
-          "intensity": 3,
-          "location": "苏明玉办公室",
-          "characters": ["苏明玉", "苏明成", "朱丽"],
-          "match_score": 43
-        }
-      ]
-    }
-  ],
-  "main_char": "苏明成",
-  "anchor": {
-    "prev_ep": 41,
-    "next_ep": 39,
-    "focus_eps": [39, 41]
-  }
-}
-```
+响应: { suggestions[], shots[], main_char, beats[], focus_eps[], reasoning }
 
-## 关键文件
+### POST /dialogue_match
 
-| 文件 | 内容 |
-|------|------|
-| vibecut-server/handlers/dialogue.py | 导演Agent核心: director_agent(), _match_shot_query(), _anchor_highlight_episodes(), 两个prompt模板 |
-| vibecut-server/main.py:546 | POST /storyboard_suggest 路由 |
-| vibecut-web/src/components/StoryboardSequence.jsx | 前端分镜面板: 提取前后段highlight_text, 发送请求, 渲染分镜卡片 |
-| vibecut-web/src/components/ScriptPanel.jsx | 脚本面板: highlight_text(台词) + narration_text(解说) 双行渲染 |
-| vibecut-web/src/pages/VibeEdit.jsx | 分镜台主页: 管理segments, curNarration, storyTrigger |
+请求: { dialogue }
+
+响应: { lines[] } — 第一句锚定 ASR，无需 LLM 拆解
 
 ## 版本迭代
 
 | 版本 | 改动 | 效果 |
 |------|------|------|
-| v4 | 初始导演Agent: LLM叙事理解 + scene_map匹配 | 基础分镜功能 |
-| v5 | +ASR台词锚定剧集 + 跨镜去重 + 画面主体验证 | 前后段锚定命中, 分镜不重复 |
-| v5.1 | +match_type (narrative/character) 自适应锚定权重 | 叙事性强约束, 表现性灵活全局搜索 |
-| v5.2 | +ep_synopsis.json注入LLM上下文 | LLM理解真实剧情, 不再凭空编造场景 |
-| v5.3 | +VLM画面人物补偿 (visual_summary中的角色) | 无台词出场人物场景不再被误惩罚 |
-| v5.3b | +_chars合并到characters (从vlm_seg_cache_v3加载) | scene8派出所/打架场景从漏标修复为完整标注, 镜头2 TOP1命中派出所 |
-| v5.2 | +ep_synopsis.json注入LLM上下文 | LLM理解真实剧情, 不再凭空编造场景 |
-| v5.3 | +VLM画面人物补偿 (visual_summary中的角色) | 无台词出场人物场景不再被误惩罚 |
+| v8.5.5 | dialogue_match 第一句锚定 + cluster scoring | 台词定位 0ms (无 LLM 调用) |
+| v8.5.4 | 开篇/总论点多剧集 PRIMARY 分配 | 总论点镜头覆盖多事件 |
+| v8.5.3 | LLM prompt: 已知地名 + 核心动作词 | 查询更贴合 VLM 数据 |
+| v8.5.2 | action 匹配: 步长1滑窗 | "打架" 等词不会因滑窗步长遗漏 |
+| v8.5.1 | VLM 抽帧 + mood 锚定 + 情绪冲突补偿 | 3集零情绪矛盾, EP41 持刀场景修复 |
+| v8.5 | scene_map mood 补偿 + 跨镜去重 + 画面验证 | 基础分镜匹配 |
+| v8.4 | 三层剧集权重 + Agent推理过程 | 标的集内优先匹配 |
+| v8.1 | 开篇模式 + 导演手法扩展 | 6种导演手法 |
+| v8 | 导演Agent: beats + PRIMARY/SECONDARY | 叙事驱动分镜 |

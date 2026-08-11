@@ -8,24 +8,30 @@ description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + A
 ### 架构
 ```
 vibecut-server/
-├── main.py                     ← FastAPI 入口 + 路由注册 + 生命周期 (805行)
+├── main.py                     ← FastAPI 入口 + 路由注册 + 生命周期 (847行)
 ├── config.py                   ← CLI参数 + 项目配置 + 路径解析 (94行)
 ├── db.py                       ← SQLite: dramas/episodes/tasks/task_segments/index_entries
 │
 ├── handlers/
-│   ├── search.py               ← 6种搜索引擎 (语义/关键词/混合/ASR优先/深度/口播)
+│   ├── search.py               ← BGE语义搜索 + ASR关键词/锚定搜索 (485行)
 │   ├── tasks.py                ← 任务 CRUD (创建/状态/删除/列表)
+│   ├── dialogue.py             ← 对话匹配 + AI聊天 (184行)
+│   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY 分镜 (581行)
 │   ├── script_gen.py           ← AI脚本生成 (v3流水线/v4故事优先/精切 SSE)
 │   ├── pipeline.py             ← 后台加工流水线 (电视剧+口播)
 │   ├── media.py                ← 媒体服务 (代理视频/片段提取/预览/导出)
-│   ├── dialogue.py             ← 对话+台词 (chat/dialogue_match/storyboard)
-│   └── static.py               ← SPA前端回退 + 任务目录文件服务
+│   ├── static.py               ← SPA前端回退 + 任务目录文件服务
+│   └── prompts/
+│       └── director.py         ← DIRECTOR_PROMPT 模板 (150行)
 │
 ├── lib/
-│   ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo, 消除10种重复)
+│   ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo/DeepSeek)
 │   ├── embeddings.py           ← BGE模型单例管理
 │   ├── sse.py                  ← 可复用SSE发射器 + 心跳
-│   └── env.py                  ← 统一.env加载
+│   ├── env.py                  ← 统一.env加载
+│   ├── vlm_cache.py            ← VLM 场景缓存懒加载 (111行)
+│   ├── storyboard_match.py     ← 分镜匹配引擎 — 多维度结构化评分 (195行)
+│   └── scene_map.py            ← 场记Agent: scene_map + synopsis 生成 (198行)
 │
 ├── script_agents.py            ← 编剧台 AI Agent
 │   ├── run_pipeline()          ← v3 搜索流水线
@@ -168,12 +174,17 @@ ASR → classify_transcript → clean_interview_data → build_index
 
 **依赖**: `.env` 中 `MIMO_API_KEY` + `DEEPSEEK_API_KEY` (仅生成剧集概要)
 
-### 分镜搜索策略 (导演思维)
+### 分镜搜索策略 (导演Agent v8.5)
 
-**核心思路**: 解说词 → 叙事节拍分析 → 约束搜索 (episode_marker + BGE语义 + frame_facts 人物过滤)。不再按句子机械匹配，而是拆解"谁/在哪/做什么/什么情绪"的视觉节拍。
+**核心思路**: LLM 是导演，将解说词拆解为叙事节拍（beats），运用六种导演手法（REACTION/FLASHBACK/CONTRAST/CUTAWAY/ARC/CROSS），通过多维度结构化匹配引擎找到最优画面。
 
-**搜索原则**:
-- episode_marker 缩小范围 (31,498 → 500-800)
-- BGE 语义匹配找情感/氛围相似的场景
-- frame_facts 人物标签精确约束 (VLM源头优化后准确率大幅提升)
-- VLM depth_analysis 提供导演级场景情绪解读
+**关键模块**:
+- `handlers/storyboard.py` — 导演Agent 入口: LLM叙事分析 + PRIMARY/SECONDARY 分镜匹配
+- `lib/storyboard_match.py` — 纯函数匹配引擎 (多维度评分, 独立可测试)
+- `lib/vlm_cache.py` — 46集 VLM 场景缓存懒加载
+- `lib/scene_map.py` — 场记Agent: DeepSeek生成 scene_map + synopsis
+- `handlers/prompts/director.py` — DIRECTOR_PROMPT 模板
+
+**评分维度**: 剧集锚定(三层权重) + 人物精确匹配 + 场景情绪冲突补偿(v8.5) + 情绪关键词 + 强度 + 景别距离补偿 + 地点模糊匹配 + 动作滑窗匹配
+
+**台词定位**: `dialogue_match` 第一句锚定 ASR (2-4字滑窗 + cluster scoring, 0ms 延迟)

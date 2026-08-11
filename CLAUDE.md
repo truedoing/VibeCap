@@ -66,17 +66,23 @@ VibeCut/
 │   ├── export_capcut.py            ← 剪映草稿导出
 │   │
 │   ├── handlers/
-│   │   ├── search.py               ← 搜索 (BGE语义/关键词/分层匹配)
-│   │   ├── dialogue.py             ← 分镜推荐 v3: scene_map结构化匹配
+│   │   ├── search.py               ← 搜索 (BGE语义/ASR关键词/ASR锚定)
+│   │   ├── dialogue.py             ← 对话匹配 + AI聊天 (184行)
+│   │   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY (581行)
 │   │   ├── script_gen.py           ← AI脚本生成 (SSE)
 │   │   ├── pipeline.py             ← 后台流水线
 │   │   ├── media.py                ← 媒体服务
-│   │   └── static.py               ← SPA前端回退
+│   │   ├── static.py               ← SPA前端回退
+│   │   └── prompts/
+│   │       └── director.py         ← DIRECTOR_PROMPT 模板 (150行)
 │   │
 │   └── lib/
 │       ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo/DeepSeek)
 │       ├── embeddings.py           ← BGE模型单例管理
-│       └── sse.py                  ← SSE发射器 + 心跳
+│       ├── sse.py                  ← SSE发射器 + 心跳
+│       ├── vlm_cache.py            ← VLM 场景缓存加载 (111行)
+│       ├── storyboard_match.py     ← 分镜匹配引擎 (195行)
+│       └── scene_map.py            ← 场记Agent (198行)
 │
 ├── vibecut-web/               ← React 前端 (Vite, 端口3000)
 │   └── src/
@@ -121,7 +127,8 @@ cd vibecut-web && npm run dev
 |---|---|---|
 | GET /search?q=&mode=semantic | GET | BGE语义搜索 |
 | GET /segments.json?task= | GET | 任务分段 (DB→文件fallback) |
-| POST /storyboard_suggest | POST | 分镜推荐 v3 (scene_map结构化匹配) |
+| POST /storyboard_suggest | POST | 分镜推荐 v8.5 (导演Agent: beats+PRIMARY+SECONDARY) |
+| POST /dialogue_match | POST | 台词→ASR锚定 (第一句滑窗, 无需LLM) |
 | POST /script/generate_script_stream | POST | v3搜索流水线 SSE |
 | POST /script/generate_story_first | POST | v4故事优先 SSE (口播专用) |
 | POST /script/refine | POST | 精切 SSE |
@@ -136,26 +143,27 @@ cd vibecut-web && npm run dev
 - `/:project/:task/planning` — 编剧台 (PlanningDesk)
 - `/:project/:task/vibe` — 分镜台 (VibeEdit)
 
-## 电视剧数据管线 (v2.4)
+## 电视剧数据管线 (v3.1)
 
-### VLM 分析 — 三层推理架构
+### VLM 分析 — 三层推理 + 情绪锚定
 
 ```
-ASR 转写 → DeepSeek 生成 scene_map (人物+地点+事件) → VLM 只描述画面 (已知人物)
+ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情绪)
+         → VLM 画面分析 (scene_map mood 锚定, 1/3+2/3 位置采帧)
 ```
 
-| 指标 | v1.3 (旧) | v2.4 (新) | 变化 |
+| 指标 | v1.3 (旧) | v3.1 (当前) | 变化 |
 |---|---|---|---|
 | VLM 调用/集 | 241 次 | 10-25 次 | ↓90% |
 | Token/集 | 692K | 43K | ↓94% |
+| 关键帧采样 | 首尾帧 | 1/3+2/3 位置 | 避免切点边界, 捕获冲突画面 |
+| 情绪准确度 | VLM 独立判断 | scene_map mood 锚定 | 零情绪矛盾 |
 | 人物识别 | VLM 认人脸 (~29% 错误) | scene_map 确定 (0% 错误) | ✅ |
-| 角色照锚定 | 每10场景发送 | 废除 | ✅ |
-| 描述格式 | 7种混乱 | 统一 ≤80字 | ✅ |
 
 三层:
-1. **DeepSeek 读 ASR + synopsis** → 结构化场景-人物-时间映射 (scene_map)
+1. **DeepSeek 场记Agent** (`lib/scene_map.py`) → scene_map (人物+地点+事件+情绪+时间)
 2. **ASR 关键词锚定** → 精准时间边界
-3. **VLM 只做画面理解** — 已知人物/地点/剧情，不认人
+3. **VLM 画面理解** — mood 锚定 + 结构化JSON输出
 
 ### 淘汰的管线步骤
 - `cross_calibrate.py` — ASR↔VLM 交叉校准 (scene_map 已替代)
@@ -163,23 +171,34 @@ ASR 转写 → DeepSeek 生成 scene_map (人物+地点+事件) → VLM 只描�
 - `clean_data.py` 的 VLM 字幕部分 — VLM 不再输出硬字幕
 - BGE 全量语义搜索 — 分镜匹配改为 scene_map 结构化搜索
 
-## 分镜匹配策略 (v3 — 分层结构化匹配)
+## 分镜匹配策略 (v8.5 — 导演Agent)
 
-**核心理念**: 解说词匹配镜头 = 在 scene_map 中查询结构化字段，不再依赖 BGE 全量语义搜索。
+**核心理念**: LLM 是导演，将解说词拆解为叙事节拍（beats），运用六种导演手法，为每个节拍生成结构化 shot query，通过匹配引擎在 VLM 场景缓存中找到最优画面。
 
 ```
-解说词 → 提取人物/情绪关键词 → scene_map 过滤 (人物+事件+地点)
-→ VLM描述语义评分 (7类情绪关键词库) → BGE轻量精排 (仅top-20)
-→ ASR 精确时间锚定 (精确到秒)
+解说词 → DeepSeek 导演叙事分析 → beats (节拍) + shots (PRIMARY+SECONDARY)
+         │
+         ▼
+   lib/storyboard_match.py — 多维度评分引擎
+   剧集锚定 + 人物匹配 + 场景情绪冲突补偿 + 景别 + 地点模糊匹配 + 动作滑窗匹配
+         │
+         ▼
+   最优候选镜头 (PRIMARY score ≥ 40+)
 ```
+
+**关键模块**:
+- `handlers/storyboard.py` — 导演Agent 入口 + _fallback_storyboard_suggest
+- `lib/storyboard_match.py` — 纯函数匹配引擎 (独立可测试)
+- `lib/vlm_cache.py` — 46集 VLM 场景缓存懒加载
+- `lib/scene_map.py` — 场记Agent: scene_map + synopsis 生成
+- `handlers/prompts/director.py` — DIRECTOR_PROMPT 模板
 
 **优势**:
-- 从 31K 候选 → ~100 段 (人物过滤)
-- 天然场景段去重 (保证多样性)
-- 响应 0.1s (vs BGE 8s)
-- 不需要 10s 切片展开
-
-**BGE 仍保留用于**: 编剧台解说词生成/策划等语义推理场景 (非实时匹配)
+- 叙事驱动分镜 (非机械句子匹配)
+- PRIMARY+SECONDARY 主辅镜头层次
+- scene_map mood 情绪冲突补偿 (VLM 采样偏差容错)
+- 论证式解说词识别 (argument beat 自动拆解)
+- 第一句锚定 ASR 台词定位 (dialogue_match, 0ms 延迟)
 
 ## 依赖
 
@@ -197,6 +216,7 @@ ASR 转写 → DeepSeek 生成 scene_map (人物+地点+事件) → VLM 只描�
 |------|------|------|
 | `都挺好/semantic_embeddings.npy` | 87MB | BGE 嵌入 (29,797 × 768) |
 | `都挺好/semantic_metas.json` | 7MB | 索引元数据 (VLM描述 + ASR) |
-| `都挺好/sources/epN/scene_map.json` | ~3KB/集 | DeepSeek 场景-人物-时间映射 |
-| `都挺好/sources/epN/vlm_seg_cache_v2.json` | ~4KB/集 | VLM 场景段描述 (10-25段/集) |
-| `都挺好/sources/epN/vlm_analysis_sliced.json` | ~70KB/集 | VLM 描述按10s展开 (BGE索引用) |
+| `都挺好/sources/epN/scene_map.json` | ~3KB/集 | 场记Agent: 场景-人物-事件-情绪-时间映射 |
+| `都挺好/sources/epN/vlm_seg_cache_v3.json` | ~10KB/集 | VLM 画面分析 (25段/集, mood锚定) |
+| `都挺好/sources/epN/ep_synopsis.json` | ~500B/集 | DeepSeek 剧情概要 |
+| `都挺好/sources/epN/asr_result.json` | ~70KB/集 | faster-whisper ASR 转写 |
