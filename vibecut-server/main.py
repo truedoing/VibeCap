@@ -58,6 +58,10 @@ async def lifespan(app: FastAPI):
 
     print(f"[init] project={project_name} (type={project_type})")
 
+    # ── 初始化 VLM 缓存 ──
+    from lib.vlm_cache import set_project_dir
+    set_project_dir(PROJECT_DIR)
+
     # ── 加载语义索引 ──
     if project_type == "drama":
         if INDEX_NPY.exists() and INDEX_META.exists():
@@ -544,7 +548,7 @@ async def api_dialogue_match(request: Request):
 
 @app.post("/storyboard_suggest")
 async def api_storyboard_suggest(request: Request):
-    from handlers.dialogue import storyboard_suggest
+    from handlers.storyboard import storyboard_suggest
     data = await request.json()
     return storyboard_suggest(
         data.get("narration", ""),
@@ -558,14 +562,14 @@ async def api_storyboard_suggest(request: Request):
 
 @app.post("/script/analyze_transcript")
 async def api_analyze_transcript(request: Request):
-    from handlers.dialogue import analyze_transcript
+    from handlers.storyboard import analyze_transcript
     data = await request.json()
     return analyze_transcript(data.get("transcript", ""))
 
 
 @app.post("/script/generate_from_outline")
 async def api_generate_from_outline(request: Request):
-    from handlers.dialogue import generate_from_outline
+    from handlers.storyboard import generate_from_outline
     data = await request.json()
     return generate_from_outline(
         data.get("topic", ""),
