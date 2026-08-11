@@ -1,0 +1,616 @@
+{
+  "1": {
+    "scene_map_index": 1,
+    "start": 150,
+    "end": 240,
+    "visual_summary": "客厅内，苏明哲与吴非坐在沙发上，神情严肃地对谈，气氛紧张。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "紧张严肃",
+    "intensity": 4,
+    "lighting": "暖调",
+    "actions": [
+      "对坐交谈",
+      "神情凝重"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1576,
+      "completion_tokens": 653,
+      "total_tokens": 2229
+    },
+    "_chars": [
+      "苏明哲",
+      "吴非"
+    ]
+  },
+  "2": {
+    "scene_map_index": 2,
+    "start": 240,
+    "end": 300,
+    "visual_summary": "家庭场景中，衣着棕色的女子神情焦虑地说话；办公室场景中，衣着深色西装的女子正接听电话，表情凝重。两处都流露出面对困境的无助与急切。",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "焦虑无助",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "说话",
+      "接电话"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1553,
+      "completion_tokens": 567,
+      "total_tokens": 2120
+    },
+    "_chars": []
+  },
+  "3": {
+    "scene_map_index": 3,
+    "start": 300,
+    "end": 390,
+    "visual_summary": "家庭场景中，衣着棕色的吴非低头焦虑地看着手机。办公室场景中，衣着深色西装的苏明哲正在严肃地打电话。两处场景结合事件，暗示着因吴非通知苏明成去闹而即将引发的夫妻争吵。",
+    "shot_size": "近景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "愤怒",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "吴非低头看手机",
+      "苏明哲打电话"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1570,
+      "completion_tokens": 798,
+      "total_tokens": 2368
+    },
+    "_chars": [
+      "苏明哲",
+      "苏明成",
+      "吴非"
+    ]
+  },
+  "4": {
+    "scene_map_index": 4,
+    "start": 390,
+    "end": 450,
+    "visual_summary": "苏大强穿深格纹衫坐沙发焦虑看手机；另一场景中，苏大强穿深棕外套给穿紫外套的小蔡整理围巾，小蔡笑意盈盈，贴合准备领证拍婚纱照的期待氛围",
+    "shot_size": "中景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "期待",
+    "intensity": 2,
+    "lighting": "暖调",
+    "actions": [
+      "坐沙发上双手交握持手机",
+      "为另一人整理围巾"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1580,
+      "completion_tokens": 927,
+      "total_tokens": 2507
+    },
+    "_chars": [
+      "苏大强",
+      "小蔡"
+    ]
+  },
+  "6": {
+    "scene_map_index": 6,
+    "start": 570,
+    "end": 660,
+    "visual_summary": "身着深棕外套的苏大强在室内与黑外套的苏明玉交谈，苏明玉神情平静克制，二人近距离互动，整体氛围冷静",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "克制冷静",
+    "intensity": 3,
+    "lighting": "自然光",
+    "actions": [
+      "苏大强开口交谈",
+      "苏明玉平视倾听回应"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1518,
+      "completion_tokens": 724,
+      "total_tokens": 2242
+    },
+    "_chars": [
+      "苏大强",
+      "苏明玉"
+    ]
+  },
+  "7": {
+    "scene_map_index": 7,
+    "start": 660,
+    "end": 810,
+    "visual_summary": "紫衣短发女性正在说话，神情认真；黑衣长发女性站在木门前聆听，表情平静克制。",
+    "shot_size": "近景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "冷静克制，暗藏锋芒",
+    "intensity": 3,
+    "lighting": "自然光",
+    "actions": [
+      "说话",
+      "聆听"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1556,
+      "completion_tokens": 371,
+      "total_tokens": 1927
+    },
+    "_chars": []
+  },
+  "8": {
+    "scene_map_index": 8,
+    "start": 810,
+    "end": 900,
+    "visual_summary": "苏大强身穿棕色毛领外套，表情严肃凝重，正面朝向另一位背对镜头的男子。另一画面中，紫衣短发女子（苏明玉）神情认真地在说话。整体氛围紧绷。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "压抑的愤怒",
+    "intensity": 3,
+    "lighting": "自然光",
+    "actions": [
+      "凝视",
+      "说话"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1549,
+      "completion_tokens": 711,
+      "total_tokens": 2260
+    },
+    "_chars": [
+      "苏大强",
+      "苏明玉"
+    ]
+  },
+  "9": {
+    "scene_map_index": 9,
+    "start": 900,
+    "end": 990,
+    "visual_summary": "苏大强身穿棕色毛领外套，坐在沙发上表情凝重，似乎正在严肃对话。另一空镜画面展示昏暗灯光下的客厅，茶具与书法作品“家和万事兴”映衬出家庭关系的疏离与紧张。",
+    "shot_size": "近景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "绝望凝重",
+    "intensity": 5,
+    "lighting": "暗调",
+    "actions": [
+      "说话",
+      "凝视"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1573,
+      "completion_tokens": 473,
+      "total_tokens": 2046
+    },
+    "_chars": [
+      "苏大强"
+    ]
+  },
+  "10": {
+    "scene_map_index": 10,
+    "start": 990,
+    "end": 1080,
+    "visual_summary": "吴非坐在餐桌旁打电话，表情凝重，似乎正在告知苏明玉父亲的情况，背景中孩子在玩耍，家中氛围略显沉重。",
+    "shot_size": "中景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "反思",
+    "intensity": 3,
+    "lighting": "暖调",
+    "actions": [
+      "打电话",
+      "聆听"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1574,
+      "completion_tokens": 1150,
+      "total_tokens": 2724
+    },
+    "_chars": [
+      "苏明玉",
+      "吴非"
+    ]
+  },
+  "11": {
+    "scene_map_index": 11,
+    "start": 1080,
+    "end": 1230,
+    "visual_summary": "三人围坐在木桌前，中间男子手托脸颊，似在聆听或思索；左侧黑衣女子看向右侧年长男士，似在对话。",
+    "shot_size": "全景",
+    "composition": "三人",
+    "angle": "平视",
+    "emotional_tone": "平静凝重",
+    "intensity": 2,
+    "lighting": "自然光",
+    "actions": [
+      "聆听",
+      "交谈"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1557,
+      "completion_tokens": 657,
+      "total_tokens": 2214
+    },
+    "_chars": []
+  },
+  "12": {
+    "scene_map_index": 12,
+    "start": 1230,
+    "end": 1320,
+    "visual_summary": "苏明哲（深蓝色毛衣）坐在木桌前，手托下巴，神情严肃略带尴尬地聆听。背景有饮水机和书法作品，呈现家居环境。",
+    "shot_size": "近景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "愧疚与严肃",
+    "intensity": 3,
+    "lighting": "自然光",
+    "actions": [
+      "聆听",
+      "表情略显严肃"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1550,
+      "completion_tokens": 547,
+      "total_tokens": 2097
+    },
+    "_chars": [
+      "苏明哲"
+    ]
+  },
+  "13": {
+    "scene_map_index": 13,
+    "start": 1320,
+    "end": 1440,
+    "visual_summary": "苏大强穿深绿色马甲，独坐木桌旁，神情略带沉思，桌上有红色酒瓶和绿植，背景为百叶窗。",
+    "shot_size": "中景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "轻松闲适",
+    "intensity": 3,
+    "lighting": "自然光",
+    "actions": [
+      "坐着",
+      "低头思索"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1556,
+      "completion_tokens": 482,
+      "total_tokens": 2038
+    },
+    "_chars": [
+      "苏大强"
+    ]
+  },
+  "14": {
+    "scene_map_index": 14,
+    "start": 1440,
+    "end": 1560,
+    "visual_summary": "苏大强穿深绿马甲坐于餐桌旁，手持筷子神情低落倾诉过往；老聂戴眼镜着棕色格纹外套，坐姿倾听并出言劝解。",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "低落沉郁",
+    "intensity": 3,
+    "lighting": "暖调",
+    "actions": [
+      "手持筷子倾诉",
+      "双手交握劝解"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1562,
+      "completion_tokens": 659,
+      "total_tokens": 2221
+    },
+    "_chars": [
+      "苏大强",
+      "老聂"
+    ]
+  },
+  "15": {
+    "scene_map_index": 15,
+    "start": 1560,
+    "end": 1680,
+    "visual_summary": "苏大强坐于餐桌旁，身穿深绿马甲，手持筷子，神情从低落转为激动，似乎在争论起诉子女的事，但画面中未见老聂。",
+    "shot_size": "近景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "愤怒激动",
+    "intensity": 4,
+    "lighting": "暖调",
+    "actions": [
+      "手持筷子",
+      "说话"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1565,
+      "completion_tokens": 1158,
+      "total_tokens": 2723
+    },
+    "_chars": [
+      "苏大强",
+      "老聂"
+    ]
+  },
+  "16": {
+    "scene_map_index": 16,
+    "start": 1680,
+    "end": 1800,
+    "visual_summary": "苏大强身穿深绿马甲，手持筷子，神情激动，坐在餐桌旁，背景有家具和雕塑。",
+    "shot_size": "近景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "愤怒不满",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "手持筷子",
+      "表情激动"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1568,
+      "completion_tokens": 1083,
+      "total_tokens": 2651
+    },
+    "_chars": [
+      "苏大强"
+    ]
+  },
+  "5": {
+    "scene_map_index": 5,
+    "start": 450,
+    "end": 570,
+    "visual_summary": "苏明成穿浅灰外套情绪激动，手持物品（或刀）并用手指着苏大强（深棕外套）大声威胁，苏大强面露惧色后退，小蔡（紫外套）已躲回房间。",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "愤怒对抗",
+    "intensity": 5,
+    "lighting": "自然光",
+    "actions": [
+      "苏明成持物（或刀）并手指指责",
+      "苏大强害怕后退"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1565,
+      "completion_tokens": 612,
+      "total_tokens": 2177
+    },
+    "_chars": [
+      "苏大强",
+      "苏明成",
+      "小蔡"
+    ]
+  },
+  "17": {
+    "scene_map_index": 17,
+    "start": 1800,
+    "end": 1980,
+    "visual_summary": "穿深绿马甲的苏大强背手走过厨房，径直走向房门，神情决绝疏离",
+    "shot_size": "全景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "决绝疏离",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "背手行走",
+      "走向房门"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1523,
+      "completion_tokens": 397,
+      "total_tokens": 1920
+    },
+    "_chars": [
+      "苏大强"
+    ]
+  },
+  "18": {
+    "scene_map_index": 18,
+    "start": 1980,
+    "end": 2070,
+    "visual_summary": "苏明成手持纸张向苏明玉道歉，苏明玉表情严肃站立，两人在办公室内对峙，气氛紧张。",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "紧张对峙",
+    "intensity": 5,
+    "lighting": "自然光",
+    "actions": [
+      "苏明成手持纸张说话",
+      "苏明玉严肃站立"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1533,
+      "completion_tokens": 1442,
+      "total_tokens": 2975
+    },
+    "_chars": [
+      "苏明成",
+      "苏明玉"
+    ]
+  },
+  "19": {
+    "scene_map_index": 19,
+    "start": 2070,
+    "end": 2130,
+    "visual_summary": "苏明玉在办公室内眉头紧锁，焦躁地拿着手机快速通话，联系家政公司寻找父亲。朱丽在一旁面露担忧，身体微微前倾。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "焦虑急切",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "苏明玉手持手机快速说话",
+      "朱丽向前一步显担忧"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1535,
+      "completion_tokens": 590,
+      "total_tokens": 2125
+    },
+    "_chars": [
+      "苏明玉",
+      "朱丽"
+    ]
+  },
+  "20": {
+    "scene_map_index": 20,
+    "start": 2130,
+    "end": 2280,
+    "visual_summary": "小蔡手持碗盘立于门内，神色局促。门外，苏大强的背影微微前倾，似在等待或倾诉，两人之间隔着门槛，气氛凝滞。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "俯拍",
+    "emotional_tone": "失落、被拒",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "小蔡拿着碗静止不动",
+      "苏大强背身站立，头部微低"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1536,
+      "completion_tokens": 527,
+      "total_tokens": 2063
+    },
+    "_chars": [
+      "苏大强",
+      "小蔡"
+    ]
+  },
+  "21": {
+    "scene_map_index": 21,
+    "start": 2280,
+    "end": 2340,
+    "visual_summary": "苏大强身着黑衣，站在小蔡家门口，神情愤怒痛苦，背景为传统巷弄，气氛紧张。",
+    "shot_size": "特写",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "愤怒激动",
+    "intensity": 5,
+    "lighting": "自然光",
+    "actions": [
+      "愤怒凝视",
+      "闭眼痛苦"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1544,
+      "completion_tokens": 1412,
+      "total_tokens": 2956
+    },
+    "_chars": [
+      "苏大强",
+      "小蔡"
+    ]
+  },
+  "22": {
+    "scene_map_index": 22,
+    "start": 2340,
+    "end": 2430,
+    "visual_summary": "苏明玉身着粉色毛衣，在传统巷弄中质问小蔡，小蔡穿牛仔外套神情否认，两人对峙气氛紧张。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "紧张对峙",
+    "intensity": 4,
+    "lighting": "冷调",
+    "actions": [
+      "苏明玉质问",
+      "小蔡否认"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1527,
+      "completion_tokens": 1604,
+      "total_tokens": 3131
+    },
+    "_chars": [
+      "苏明玉",
+      "小蔡"
+    ]
+  },
+  "23": {
+    "scene_map_index": 23,
+    "start": 2430,
+    "end": 2520,
+    "visual_summary": "苏明玉面色苍白握着手机，在办公室焦急翻找文件，苏明成和朱丽站在一旁神情紧张，气氛凝重。",
+    "shot_size": "中景",
+    "composition": "三人",
+    "angle": "平视",
+    "emotional_tone": "恐慌焦急",
+    "intensity": 5,
+    "lighting": "冷调",
+    "actions": [
+      "苏明玉急促翻找抽屉",
+      "苏明成眉头紧锁",
+      "朱丽不安地望向苏明玉"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1538,
+      "completion_tokens": 452,
+      "total_tokens": 1990
+    },
+    "_chars": [
+      "苏明成",
+      "苏明玉",
+      "朱丽"
+    ]
+  },
+  "24": {
+    "scene_map_index": 24,
+    "start": 2520,
+    "end": 2610,
+    "visual_summary": "苏大强衣衫不整、胡子拉碴，茫然走在昏暗无人的陌生街道，背影佝偻。",
+    "shot_size": "远景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "孤独/落寞",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "茫然四顾",
+      "低头缓行"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1524,
+      "completion_tokens": 529,
+      "total_tokens": 2053
+    },
+    "_chars": [
+      "苏大强"
+    ]
+  },
+  "0": {
+    "scene_map_index": 0,
+    "start": 60,
+    "end": 150,
+    "visual_summary": "苏明哲穿格纹衬衫，眉头紧皱神情激动，与吴非在客厅沙发对峙，气氛紧绷。",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "激动争执",
+    "intensity": 4,
+    "lighting": "暖调",
+    "actions": [
+      "苏明哲紧握双手、面露不悦",
+      "吴非面向苏明哲对峙"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1501,
+      "completion_tokens": 857,
+      "total_tokens": 2358
+    },
+    "_chars": [
+      "苏明哲",
+      "吴非"
+    ]
+  }
+}
