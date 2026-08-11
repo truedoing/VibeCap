@@ -550,6 +550,9 @@ async def api_storyboard_suggest(request: Request):
         data.get("narration", ""),
         segment_context=data.get("segment_context"),
         cover=data.get("cover", ""),
+        prev_highlight=data.get("prev_highlight", ""),
+        next_highlight=data.get("next_highlight", ""),
+        focus_episodes=data.get("focus_episodes", []),
     )
 
 

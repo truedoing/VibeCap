@@ -183,47 +183,122 @@ def _format_chat_reply(results, query):
 
 
 # ── POST /storyboard_suggest ──
-# v4: 导演Agent — LLM 叙事理解 + 结构化分镜查询 + v3数据匹配
+# v8: 导演Agent — 叙事节拍拆解 + 主辅镜头(PRIMARY+SECONDARY)
 
-# 导演Agent prompt
+# 导演Agent prompt v8
 DIRECTOR_PROMPT = """你是电视剧《都挺好》的分镜导演。根据解说词策划一个分镜序列，用原剧场景来匹配。
 
 人物推断规则（按优先级）：
-1. 封面/标题中出现的角色名 = 主角，权重最高（如"苏明成/炸弹视角" → 主角确定是苏明成）
+1. 封面/标题中出现的角色名 = 主角，权重最高
 2. 上下文解说词中出现的角色名 = 辅助信息
 3. 解说词本身描述的行为特征 → 对照角色出场统计推断
 4. 角色列表 + 出场次数: {KNOWN_CHARS}
 5. 推断的主角必须填写在 main_char 字段中
 
 可选景别：特写、近景、中景、全景、远景。
-可选光线：自然光、暖调、冷调、暗调、高调。
 
-任务：
-1. 确定主角（基于封面 > 上下文 > 行为推断）
-2. 设计 3 个分镜，每个分镜说明叙事目的
-3. 为每个分镜输出结构化的素材查询条件
+{ANCHOR_INFO}
 
-输出 JSON（严格格式，不要 markdown）：
+★★ 任务 —— 分三步 ★★
+
+第1步：叙事节拍拆解
+  节拍类型:
+    action    — 动作/事件（如"拍桌""打架"）→ 必须有原剧画面
+    emotion   — 情绪/表情（如"愤怒""落寞"）→ 需要表情画面
+    context   — 评述/解释 → 不生成分镜，仅留白
+    punchline — 金句/主题句 → 需情绪强烈画面
+
+第2步：导演手法运用 (v8.1)
+  根据解说词的叙事特点，在适当位置运用以下导演手法。这些手法让画面层次更丰富。
+  不要为了用而用——只在解说结构自然需要时才使用，一个节拍至多一个手法。
+
+  ★ 六种导演手法:
+
+  1. REACTION 反应镜头 — 人物情绪/反应特写（面部、眼神、手部细节）
+     用途: 外化内心活动，让观众"看到"心理状态
+     时机: 内心戏、"表面X实际Y"的反差时刻
+     例: "表面认真，实际只记住八个字" → PRIMARY电话中景 + REACTION眼神失焦
+
+  2. FLASHBACK 闪回 — 插入过去的关键画面（1-2秒即可）
+     用途: 将"过去事件"与"当前情绪"在时间线上并置
+     时机: 解说明确提到过去事件（如"母亲去世""上次打架"）
+     特点: prefer_episodes可跳出当前标的剧集
+     例: "母亲去世后位置无法取代" → FLASHBACK闪回母亲遗像
+
+  3. CONTRAST 对比并置 — 同时呈现对立状态的两组画面
+     用途: 制造戏剧张力，呈现"表面vs内心"或"一方vs另一方"
+     时机: 解说描述矛盾关系、强烈反差
+     特点: characters必须包含对比双方人物
+     例: "苏大强谈婚论嫁，苏明成视为背叛" → CONTRAST苏大强高兴 vs 苏明成阴沉
+
+  4. CUTAWAY 空镜留白 — 环境/物品/氛围画面（不需要人物）
+     用途: 给观众情绪沉淀的呼吸空间
+     时机: 解说进入评述/升华段落，情感需要沉淀
+     特点: 不进行画面匹配，标注建议留给剪辑师（如"空椅子""母亲遗像""窗外雨景"）
+
+  5. ARC 情绪递进 — 同一情绪由弱到强跨多个节拍递进
+     用途: 让情绪爆发有铺垫，而非突兀出现
+     实现: 相邻PRIMARY的intensity_min从低到高自然递进
+     例: "表面平静"(int1) → "眼神变冷"(int3) → "拍桌怒吼"(int5)
+
+  6. CROSS 交叉剪辑 — 提示两个场景可交替使用
+     用途: "同一时刻，不同空间"制造紧张感和信息密度
+     时机: 解说同时描述两个平行事件（如"苏明成打电话时，苏大强正在和保姆谈笑"）
+     实现: 在note字段标注"CROSS-可交叉剪辑"，提示剪辑师不需要单独生成镜头
+
+输出 JSON（严格格式）：
 {{
-  "main_char": "主角名（必须填，从角色列表选）",
+  "main_char": "主角名（从角色列表选）",
+  "beats": [
+    {{"index": 0, "type": "context", "text": "节拍描述(≤15字)", "has_visual": false}},
+    {{"index": 1, "type": "action",  "text": "节拍描述(≤15字)", "has_visual": true, "prefer_ep": 41}},
+    ...
+  ],
   "shots": [
     {{
-      "purpose": "镜头1的叙事目的（≤12字）",
-      "characters": ["人物名"],
-      "shot_size": "景别",
-      "emotional_tone": ["情绪标签"],
-      "intensity_min": 强度下限1-5,
-      "location_hint": "场景提示",
-      "action_hint": "动作提示"
+      "beat_index": 1,
+      "director_technique": "REACTION",
+      "technique_hint": "给剪辑师的操作建议(≤30字)",
+      "primary": {{
+        "purpose": "核心画面描述(≤12字)",
+        "priority": "KEY",
+        "characters": ["人物名"],
+        "shot_size": "景别",
+        "emotional_tone": ["情绪标签"],
+        "intensity_min": 强度1-5,
+        "location_hint": "场景提示",
+        "action_hint": "动作提示",
+        "prefer_episodes": [推荐剧集],
+        "match_type": "narrative 或 character"
+      }},
+      "secondary": [
+        {{
+          "purpose": "辅助画面描述(≤12字)",
+          "shot_role": "REACTION or FLASHBACK or CONTRAST",
+          "characters": ["人物名"],
+          "shot_size": "特写",
+          "emotional_tone": ["情绪标签"],
+          "intensity_min": 强度1-5,
+          "action_hint": "表情/动作提示",
+          "prefer_episodes": [推荐剧集],
+          "match_type": "character"
+        }}
+      ]
     }}
   ]
 }}
 
-规则：
-- 人物必须从角色列表中选择，不得超过已知范围
-- emotional_tone 从常见情绪词中选择（对峙/愤怒/压抑/低落/争执/温馨/紧张/冲突/激动/冷漠/冲动/兴奋/无奈/悲痛/严肃等）
-- intensity_min 1=平静 3=有明显情绪 5=激烈爆发
-- 3个分镜要有叙事递进关系（建立→发展→高潮或揭示）"""
+规则（精简）：
+- 人物必须从角色列表中选择；characters填该镜头需出现的人物
+- emotional_tone从常见情绪词中选择；intensity_min 1=平静 5=激烈
+- match_type: narrative=叙事性, character=表现性
+- context节拍只记录beats不生成shots
+- CONTRAST的characters必须包含对比双方
+- FLASHBACK的prefer_episodes可跳出当前标的剧集
+- CUTAWAY不匹配画面，留空给剪辑师
+- CROSS在note中标注，不生成单独镜头
+
+"""
 
 # 结构化匹配引擎缓存
 _vlm_cache = None  # {ep: {scene_idx: vlm_entry}}
@@ -285,8 +360,15 @@ def _load_vlm_cache():
     return _vlm_cache
 
 
-def _match_shot_query(query: dict, num: int = 5):
-    """给定一个分镜查询，从 v3 缓存中匹配最优场景段"""
+def _match_shot_query(query: dict, num: int = 5, used_scene_keys: set = None,
+                      main_char: str = "", focus_eps: set = None):
+    """给定一个分镜查询，从 v3 缓存中匹配最优场景段
+
+    used_scene_keys: 已在前置分镜中使用的场景键集合，用于跨镜去重
+    main_char: 推断的主角名，用于验证 visual_summary 是否真正描述该人物
+    focus_eps: 锚定的剧集号集合，这些剧集的场景优先匹配
+        v8.4: focus_eps 支持多层权重 — 可以是 set(int) 或 list of (weight, set(int))
+    """
     cache = _load_vlm_cache()
     scored = []
 
@@ -296,52 +378,50 @@ def _match_shot_query(query: dict, num: int = 5):
     target_shot = query.get("shot_size", "")
     location_hint = query.get("location_hint", "")
     action_hint = query.get("action_hint", "")
+    used = used_scene_keys or set()
+    focus = focus_eps or set()
+
+    # v8.4: 兼容旧版 set 和新版 list of (weight, set) 格式
+    focus_layers = []
+    if isinstance(focus, list):
+        focus_layers = focus
+    elif focus:
+        focus_layers = [(10, focus)]  # 旧版兼容: 统一+10
 
     for ep, ep_data in cache.items():
         for idx, s in ep_data.items():
             score = 0
+            scene_key = f"{s['ep']}_{s['scene_id']}"
             desc = s["visual_summary"] + " " + s["event"] + " " + s["location"]
 
-            # 1. 人物精确匹配 (核心权重)
+            # 0. 跨镜去重
+            if scene_key in used:
+                score -= 30
+
+            # 0.5 剧集锚定: 三层权重
+            # L1: 承上启下(上下文直接关联的原剧) = +15, 强约束
+            # L2: 标的剧集(episode_marker) = +5, 中等约束
+            # L3: 扩展邻近集(±2) = +2, 弱约束
+            if focus_layers:
+                for ep_w, eps_set in focus_layers:
+                    if s["ep"] in eps_set:
+                        score += ep_w
+                        break
+
+            # 1. 人物精确匹配
             chars = set(s["characters"])
             if target_chars:
                 overlap = chars & target_chars
                 if overlap:
                     score += len(overlap) * 15
                 else:
-                    score -= 10  # 惩罚不包含目标人物的场景
+                    score -= 10
 
-            # 2. 情绪匹配
-            s_emo = s["emotional_tone"]
-            for te in target_emotions:
-                if te in s_emo:
-                    score += 8
-
-            # 3. 强度匹配
-            if s["intensity"] >= min_intensity:
-                score += (s["intensity"] - min_intensity + 1) * 3
-
-            # 4. 景别匹配
-            if target_shot and s["shot_size"] == target_shot:
-                score += 6
-            elif target_shot:
-                # 近似景别也给部分分
-                size_order = {"特写": 0, "近景": 1, "中景": 2, "全景": 3, "远景": 4}
-                if s["shot_size"] in size_order and target_shot in size_order:
-                    dist = abs(size_order[s["shot_size"]] - size_order[target_shot])
-                    score += max(0, 6 - dist * 3)
-
-            # 5. 地点提示匹配
-            if location_hint and location_hint in s["location"]:
-                score += 4
-
-            # 6. 动作提示匹配
-            if action_hint:
-                acts_str = " ".join(s["actions"]) if isinstance(s["actions"], list) else str(s["actions"])
-                if action_hint in acts_str:
-                    score += 4
-
-            # 7. VLM 视觉描述丰富度
+            # 1.5 画面主体验证
+            if main_char and main_char in s["visual_summary"]:
+                score += 5
+            elif main_char and main_char in chars:
+                score -= 4
             if len(s["visual_summary"]) > 30:
                 score += 2
 
@@ -360,33 +440,73 @@ def _match_shot_query(query: dict, num: int = 5):
     return results
 
 
-def director_agent(narration: str, segment_context: dict = None, cover: str = "", num_shots: int = 3) -> dict:
-    """导演Agent — LLM叙事理解 → 分镜设计 → 结构化匹配 + 人物交叉校验"""
+def director_agent(narration: str, segment_context: dict = None, cover: str = "",
+                   num_shots: int = 3, focus_episodes: list = []) -> dict:
+    """导演Agent v8 — 叙事节拍拆解 + 主辅镜头(PRIMARY+SECONDARY)
+
+    focus_episodes: segments.json的episode_marker提取的解说标的剧集
+    """
     if not narration or not narration.strip():
         return {"shots": []}
 
-    # 加载缓存 + 角色统计
     _ = _load_vlm_cache()
     known = sorted(_char_counts.keys(), key=lambda c: -_char_counts[c])
     known_str = ", ".join(f"{c}({_char_counts[c]}场)" for c in known)
 
-    # Step 1: LLM 导演推理 — 注入角色统计 + cover 上下文
+    # v8.4: 三层剧集权重 (保持原始上下文顺序, 不排序!)
+    focus_eps_list = list(focus_episodes) if focus_episodes else []
+    focus_eps = set(focus_eps_list)
+    bridge_eps = set()
+    if focus_eps_list:
+        # 前两个 = 承上启下(前后段直接关联的原剧)
+        if len(focus_eps_list) >= 2:
+            bridge_eps = {focus_eps_list[0], focus_eps_list[1]}
+            print(f"[director] 🎯 承上启下: EP{focus_eps_list[0]}↔EP{focus_eps_list[1]} (权重+15)")
+        print(f"[director]   标的集: {focus_eps_list} (权重+5)")
+        # 加载剧情概要
+        synopsis_text = ""
+        for ep in focus_eps_list:
+            syn_file = PROJECT_DIR / "sources" / f"ep{ep}" / "ep_synopsis.json"
+            if syn_file.exists():
+                try:
+                    syn = json.load(open(syn_file)).get("synopsis", "")
+                    if syn:
+                        synopsis_text += f"\n★ EP{ep} 剧情概要: {syn}\n"
+                        print(f"[director]   📖 EP{ep} 概要 ({len(syn)}字)")
+                except Exception:
+                    pass
+
     ctx_text = ""
     if cover:
         ctx_text += f"封面/标题: {cover}\n"
+    if focus_eps:
+        ctx_text += f"★ 解说标的剧集: {focus_eps_list}\n"
+        if len(focus_eps_list) >= 2:
+            ctx_text += (f"  ★★★ 短解说词桥接规则 (必须遵守) ★★★\n"
+                        f"    这段解说词桥接上文原剧EP{focus_eps_list[0]}和下文原剧EP{focus_eps_list[1]}。\n"
+                        f"    镜1 prefer_episodes={focus_eps_list[0]}(上文场景), 镜2 prefer_episodes={focus_eps_list[1]}(下文场景)。\n"
+                        f"    不允许把两个分镜都锚定到同一个集!\n")
+    if synopsis_text:
+        ctx_text += f"\n★★ 标的剧集剧情概要 ★★{synopsis_text}\n"
     if segment_context and segment_context.get("sentences"):
-        ctx_text += "上下文解说:\n" + "\n".join(
-            f"- {s}" for s in segment_context["sentences"]
-        ) + "\n"
+        ctx_text += "上下文解说:\n" + "\n".join(f"- {s}" for s in segment_context["sentences"]) + "\n"
     ctx_text += f"\n角色出场统计（46集总计）: {known_str}"
 
     user_prompt = f"{ctx_text}\n当前解说词：{narration}\n\n请推断主角并设计分镜序列，输出JSON。"
 
+    anchor_info = ""
+    if focus_eps:
+        anchor_info = (f"★ 解说标的剧集: {', '.join(f'EP{ep}' for ep in sorted(focus_eps))}\n"
+                       f"  优先从这些剧集中选画面。仅情绪/表情镜头可灵活选择。")
     formatted_prompt = DIRECTOR_PROMPT.replace("{KNOWN_CHARS}", known_str)
+    formatted_prompt = formatted_prompt.replace("{ANCHOR_INFO}", anchor_info if anchor_info else
+                                                 "未获取到锚定信息，从全剧集中搜索匹配。")
+    if not anchor_info:
+        formatted_prompt = formatted_prompt.replace("{ANCHOR_INFO}\n", "")
 
     llm_result = call_deepseek_json(
         formatted_prompt, user_prompt,
-        temperature=0.5, max_tokens=1200, timeout=30, label="director_agent",
+        temperature=0.5, max_tokens=2000, timeout=30, label="director_agent",
     )
 
     if not llm_result.get("ok"):
@@ -406,15 +526,19 @@ def director_agent(narration: str, segment_context: dict = None, cover: str = ""
         elif not main_char:
             print(f"[director] 📌 封面人物 {definitive} 确定为主角")
         main_char = definitive
-        # 修正所有分镜的 characters
-        for spec in shots_spec:
+        # v8: 修正 primary + secondary 的 characters
+        def _fix_chars(spec):
             chars = spec.get("characters", [])
-            # 替换错误推断的人物
             spec["characters"] = [definitive if ch != definitive and ch in _char_counts else ch for ch in chars]
             if definitive not in spec["characters"]:
                 spec["characters"] = [definitive] + spec["characters"][:1]
 
-    # 校验 main_char 是否在已知角色中
+        for shot_entry in shots_spec:
+            if "primary" in shot_entry:
+                _fix_chars(shot_entry["primary"])
+                for sec in shot_entry.get("secondary", []):
+                    _fix_chars(sec)
+
     if main_char and main_char not in _char_counts:
         print(f"[director] ⚠️ 主角 {main_char} 不在已知角色中!")
         main_char = ""
@@ -422,66 +546,295 @@ def director_agent(narration: str, segment_context: dict = None, cover: str = ""
     if not shots_spec:
         return {"shots": [], "fallback": True, "error": "LLM未返回有效分镜"}
 
-    # Step 3: 逐镜结构化匹配 (无结果时放宽限制重试)
+    # ── v8.2: Agent推理过程 ──
+    reasoning = {
+        "anchor": {},
+        "beats_summary": {},
+        "shots_matching": []
+    }
+
+    # 锚定分析
+    if focus_eps:
+        eps_with_synopsis = []
+        for ep in sorted(focus_eps):
+            syn_file = PROJECT_DIR / "sources" / f"ep{ep}" / "ep_synopsis.json"
+            has_syn = "✅" if syn_file.exists() else "❌"
+            eps_with_synopsis.append(f"EP{ep}(synopsis={has_syn})")
+        reasoning["anchor"] = {
+            "source": "segments.json episode_marker",
+            "focus_episodes": sorted(focus_eps),
+            "synopsis_loaded": eps_with_synopsis,
+            "method": "直接读取segments的episode_marker字段，不需要ASR关键词锚定",
+            "constraint": f"PRIMARY必须在标的剧集内匹配, SECONDARY/emotion可扩展到±3集"
+        }
+    else:
+        reasoning["anchor"] = {"source": "无episode_marker", "focus_episodes": [], "method": "全剧集搜索"}
+
+    # 提取beats (从LLM输出的data中)
+    beats = data.get("beats", [])
+
+    # 节拍分析
+    for b in beats:
+        b["has_visual"] = b.get("has_visual", b.get("type") != "context")
+    reasoning["beats_summary"] = {
+        "total": len(beats),
+        "visual": sum(1 for b in beats if b.get("has_visual")),
+        "context_skip": sum(1 for b in beats if b.get("type") == "context"),
+        "beats": [{"index": b.get("index", i), "type": b.get("type", "?"),
+                    "text": b.get("text", ""), "has_visual": b.get("has_visual", True)}
+                   for i, b in enumerate(beats)]
+    }
+
+    # 匹配细节 (收集完成后填充)
+
+    # Step 3: v8 主辅镜头匹配
+    def _make_candidates(clist):
+        if not clist: return []
+        return [{"ep": c["ep"], "start": c["start"], "end": c["end"],
+                 "visual_summary": c["visual_summary"][:120],
+                 "shot_size": c["shot_size"], "emotional_tone": c["emotional_tone"],
+                 "intensity": c["intensity"], "location": c["location"],
+                 "characters": c["characters"], "match_score": c["match_score"]}
+                for c in clist]
+
+    # v8.2: Agent推理过程 — 记录每个决策步骤
+    reasoning = {
+        "anchor": {},
+        "beats": [],
+        "shots_matching": [],
+        "statistics": {}
+    }
+
+    # 锚定分析
+    if focus_eps:
+        eps_detail = []
+        for ep in sorted(focus_eps):
+            syn_file = PROJECT_DIR / "sources" / f"ep{ep}" / "ep_synopsis.json"
+            eps_detail.append(f"EP{ep}(synopsis={'已加载' if syn_file.exists() else '未找到'})")
+        reasoning["anchor"] = {
+            "source": "segments.json episode_marker",
+            "focus_episodes": sorted(focus_eps),
+            "bridge_eps": sorted(bridge_eps) if bridge_eps else [],
+            "synopsis_status": eps_detail,
+            "method": "三层权重: 承上启下EP(+15) > 标的集(+5) > 邻近集(+2) > 全剧集(0)",
+            "constraint": "PRIMARY必须在标的剧集内, SECONDARY/emotion可扩展到邻近集"
+        }
+    else:
+        reasoning["anchor"] = {"source": "episode_marker缺失", "focus_episodes": [], "method": "全剧46集搜索"}
+
+    # 节拍分析
+    for i, b in enumerate(beats):
+        b["has_visual"] = b.get("has_visual", b.get("type") != "context")
+    reasoning["beats"] = [{
+        "index": b.get("index", i), "type": b.get("type", "?"),
+        "text": b.get("text", ""), "has_visual": b.get("has_visual", True)
+    } for i, b in enumerate(beats)]
+    n_visual = sum(1 for b in beats if b.get("has_visual"))
+    n_context = sum(1 for b in beats if b.get("type") == "context")
+    print(f"[director] 📐 叙事分析: {len(beats)}个节拍 ({n_visual}画面化, {n_context}解说留白) → {len(shots_spec)}组主镜")
+
     result_shots = []
-    for spec in shots_spec:
-        candidates = _match_shot_query(spec, num=5)
-        if not candidates:
-            relaxed = {**spec, "shot_size": "", "location_hint": ""}
-            candidates = _match_shot_query(relaxed, num=5)
-        result_shots.append({
-            "purpose": spec.get("purpose", ""),
-            "query": spec,
-            "candidates": [
-                {
-                    "ep": c["ep"],
-                    "start": c["start"],
-                    "end": c["end"],
-                    "visual_summary": c["visual_summary"][:120],
-                    "shot_size": c["shot_size"],
-                    "emotional_tone": c["emotional_tone"],
-                    "intensity": c["intensity"],
-                    "location": c["location"],
-                    "characters": c["characters"],
-                    "match_score": c["match_score"],
-                }
-                for c in candidates
+    used_scene_keys = set()
+    for i, shot_entry in enumerate(shots_spec):
+        primary_spec = shot_entry.get("primary", shot_entry)
+        secondary_specs = shot_entry.get("secondary", [])
+        beat_idx = shot_entry.get("beat_index", i)
+        technique = shot_entry.get("director_technique", "")
+
+        # ── PRIMARY 匹配 ──
+        pri_focus = set(focus_eps) if focus_eps else set()
+        pri_prefer = primary_spec.get("prefer_episodes", [])
+
+        # v8.4: 三层权重
+        # L1=承上启下(bridge_eps): 前两个标的剧集, 权重+15
+        # L2=标的集(focus_eps): 所有权重+5
+        # L3=邻近扩展(±3): 权重+2
+        bridge_layer = [(15, bridge_eps)] if bridge_eps else []
+        focus_layer = [(5, pri_focus)] if pri_focus else []
+        neighbor_eps = set()
+        if pri_focus:
+            for ep in list(pri_focus):
+                for d in [-3, -2, -1, 1, 2, 3]:
+                    n = ep + d
+                    if 1 <= n <= 46: neighbor_eps.add(n)
+        neighbor_layer = [(2, neighbor_eps)] if neighbor_eps else []
+        layered_focus = bridge_layer + focus_layer + neighbor_layer
+
+        pri_cands = _match_shot_query(primary_spec, num=5, used_scene_keys=used_scene_keys,
+                                       main_char=main_char, focus_eps=layered_focus if layered_focus else None)
+        relaxed_used = False
+        if not pri_cands:
+            relaxed = {**primary_spec, "shot_size": "", "location_hint": ""}
+            pri_cands = _match_shot_query(relaxed, num=5, used_scene_keys=used_scene_keys,
+                                           main_char=main_char, focus_eps=layered_focus if layered_focus else None)
+            relaxed_used = True
+
+        # v8.3: PRIMARY低分保护 — 标的集内最高分<35时, 自动扩展到邻近集(±5)
+        #       标的episode_marker可能漏标了该解说的关键场景, 或者VLM数据质量问题
+        if pri_cands and pri_cands[0].get("match_score", 0) < 35 and pri_focus:
+            expanded_focus = set(pri_focus)
+            for ep in list(pri_focus):
+                for d in [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]:
+                    n = ep + d
+                    if 1 <= n <= 46:
+                        expanded_focus.add(n)
+            expanded_cands = _match_shot_query(primary_spec, num=5, used_scene_keys=used_scene_keys,
+                                                main_char=main_char, focus_eps=expanded_focus)
+            if expanded_cands and expanded_cands[0].get("match_score", 0) > pri_cands[0].get("match_score", 0) + 5:
+                print(f"[director]   ⚡ 标的内低分(score={pri_cands[0]['match_score']})→扩展±5集, "
+                      f"EP{expanded_cands[0]['ep']} score={expanded_cands[0]['match_score']}")
+                pri_cands = expanded_cands
+                relaxed_used = True  # 标记为扩展搜索
+
+        global_fallback = False
+        if not pri_cands:
+            pri_cands = _match_shot_query(primary_spec, num=5, used_scene_keys=used_scene_keys,
+                                           main_char=main_char)
+            global_fallback = True
+
+        if pri_cands and primary_spec.get("priority", "KEY") == "KEY":
+            used_scene_keys.add(f"{pri_cands[0]['ep']}_{pri_cands[0]['scene_id']}")
+
+        purp = primary_spec.get("purpose", "")[:15]
+        print(f"[director] 拍{i+1} PRIMARY ({purp}) → "
+              f"EP{pri_cands[0]['ep']} [{pri_cands[0]['start']:.0f}s] "
+              f"(score={pri_cands[0]['match_score']})" if pri_cands else f"[director] 拍{i+1} PRIMARY ({purp}) → 无匹配")
+
+        # v8.2: 记录PRIMARY匹配推理
+        pri_reasoning = {
+            "beat_index": beat_idx,
+            "primary_purpose": primary_spec.get("purpose", ""),
+            "director_technique": technique,
+            "query": {
+                "characters": primary_spec.get("characters", []),
+                "shot_size": primary_spec.get("shot_size", ""),
+                "emotional_tone": primary_spec.get("emotional_tone", []),
+                "intensity_min": primary_spec.get("intensity_min", 1),
+                "location_hint": primary_spec.get("location_hint", ""),
+                "action_hint": primary_spec.get("action_hint", ""),
+                "match_type": primary_spec.get("match_type", ""),
+            },
+            "focus_eps": sorted(pri_focus) if pri_focus else [],
+            "search_strategy": ("全局回退" if global_fallback else ("放宽景别+场景" if relaxed_used else "标的集约束搜索")),
+            "top3_candidates": [
+                {"rank": j+1, "ep": c["ep"], "start": c["start"], "end": c["end"],
+                 "score": c["match_score"], "visual": c["visual_summary"][:80],
+                 "why": f"人物={c['characters']}, 情绪={c['emotional_tone']}, 强度={c['intensity']}, 地点={c['location']}"}
+                for j, c in enumerate((pri_cands or [])[:3])
             ],
+            "secondary_reasoning": [],
+        }
+
+        # ── SECONDARY 匹配 ──
+        sec_results = []
+        for sec_spec in secondary_specs:
+            sec_role = sec_spec.get("shot_role", "REACTION")
+            sec_prefer = sec_spec.get("prefer_episodes", [])
+
+            if sec_role == "FLASHBACK" and sec_prefer:
+                sec_focus = set(sec_prefer)
+            elif sec_role == "CONTRAST":
+                sec_focus = None
+            else:
+                sec_focus = set(pri_focus) if pri_focus else None
+                if sec_focus:
+                    for ep in list(sec_focus):
+                        for d in [-3, -2, -1, 1, 2, 3]:
+                            n = ep + d
+                            if 1 <= n <= 46: sec_focus.add(n)
+
+            sec_cands = _match_shot_query(sec_spec, num=3, used_scene_keys=set(),
+                                           main_char=main_char if sec_role != "CONTRAST" else "",
+                                           focus_eps=sec_focus)
+            if sec_cands:
+                print(f"[director]   +{sec_role} ({sec_spec.get('purpose','')[:12]}) → EP{sec_cands[0]['ep']} "
+                      f"(score={sec_cands[0]['match_score']})")
+
+            sec_reasoning = {
+                "role": sec_role,
+                "purpose": sec_spec.get("purpose", ""),
+                "search_scope": (f"标的集±3集" if sec_focus else ("指定集EP{sorted(sec_prefer)}" if sec_prefer else "全剧集")),
+                "top_candidate": {} if not sec_cands else {
+                    "ep": sec_cands[0]["ep"], "score": sec_cands[0]["match_score"],
+                    "visual": sec_cands[0]["visual_summary"][:80]
+                }
+            }
+            pri_reasoning["secondary_reasoning"].append(sec_reasoning)
+
+            sec_results.append({
+                "purpose": sec_spec.get("purpose", ""),
+                "shot_role": sec_role,
+                "query": sec_spec,
+                "candidates": _make_candidates(sec_cands),
+            })
+
+        reasoning["shots_matching"].append(pri_reasoning)
+
+        result_shots.append({
+            "beat_index": beat_idx,
+            "director_technique": technique,
+            "technique_hint": shot_entry.get("technique_hint", ""),
+            "primary": {
+                "purpose": primary_spec.get("purpose", ""),
+                "query": primary_spec,
+                "candidates": _make_candidates(pri_cands),
+            },
+            "secondary": sec_results,
         })
 
-    return {"shots": result_shots, "narration": narration, "main_char": main_char}
+    reasoning["statistics"] = {
+        "total_beats": len(beats),
+        "visual_beats": n_visual,
+        "context_beats": n_context,
+        "primary_shots": len(result_shots),
+        "secondary_shots": sum(len(s.get("secondary", [])) for s in result_shots),
+        "anchor_hit_rate": f"{sum(1 for s in result_shots if s['primary'].get('candidates') and any(c['ep'] in focus_eps for c in s['primary']['candidates']))}/{len(result_shots)}" if focus_eps else "N/A"
+    }
+
+    return {"shots": result_shots, "narration": narration, "main_char": main_char,
+            "beats": beats, "focus_eps": sorted(focus_eps), "reasoning": reasoning}
 
 
-def storyboard_suggest(narration: str, segment_context: dict = None, cover: str = "", num: int = 3) -> dict:
-    """分镜推荐 v4 — 导演Agent优先, 降级为v3分层匹配
-    返回: {"suggestions": [...], "shots": [...]}  — shots 为结构化分镜序列"""
+def storyboard_suggest(narration: str, segment_context: dict = None, cover: str = "",
+                       num: int = 3, prev_highlight: str = "", next_highlight: str = "",
+                       focus_episodes: list = []) -> dict:
+    """分镜推荐 v8 — PRIMARY+SECONDARY主辅镜头
+    返回: {"suggestions": [...], "shots": [...]}
+    """
     if not narration or not narration.strip():
         return {"suggestions": [], "shots": []}
 
-    # 尝试导演Agent
     shots = []
     try:
-        result = director_agent(narration, segment_context, cover, num)
+        result = director_agent(narration, segment_context, cover, num,
+                                focus_episodes=focus_episodes)
         if result.get("shots") and not result.get("fallback"):
             shots = result["shots"]
-            # 转换为前端兼容文本格式
             suggestions = []
-            for shot in result["shots"]:
-                for c in shot["candidates"][:1]:
-                    label = shot.get("purpose", "")
-                    entry = f"镜头{len(suggestions)+1}：{label} | EP{c['ep']} [{c['start']:.0f}s-{c['end']:.0f}s] {c['visual_summary'][:80]}"
-                    if c.get("shot_size"):
-                        entry += f" [{c['shot_size']}]"
-                    suggestions.append(entry)
-                if len(suggestions) >= num: break
+            for shot_entry in result["shots"]:
+                pri = shot_entry.get("primary", {})
+                for c in pri.get("candidates", [])[:1]:
+                    label = pri.get("purpose", "")
+                    suggestions.append(
+                        f"[PRIMARY] {label} | EP{c['ep']} [{c['start']:.0f}s-{c['end']:.0f}s] "
+                        f"{c['visual_summary'][:80]}" + (f" [{c['shot_size']}]" if c.get("shot_size") else ""))
+                for sec in shot_entry.get("secondary", []):
+                    for c in sec.get("candidates", [])[:1]:
+                        role = sec.get("shot_role", "SEC")
+                        suggestions.append(
+                            f"  +{role} {sec.get('purpose','')} | EP{c['ep']} [{c['start']:.0f}s] "
+                            f"{c['visual_summary'][:60]}")
             if suggestions:
-                return {"suggestions": suggestions[:num], "shots": shots, "main_char": result.get("main_char", "")}
+                return {"suggestions": suggestions, "shots": shots,
+                        "main_char": result.get("main_char", ""),
+                        "beats": result.get("beats", []),
+                        "focus_eps": result.get("focus_eps", []),
+                        "reasoning": result.get("reasoning", {})}
     except Exception as e:
         print(f"[storyboard] 导演Agent失败, 降级v3: {e}")
 
-    # 降级：原有v3分层匹配逻辑
     fallback = _fallback_storyboard_suggest(narration, segment_context, cover, num)
-    return {"suggestions": fallback, "shots": shots, "main_char": ""}
+    return {"suggestions": fallback, "shots": shots, "main_char": "", "focus_eps": [], "reasoning": {}}
 
 
 def _fallback_storyboard_suggest(narration: str, segment_context: dict = None, cover: str = "", num: int = 3) -> list:

@@ -9,7 +9,7 @@ import { cn } from '../lib/utils'
 import { font } from '../styles/theme'
 
 /* ── 单镜卡片 ── */
-function ShotCard({ shot, index, expanded, onToggle, onPreview, onReplace, onAddToTimeline, isActive }) {
+function ShotCard({ shot, index, expanded, onToggle, onPreview, onAddToTimeline, onSelectCandidate, isActive }) {
   return (
     <div className={cn(
       'rounded-lg border transition-all',
@@ -17,7 +17,14 @@ function ShotCard({ shot, index, expanded, onToggle, onPreview, onReplace, onAdd
     )}>
       {/* Header */}
       <button onClick={() => onToggle(index)} className="w-full flex items-center gap-2 px-3 py-2 text-left">
-        <span className="text-[11px] font-mono font-bold text-purple shrink-0">镜{index + 1}</span>
+        <span className={cn(
+          'text-[10px] font-mono font-bold shrink-0 px-1 py-0.5 rounded',
+          shot.priority === 'KEY' ? 'bg-purple/20 text-purple' :
+          shot.priority === 'BRIDGE' ? 'bg-blue/20 text-blue-400' :
+          'bg-muted text-muted-foreground'
+        )}>
+          {shot.priority === 'KEY' ? 'KEY' : shot.priority === 'BRIDGE' ? 'BRG' : 'MOOD'}
+        </span>
         <span className="text-[11px] text-foreground/70 truncate flex-1">
           {shot.label || shot.description?.substring(0, 30) || '未命名'}
         </span>
@@ -42,15 +49,33 @@ function ShotCard({ shot, index, expanded, onToggle, onPreview, onReplace, onAdd
             {shot.description || shot.asr || ''}
           </p>
 
+          {/* ★ 备选镜头列表 — 可点击直接选择 */}
+          {shot.alternatives?.length > 0 && (
+            <div className="space-y-1 mt-1.5 pt-1.5 border-t border-border/10">
+              <span className="text-[10px] text-muted-foreground">备选镜头 ({shot.alternatives.length}个):</span>
+              {shot.alternatives.map((alt, j) => (
+                <button
+                  key={j}
+                  onClick={() => onSelectCandidate(index, j)}
+                  className="w-full text-left px-2 py-1.5 rounded text-[10px] bg-card/50 hover:bg-purple/10 hover:text-purple transition-colors flex items-start gap-1.5"
+                >
+                  <span className="text-purple/60 font-mono shrink-0 mt-0.5">#{j + 2}</span>
+                  <span className="flex-1 leading-snug">
+                    EP{alt.ep} [{alt.start?.toFixed(0)}s] {alt.visual_summary?.substring(0, 60)}
+                  </span>
+                  {alt.match_score != null && (
+                    <span className="text-muted-foreground/50 shrink-0">+{alt.match_score}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex items-center gap-1.5">
             <button onClick={() => onPreview(shot)}
               className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-purple/10 text-purple hover:bg-purple/20 transition-colors">
               <Play size={10} />预览
-            </button>
-            <button onClick={() => onReplace(index)}
-              className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-card border border-border/50 text-muted-foreground hover:border-purple/30 hover:text-purple transition-colors">
-              <Replace size={10} />替换
             </button>
             <button onClick={() => onAddToTimeline(shot)}
               className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors ml-auto">
@@ -69,6 +94,8 @@ export default function StoryboardSequence({ context, proxyManifest, onAddToProg
   const [loading, setLoading] = useState(false)
   const [expandedIdx, setExpandedIdx] = useState(null)
   const [error, setError] = useState(null)
+  const [reasoning, setReasoning] = useState(null)  // v8.2: Agent推理过程
+  const [showReasoning, setShowReasoning] = useState(true)  // 默认展开推理
 
   // 策划分镜触发 — 依赖 trigger 确保每次点击都执行
   useEffect(() => {
@@ -84,8 +111,34 @@ export default function StoryboardSequence({ context, proxyManifest, onAddToProg
     setExpandedIdx(null)
 
     try {
-      const seg = (context.segments || []).find(s => s.seg_id === context.sid)
+      const segments = context.segments || []
+      const seg = segments.find(s => s.seg_id === context.sid)
       const segSentences = (seg?.narration_text || '').split(/[。！？]/).filter(s => s.trim())
+
+      const idx = segments.findIndex(s => s.seg_id === context.sid)
+
+      let prevHighlight = ''
+      let nextHighlight = ''
+      const focusEpisodes = new Set()
+      if (idx >= 0) {
+        for (let i = idx - 1; i >= 0; i--) {
+          if (segments[i]?.highlight_text) {
+            prevHighlight = segments[i].highlight_text
+            break
+          }
+        }
+        for (let i = idx + 1; i < segments.length; i++) {
+          if (segments[i]?.highlight_text) {
+            nextHighlight = segments[i].highlight_text
+            break
+          }
+        }
+        for (const s of segments) {
+          const em = s.episode_marker
+          if (em?.episode) focusEpisodes.add(em.episode)
+        }
+      }
+
       const resp = await fetch(`/storyboard_suggest?task=${taskId || ''}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -93,32 +146,102 @@ export default function StoryboardSequence({ context, proxyManifest, onAddToProg
           narration: context.narration,
           segment_context: { seg_id: context.sid, sentences: segSentences },
           cover: context.cover || '',
+          prev_highlight: prevHighlight,
+          next_highlight: nextHighlight,
+          focus_episodes: [...focusEpisodes],
         })
       })
       const data = await resp.json()
 
-      // v4: 优先使用结构化 shots 数据，降级解析文本 suggestions
+      // v8: 解析 PRIMARY/SECONDARY 主辅镜头 + 导演手法
       if (data.shots?.length > 0) {
         const structured = data.shots.map((shot, i) => {
-          const best = shot.candidates?.[0] || {}
+          // v8: primary + secondary structure
+          const pri = shot.primary || shot
+          const priBest = pri.candidates?.[0] || {}
+          const priQuery = pri.query || {}
+          const secs = (shot.secondary || []).map(sec => {
+            const sBest = sec.candidates?.[0] || {}
+            return {
+              label: sec.purpose || '',
+              description: sBest.visual_summary || '',
+              ep: sBest.ep, start: sBest.start, end: sBest.end,
+              shot_size: sBest.shot_size || '',
+              emotional_tone: sBest.emotional_tone || '',
+              intensity: sBest.intensity || 0,
+              characters: sBest.characters || [],
+              location: sBest.location || '',
+              match_score: sBest.match_score || 0,
+              shot_role: sec.shot_role || 'SECONDARY',
+              alternatives: (sec.candidates || []).slice(1),
+            }
+          })
           return {
-            label: shot.purpose || `镜头${i + 1}`,
-            description: best.visual_summary || '',
-            ep: best.ep,
-            start: best.start,
-            end: best.end,
-            shot_size: best.shot_size || '',
-            emotional_tone: best.emotional_tone || '',
-            intensity: best.intensity || 0,
-            characters: best.characters || [],
-            location: best.location || '',
-            match_score: best.match_score || 0,
+            label: pri.purpose || `镜头${i + 1}`,
+            description: priBest.visual_summary || '',
+            ep: priBest.ep,
+            start: priBest.start,
+            end: priBest.end,
+            shot_size: priBest.shot_size || '',
+            emotional_tone: priBest.emotional_tone || '',
+            intensity: priBest.intensity || 0,
+            characters: priBest.characters || [],
+            location: priBest.location || '',
+            match_score: priBest.match_score || 0,
+            priority: priQuery.priority || 'KEY',
+            beat_index: priQuery.beat_index != null ? priQuery.beat_index : i,
+            director_technique: shot.director_technique || '',
+            technique_hint: shot.technique_hint || '',
             // 备选候选
-            alternatives: (shot.candidates || []).slice(1),
+            alternatives: (pri.candidates || []).slice(1),
+            // v8: secondary shots
+            secondary: secs,
           }
         })
         setShots(structured)
         if (structured.length > 0) setExpandedIdx(0)
+
+        // v8.2: 提取推理过程
+        const reasonData = data.reasoning
+        if (reasonData) {
+          const steps = []
+          // Step 1: 锚定
+          if (reasonData.anchor?.focus_episodes?.length) {
+            steps.push(`🎯 锚定标的剧集: EP${reasonData.anchor.focus_episodes.join(', EP')}`)
+            steps.push(`   来源: ${reasonData.anchor.source}`)
+          }
+          // Step 2: 节拍拆解
+          if (reasonData.beats?.length) {
+            const vCount = reasonData.beats.filter(b => b.has_visual).length
+            const cCount = reasonData.beats.filter(b => !b.has_visual).length
+            steps.push(`📐 叙事节拍: ${reasonData.beats.length}个 (${vCount}画面化 + ${cCount}留白)`)
+            reasonData.beats.forEach(b => {
+              const icon = b.has_visual ? '🎬' : '📝'
+              steps.push(`   ${icon} [${b.type}] ${b.text}`)
+            })
+          }
+          // Step 3: 匹配推理
+          if (reasonData.shots_matching?.length) {
+            reasonData.shots_matching.forEach((sm, i) => {
+              const top = sm.top3_candidates?.[0]
+              steps.push(`🔍 PRIMARY "${sm.primary_purpose}" → EP${top?.ep} score=${top?.score}`)
+              steps.push(`   查询: chars=${sm.query?.characters?.join(',')} shot=${sm.query?.shot_size} emotion=${sm.query?.emotional_tone?.join(',')}`)
+              steps.push(`   搜索策略: ${sm.search_strategy}`)
+              sm.top3_candidates?.forEach((c, j) => {
+                steps.push(`   ${j === 0 ? '▶' : ' '} [${c.rank}] EP${c.ep} score=${c.score} — ${c.why}`)
+              })
+              sm.secondary_reasoning?.forEach(sec => {
+                steps.push(`   +${sec.role}: ${sec.purpose} ${sec.search_scope} → EP${sec.top_candidate?.ep}`)
+              })
+            })
+          }
+          // Step 4: 统计
+          if (reasonData.statistics) {
+            const s = reasonData.statistics
+            steps.push(`📊 总结: ${s.total_beats}节拍 → ${s.primary_shots}组PRIMARY + ${s.secondary_shots}SECONDARY | 锚定命中 ${s.anchor_hit_rate}`)
+          }
+          setReasoning({ steps, raw: reasonData })
+        }
       } else if (data.suggestions?.length > 0) {
         // v3 降级：文本解析
         const list = data.suggestions.map(s => s.replace(/^镜头\d+[：:]\s*/, ''))
@@ -193,6 +316,38 @@ export default function StoryboardSequence({ context, proxyManifest, onAddToProg
     })
   }
 
+  // v8: 直接从备选列表中选择某个候选镜头
+  const handleSelectCandidate = (shotIndex, altIndex) => {
+    setShots(prev => {
+      const next = [...prev]
+      const shot = next[shotIndex]
+      if (!shot?.alternatives || altIndex >= shot.alternatives.length) return prev
+      const selected = shot.alternatives[altIndex]
+      // 把当前选择的移到备选末尾
+      const currentAsAlt = {
+        ep: shot.ep, start: shot.start, end: shot.end,
+        visual_summary: shot.description,
+        shot_size: shot.shot_size, emotional_tone: shot.emotional_tone,
+        intensity: shot.intensity, characters: shot.characters,
+        location: shot.location, match_score: shot.match_score,
+      }
+      const remaining = [...shot.alternatives]
+      remaining.splice(altIndex, 1)
+      next[shotIndex] = {
+        ...shot,
+        ep: selected.ep, start: selected.start, end: selected.end,
+        description: selected.visual_summary || '',
+        shot_size: selected.shot_size || '', emotional_tone: selected.emotional_tone || '',
+        intensity: selected.intensity || 0,
+        characters: selected.characters || [],
+        location: selected.location || '',
+        match_score: selected.match_score || 0,
+        alternatives: [...remaining, currentAsAlt],
+      }
+      return next
+    })
+  }
+
   const handleAddToTimeline = (shot) => {
     if (shot.ep == null) return
     const FPS = 25
@@ -229,6 +384,37 @@ export default function StoryboardSequence({ context, proxyManifest, onAddToProg
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1.5">
+        {/* v8.2: Agent推理过程 */}
+        {reasoning && (
+          <div className="rounded-lg border border-purple/20 bg-purple/[0.03] overflow-hidden">
+            <button
+              onClick={() => setShowReasoning(!showReasoning)}
+              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-purple/[0.06] transition-colors"
+            >
+              <Sparkles size={12} className="text-purple/70" />
+              <span className="text-[11px] font-medium text-purple/80">导演推理过程</span>
+              <span className="text-[10px] text-muted-foreground ml-auto">
+                {reasoning.steps?.length || 0} 步
+              </span>
+              <ChevronDown className={cn('size-3 text-muted-foreground transition-transform', showReasoning && 'rotate-180')} />
+            </button>
+            {showReasoning && (
+              <div className="px-3 pb-3 pt-0 border-t border-purple/10">
+                <div className="mt-2 space-y-0.5 font-mono text-[10px] text-foreground/60 leading-relaxed max-h-[300px] overflow-y-auto">
+                  {(reasoning.steps || []).map((step, i) => {
+                    // 识别步骤类型给不同颜色
+                    const isHeader = step.startsWith('🎯') || step.startsWith('📐') || step.startsWith('🔍') || step.startsWith('📊')
+                    const isSub = step.startsWith('   ')
+                    const cls = isHeader ? 'text-purple/80 mt-1.5 font-semibold' :
+                               isSub ? 'text-foreground/40' :
+                               'text-foreground/60'
+                    return <div key={i} className={cls}>{step}</div>
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         {loading && (
           <div className="flex flex-col items-center justify-center py-12 gap-3">
             <div className="flex gap-1">
@@ -260,7 +446,7 @@ export default function StoryboardSequence({ context, proxyManifest, onAddToProg
           <ShotCard key={i} shot={shot} index={i}
             expanded={expandedIdx === i} isActive={expandedIdx === i}
             onToggle={setExpandedIdx}
-            onPreview={handlePreview} onReplace={handleReplace}
+            onPreview={handlePreview} onSelectCandidate={handleSelectCandidate}
             onAddToTimeline={handleAddToTimeline} />
         ))}
 
