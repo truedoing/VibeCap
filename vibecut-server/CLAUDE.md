@@ -3,7 +3,7 @@ name: vibecut-server
 description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + AI流水线 v1.2
 ---
 
-## VibeCut Server v3.0
+## VibeCut Server v1.2
 
 ### 架构
 ```
@@ -18,13 +18,13 @@ vibecut-server/
 │   ├── dialogue.py             ← 对话匹配 + AI聊天 (184行)
 │   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY 分镜 (581行)
 │   ├── script_gen.py           ← interview AI脚本生成 (v3流水线/v4故事优先/精切 SSE)
-│   ├── script_drama.py         ← drama AI脚本生成 SSE handler (新 v3.0)
+│   ├── script_drama.py         ← drama AI脚本生成 SSE handler (新 v1.2)
 │   ├── pipeline.py             ← 后台加工流水线 (电视剧+口播)
 │   ├── media.py                ← 媒体服务 (代理视频/片段提取/预览/导出)
 │   ├── static.py               ← SPA前端回退 + 任务目录文件服务
 │   └── prompts/
 │       ├── director.py         ← DIRECTOR_PROMPT 模板 (150行)
-│       └── script_drama.py     ← 编剧Agent Prompt模板 (故事师/策划师/文案师) (新 v3.0)
+│       └── script_drama.py     ← 编剧Agent Prompt模板 (故事师/策划师/文案师) (新 v1.2)
 │
 ├── lib/
 │   ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo/DeepSeek)
@@ -38,7 +38,7 @@ vibecut-server/
 ├── script_agents.py            ← interview编剧台 AI Agent
 │   ├── run_pipeline()          ← v3 搜索流水线
 │   └── story_first_pipeline()  ← v4 故事优先 (口播专用)
-├── drama_script_agents.py      ← drama编剧台 AI Agent (新 v3.0)
+├── drama_script_agents.py      ← drama编剧台 AI Agent (新 v1.2)
 │   ├── story_master_agent()    ← 故事师: 全剧概要→故事地图
 │   ├── narrative_planner_agent() ← 策划师: 故事地图→章节方案
 │   ├── script_writer_agent()   ← 文案师: 章节+scene_map→解说词+scene_query
@@ -81,7 +81,7 @@ cd vibecut-server
 | /script/generate_script | POST | v3 三步混编 (JSON响应) |
 | /script/generate_script_stream | POST | v3 搜索流水线 SSE |
 | /script/generate_story_first | POST | v4 故事优先 SSE (interview) |
-| /script/generate_drama_script | POST | **v1 编剧Agent SSE (drama) — 新 v3.0** |
+| /script/generate_drama_script | POST | **v1 编剧Agent SSE (drama) — 新 v1.2** |
 | /script/refine | POST | 精切 SSE |
 | /script/analyze_transcript | POST | LLM 转写分析 |
 | /script/generate_from_outline | POST | 大纲→segments |
@@ -102,7 +102,7 @@ cd vibecut-server
 | /picks | POST | 同步picks到SQLite |
 | /{filename}?task= | GET | 任务目录文件 (SPA兜底) |
 
-### 编剧Agent v1 — Drama脚本生成 (新 v3.0)
+### 编剧Agent v1 — Drama脚本生成 (新 v1.2)
 
 **核心理念**: 三个独立Agent角色协作，人提供创意方向（选题+选集+时长），Agent负责执行。
 

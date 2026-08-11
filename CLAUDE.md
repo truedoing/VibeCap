@@ -58,7 +58,7 @@
 ```
 VibeCut/
 ├── vibecut-server/            ← Python 后端 (端口8765)
-│   ├── main.py                     ← FastAPI 入口 (v3.0)
+│   ├── main.py                     ← FastAPI 入口 (v1.2)
 │   ├── build_index.py              ← BGE索引统一入口
 │   ├── analyze_episodes.py         ← VLM v2.4: 三层推理 (DeepSeek→ASR→VLM)
 │   ├── script_agents.py            ← interview编剧台 AI: v3+v4
