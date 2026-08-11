@@ -13,7 +13,6 @@ Layer 3: VLM 结构化画面理解 → 场景段级视觉元数据 (vlm_seg_cach
 
 import json, re, subprocess, base64, os, time, argparse
 from pathlib import Path
-import urllib.request
 
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -24,20 +23,9 @@ SRC_VIDEOS = Path("/Users/zgl/解说剪辑/都挺好原剧")
 PROXY_DIR = DRAMA_DIR / "proxies"
 
 API_KEY = os.environ.get("MIMO_API_KEY", "")
-API_URL = os.environ.get("MIMO_API_URL", "https://api.xiaomimimo.com/v1")
 VLM_MODEL = "mimo-v2.5"
 
 KNOWN_CHARACTERS = ['苏大强', '苏明哲', '苏明成', '苏明玉', '朱丽', '吴非', '赵美兰', '小蔡', '老聂']
-
-def api_call(payload, timeout=120):
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"{API_URL}/chat/completions",
-        data=data,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"}
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
 
 def run_ffmpeg(cmd, timeout=180):
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -124,183 +112,20 @@ def extract_frames(video_path, work_dir, fps=1):
     return frames
 
 
-# ═══════════════════════════════════ Step 4: Scene Map ═══════════════════════════════════
+# ═══════════════════════════════════ Step 3: 提帧 ═══════════════════════════════════
 
-SCENE_MAP_PROMPT = """你是《都挺好》的场记。根据 ASR 对话和剧情概要，推断本集的场景分段。
+def extract_frames(video_path, work_dir, fps=1):
+    frames_dir = work_dir / "frames"
+    if frames_dir.exists() and len(list(frames_dir.glob("*.jpg"))) > 10:
+        return sorted(frames_dir.glob("*.jpg"))
+    frames_dir.mkdir(exist_ok=True)
+    print(f"  提取帧 (fps={fps})...")
+    run_ffmpeg(["ffmpeg", "-y", "-i", str(video_path), "-vf", f"fps={fps}",
+                 str(frames_dir / "frame_%05d.jpg")])
+    frames = sorted(frames_dir.glob("*.jpg"))
+    print(f"  → {len(frames)} 帧")
+    return frames
 
-输出 JSON 数组，每个元素:
-{
-  "time_range": [start_s, end_s],
-  "location": "地点",
-  "characters": ["在场人物"],
-  "event": "事件（≤20字）",
-  "mood": "情绪"
-}
-
-规则:
-1. 人物全名: 苏大强/苏明哲/苏明成/苏明玉/朱丽/吴非/小蔡/老聂
-2. 按对话话题转换点切分, 每段 60-90s
-3. 覆盖第一句到末句的完整时间线，不得遗漏任何对话段落
-4. 通过称呼词推断说话人（"明哲"→吴非在说话,"爸"→子女在说话）
-5. ★ 时间连续性检查: 相邻场景时间不得断开超过 60s，若 ASR 有对话必须生成对应场景"""
-
-
-def build_scene_map(asr_segments, synopsis, work_dir):
-    cache_file = work_dir / "scene_map.json"
-    if cache_file.exists():
-        print(f"  scene_map.json 已存在, 跳过")
-        return json.load(open(cache_file))
-
-    asr_lines = []
-    current_win = None
-    for seg in asr_segments:
-        win = int(seg['start'] // 30) * 30
-        if win != current_win:
-            asr_lines.append(f"\n[{win}s]")
-            current_win = win
-        asr_lines.append(seg['text'])
-    asr_text = ' '.join(asr_lines)[:8000]
-
-    user_prompt = f"剧情概要:\n{synopsis}\n\nASR (带时间戳):\n{asr_text}\n\n输出场景分段 JSON。"
-
-    print("  DeepSeek 生成 scene_map...")
-    result = _call_deepseek(SCENE_MAP_PROMPT, user_prompt, max_tokens=2000, label="scene_map")
-
-    if not result.get("ok"):
-        print(f"  DeepSeek 失败: {result.get('error')}, 使用 fallback")
-        return _fallback_scene_map(asr_segments)
-
-    content = result["content"]
-    json_match = re.search(r'\[.*\]', content, re.DOTALL)
-    if json_match:
-        try:
-            scene_map = json.loads(json_match.group(0))
-            # 过滤掉过长的段(>300s)和过短的段(<15s)
-            scene_map = [sm for sm in scene_map if 15 < sm['time_range'][1] - sm['time_range'][0] < 300]
-
-            # v3.2: 时间连续性校验 — 检测 >120s 的空隙并补充 fallback 场景
-            scene_map.sort(key=lambda x: x['time_range'][0])
-            filled = []
-            last_end = scene_map[0]['time_range'][0] if scene_map else 0
-            for sm_item in scene_map:
-                gap = sm_item['time_range'][0] - last_end
-                if gap > 120:
-                    # 在空隙中间插入一个 fallback 场景段
-                    mid_start = last_end + 30
-                    mid_end = sm_item['time_range'][0] - 30
-                    if mid_end - mid_start > 15:
-                        filled.append({
-                            "time_range": [mid_start, mid_end],
-                            "location": "未知",
-                            "characters": [],
-                            "event": "(ASR有对话, DeepSeek遗漏的场景)",
-                            "mood": "待确认"
-                        })
-                        print(f"  ⚠ 补漏: {gap}s 空隙 [{last_end}-{sm_item['time_range'][0]}]")
-                filled.append(sm_item)
-                last_end = sm_item['time_range'][1]
-            scene_map = filled
-
-            json.dump(scene_map, open(cache_file, 'w'), ensure_ascii=False, indent=2)
-            print(f"  → {len(scene_map)} 段")
-            for sm in scene_map:
-                print(f"    [{sm['time_range'][0]}s-{sm['time_range'][1]}s] {sm['location']}: {', '.join(sm['characters'])}")
-            return scene_map
-        except json.JSONDecodeError as e:
-            print(f"  JSON 解析失败: {e}")
-    return _fallback_scene_map(asr_segments)
-
-
-def _fallback_scene_map(asr_segments):
-    """关键词规则 fallback"""
-    windows = {}
-    for seg in asr_segments:
-        win = int(seg['start'] // 30) * 30
-        windows.setdefault(win, []).append(seg['text'])
-
-    scenes = []
-    current = None
-    for win in sorted(windows.keys()):
-        text = ' '.join(windows[win])
-        if any(kw in text for kw in ['明哲', '吴非', '回美国', '房产证', '你怎么还不睡']):
-            loc, chars = "苏明哲家(美国)", ["苏明哲", "吴非"]
-        elif any(kw in text for kw in ['菜刀', '谁敢', '不让结婚', '我看谁敢', '你让开']):
-            loc, chars = "苏大强家", ["苏大强", "苏明成", "小蔡"]
-        elif any(kw in text for kw in ['贷款', '还十年', '一家人不说两家话', '聊聊', '谈判']):
-            loc, chars = "苏大强家", ["苏明玉", "小蔡", "苏大强"]
-        elif any(kw in text for kw in ['打官司', '卖房', '不孝', '赌气']):
-            loc, chars = "苏大强家", ["苏大强", "苏明玉"]
-        elif any(kw in text for kw in ['老聂', '劝', '喝酒']):
-            loc, chars = "苏大强家", ["苏大强", "老聂"]
-        elif any(kw in text for kw in ['明月', '大嫂', '明成', '办公室']):
-            loc, chars = "苏明玉办公室", ["苏明玉"]
-        elif any(kw in text for kw in ['明成', '朱丽', '小蔡家']):
-            loc, chars = "苏明成家", ["苏明成", "朱丽"]
-        else:
-            loc, chars = "未知", []
-
-        if current and current['location'] == loc and set(current['characters']) == set(chars):
-            current['time_range'][1] = win + 30
-        else:
-            if current: scenes.append(current)
-            current = {"time_range": [win, win + 30], "location": loc, "characters": chars, "event": "", "mood": ""}
-    if current: scenes.append(current)
-
-    # 合并相邻同类段
-    merged = []
-    for s in scenes:
-        if merged and merged[-1]['location'] == s['location'] and \
-           set(merged[-1]['characters']) == set(s['characters']) and \
-           s['time_range'][0] - merged[-1]['time_range'][1] < 60:
-            merged[-1]['time_range'][1] = s['time_range'][1]
-        else:
-            merged.append(s)
-    print(f"  → fallback: {len(merged)} 段")
-    return merged
-
-
-def _call_deepseek(system, user, max_tokens=2000, label="deepseek"):
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if not api_key:
-        return {"ok": False, "error": "no DEEPSEEK_API_KEY"}
-    payload = json.dumps({
-        "model": "deepseek-chat",
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        "temperature": 0.3, "max_tokens": max_tokens,
-    }).encode("utf-8")
-    for attempt in range(3):
-        try:
-            req = urllib.request.Request(
-                "https://api.deepseek.com/v1/chat/completions",
-                data=payload,
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-            )
-            resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
-            content = resp["choices"][0]["message"].get("content", "")
-            usage = resp.get("usage", {})
-            print(f"    [{label}] in:{usage.get('prompt_tokens',0)} out:{usage.get('completion_tokens',0)}")
-            return {"ok": True, "content": content, "usage": usage}
-        except Exception as e:
-            if attempt == 2: return {"ok": False, "error": str(e)}
-            time.sleep(2)
-
-
-def _generate_synopsis(asr_segments, ep):
-    """DeepSeek 读取 ASR 生成剧情概要"""
-    asr_text = ' '.join(seg['text'] for seg in asr_segments)[:6000]
-    result = _call_deepseek(
-        "你是电视剧《都挺好》的编剧助理。根据对话记录，概括这集的核心剧情，"
-        "按时间顺序列出 3-5 个关键情节段落。人物用全名（苏大强/苏明哲/苏明成/苏明玉/朱丽/吴非/小蔡等）。",
-        f"第{ep}集对话记录:\n{asr_text}",
-        max_tokens=800,
-        label="synopsis",
-    )
-    if result.get("ok"):
-        return result["content"].strip()
-    return ""
-
-
-# ═══════════════════════════════════ Step 5: VLM 画面分析 ═══════════════════════════════════
 
 def pick_keyframes_for_segment(sm, frames, frame_times, max_frames=2):
     """每段取1-2帧用于 VLM 分析。
@@ -375,19 +200,30 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
 
     content_parts.append({"type": "text", "text": prompt})
 
-    payload = {
-        "model": VLM_MODEL,
-        "messages": [{"role": "user", "content": content_parts}],
-        "max_tokens": 1800,  # v3.1: mood 锚定指令需要更多输出空间，避免截断
-    }
+    # 内联 VLM API 调用 (multimodal image_url, lib.llm 暂不支持)
+    import urllib.request as _ur2
+    api_key = os.environ.get("MIMO_API_KEY", "")
+    api_url = os.environ.get("MIMO_API_URL", "https://api.xiaomimimo.com/v1")
+    if not api_key:
+        raise RuntimeError("MIMO_API_KEY not set")
 
     raw = ""
     usage = {}
     for attempt in range(3):
         try:
-            resp = api_call(payload)
-            raw = resp["choices"][0]["message"].get("content", "")
-            usage = resp.get("usage", {})
+            payload_str = json.dumps({
+                "model": VLM_MODEL,
+                "messages": [{"role": "user", "content": content_parts}],
+                "max_tokens": 1800,
+            }).encode("utf-8")
+            req = _ur2.Request(
+                f"{api_url}/chat/completions",
+                data=payload_str,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+            )
+            resp_data = json.loads(_ur2.urlopen(req, timeout=120).read())
+            raw = resp_data["choices"][0]["message"].get("content", "")
+            usage = resp_data.get("usage", {})
             if raw and raw.strip():
                 break
             time.sleep(3)
@@ -629,18 +465,30 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
 
     # [3/5]
     print("\n[3/5] Scene Map")
+    from lib.scene_map import SceneMapAgent
+    agent = SceneMapAgent()
     syn_file = work_dir / "ep_synopsis.json"
     if syn_file.exists():
         synopsis = json.load(open(syn_file)).get('synopsis', '')
         print(f"  synopsis: 已有 ({synopsis[:80]}...)")
     else:
-        synopsis = _generate_synopsis(asr_segments, ep)
+        synopsis = agent.build_synopsis(asr_segments, ep)
         if synopsis:
             json.dump({"synopsis": synopsis}, open(syn_file, 'w'), ensure_ascii=False, indent=2)
             print(f"  synopsis: 已生成")
         else:
             print(f"  synopsis: 失败, 使用 ASR-only fallback")
-    scene_map = build_scene_map(asr_segments, synopsis, work_dir)
+
+    scene_map_file = work_dir / "scene_map.json"
+    if scene_map_file.exists():
+        scene_map = json.load(open(scene_map_file))
+        print(f"  scene_map.json 已存在, 跳过")
+    else:
+        scene_map = agent.build(asr_segments, synopsis)
+        json.dump(scene_map, open(scene_map_file, 'w'), ensure_ascii=False, indent=2)
+        print(f"  → {len(scene_map)} 段")
+        for sm in scene_map:
+            print(f"    [{sm['time_range'][0]}s-{sm['time_range'][1]}s] {sm['location']}: {', '.join(sm['characters'])}")
 
     # [4/5]
     print("\n[4/5] 提取帧")
