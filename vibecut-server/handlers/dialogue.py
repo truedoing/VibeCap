@@ -316,6 +316,8 @@ DIRECTOR_PROMPT = """你是电视剧《都挺好》的分镜导演。根据解�
 - FLASHBACK的prefer_episodes可跳出当前标的剧集
 - CUTAWAY不匹配画面，留空给剪辑师
 - CROSS在note中标注，不生成单独镜头
+- ★ action_hint: 使用视频画面中可见的具体动作词，如 打架/拍桌/站起/持刀/指人/推门/后退/躲闪
+  避免抽象描述（"态度强硬"→ 指人瞪眼；"情绪激动"→ 站起拍桌）
 
 """
 
@@ -536,14 +538,25 @@ def _match_shot_query(query: dict, num: int = 5, used_scene_keys: set = None,
                             loc_core = loc_core[:-len(sfx)]
                     if hint_core and loc_core and (hint_core in loc_core or loc_core in hint_core):
                         score += 3  # 半额命中
-            # 动作匹配 — v8.5.1: 关键词子串匹配
+            # 动作匹配 — v8.5.2: 步长1的2字滑窗 + 自包含子串
             if action_hint:
-                # 拆为 2-3 字关键词，命中半数即加分
-                action_kws = [action_hint[i:i+2] for i in range(0, len(action_hint), 2) if len(action_hint[i:i+2]) >= 2]
-                hits = sum(1 for kw in action_kws if kw in desc)
-                if hits >= len(action_kws) * 0.5:
-                    score += 4
-                elif hits >= 2:
+                # 策略1: 步长1的2字滑窗 (覆盖所有连续二字组合, 如 "争吵")
+                sliding_kws = [action_hint[i:i+2] for i in range(len(action_hint)-1)
+                               if len(action_hint[i:i+2]) == 2]
+                sliding_hits = sum(1 for kw in sliding_kws if kw in desc)
+
+                # 策略2: 3字窗口 (步长1, 覆盖如 "持菜刀" 等三字动作)
+                trim_kws = [action_hint[i:i+3] for i in range(len(action_hint)-2)
+                            if len(action_hint[i:i+3]) == 3]
+                trim_hits = sum(1 for kw in trim_kws if kw in desc)
+
+                # 综合命中: sliding 权重 2, trim 权重 1
+                total_hits = sliding_hits * 2 + trim_hits
+                total_kws = len(sliding_kws) * 2 + len(trim_kws)
+
+                if total_kws > 0 and total_hits >= total_kws * 0.3:
+                    score += 4  # 全命中
+                elif sliding_hits >= 2:
                     score += 2  # 部分命中
 
             scored.append((score, s))
