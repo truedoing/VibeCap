@@ -168,13 +168,15 @@ function TaskDetail({ task, dramaName }) {
   return (
     <div className="px-4 pb-3 border-t border-border/50">
       <div className="p-3 rounded-lg bg-secondary/20 space-y-2">
-        {/* 任务描述 — 始终显示，直接就是 task.description */}
-        <div>
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">任务描述</p>
-          <p className="text-xs text-foreground/80 leading-relaxed">
-            {task.description || '暂无描述'}
-          </p>
-        </div>
+        {/* 任务描述 — 只在有内容时显示 */}
+        {task.description && (
+          <div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">任务描述</p>
+            <p className="text-xs text-foreground/80 leading-relaxed">
+              {task.description}
+            </p>
+          </div>
+        )}
         {/* 状态网格 */}
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded bg-card px-2 py-1.5">
