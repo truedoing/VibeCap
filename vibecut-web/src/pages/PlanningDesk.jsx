@@ -5,6 +5,7 @@
  */
 import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react'
 import { useParams } from 'react-router-dom'
+import { useProject } from '../context/ProjectContext'
 import { colors, space, font as baseFont, radius } from '../styles/theme'
 import { flexRow, panelHeader, panelRoot, title, subtitle, label, mono, btn, input, select, textarea, card, divider as dividerStyle, importanceColor as impColor } from '../styles/mixins'
 
@@ -32,6 +33,94 @@ function tc(s) {
 function secToMin(s) {
   const m = Math.floor(s / 60), ss = Math.floor(s % 60)
   return `${m}:${String(ss).padStart(2, '0')}`
+}
+
+// ═══════════════════ 任务描述解析 ═══════════════════
+
+/**
+ * 从任务描述中提取：
+ *   1. 纯文本选题 (去掉剧集引用部分，去掉"EP..."等标记)
+ *   2. 涉及的剧集号列表
+ *
+ * 任务描述示例:
+ *   "苏明成人物线：从妈宝到守护者 (EP1-3,21,39-41)"
+ *   "苏大强买房风波，聚焦16-20集的家庭冲突"
+ *   "苏明玉职场逆袭"
+ *
+ * @param {string} desc       - 原始任务描述
+ * @param {object} actions    - { setTopic, setSelectedEps }
+ */
+function _parseTaskDescription(desc, { setTopic, setSelectedEps }) {
+  if (!desc || !desc.trim()) return
+
+  const raw = desc.trim()
+
+  // ── 第一步：提取所有数字范围的剧集号 ──
+  // 模式: EP1-3, EP 1-3, 1-3集, 第1-3集, 1集, 第1集, 1,3,5
+  //       1-5, 10-15, 16-20, ... 纯数字范围
+  const epSet = new Set()
+
+  // EP前缀 + 范围: EP1-3, EP 1, ep1
+  const epRangeRe = /(?:EP|ep|Ep)\s*(\d+)\s*(?:[-–]\s*(\d+))?/g
+  let m
+  while ((m = epRangeRe.exec(raw)) !== null) {
+    const from = parseInt(m[1], 10)
+    const to = m[2] ? parseInt(m[2], 10) : from
+    for (let e = from; e <= to; e++) epSet.add(e)
+  }
+
+  // 中文范围: 1-3集, 第1-3集, 1到3集, 1-5, 10-15
+  const cnRangeRe = /第?\s*(\d+)\s*(?:[-–到至]\s*(\d+)\s*)?(?:集|话|回)/g
+  while ((m = cnRangeRe.exec(raw)) !== null) {
+    const from = parseInt(m[1], 10)
+    const to = m[2] ? parseInt(m[2], 10) : from
+    for (let e = from; e <= to; e++) epSet.add(e)
+  }
+
+  // 纯数字列表: , 1, 3, 21, 39, 41, 45, (后面可能跟其他文本)
+  // 先提取所有纯数字 token (2位及以下, 范围 1-46)
+  const numTokens = raw.match(/\b(\d{1,2})\b/g)
+  if (numTokens) {
+    for (const t of numTokens) {
+      const n = parseInt(t, 10)
+      if (n >= 1 && n <= 46) epSet.add(n)
+    }
+  }
+
+  // 快速范围匹配: "16-20", "1-5" 之类的赤裸范围(无ep/集后缀)
+  const bareRangeRe = /\b(\d{1,2})\s*[-–]\s*(\d{1,2})\b/g
+  while ((m = bareRangeRe.exec(raw)) !== null) {
+    const from = parseInt(m[1], 10)
+    const to = parseInt(m[2], 10)
+    if (from <= 46 && to <= 46 && from < to) {
+      for (let e = from; e <= to; e++) epSet.add(e)
+    }
+  }
+
+  // ── 第二步: 如果解析出了剧集号，设置选中状态 ──
+  if (epSet.size > 0) {
+    setSelectedEps(new Set(epSet))
+  }
+
+  // ── 第三步: 提取纯选题文本 (去掉剧集引用部分) ──
+  let topic = raw
+    // EP1-5 开头引用
+    .replace(/^(?:EP|ep|Ep)\s*\d[\d\s,\-–]*(?:集|话|回)?\s*/g, '')
+    // 括号内的剧集引用: (EP1-3,21), (1-3集), (1-5)
+    .replace(/\s*[（(]\s*(?:EP|ep|Ep)?\s*\d[\d\s,\-–]*(?:集|话|回)?\s*[）)]/g, '')
+    // 逗号后的剧集引用: , 16-20集, , EP1-3
+    .replace(/[,，]\s*(?:EP|ep|Ep)?\s*\d{1,2}\s*(?:[-–]\s*\d{1,2})?\s*(?:集|话|回)?/g, '')
+    // "聚焦XX-XX集的XX" / "围绕XX-XX集展开"
+    .replace(/[,，]?\s*(?:聚焦|围绕)\s*\d{1,2}\s*[-–]\s*\d{1,2}\s*集\s*(?:的[一-鿿]{2,4}|展开)?\s*/g, '')
+    // "的XX" 尾部残片 (如 "的家庭冲突")
+    .replace(/\s的[一-鿿]{2,4}$/g, '')
+    // 清理标点残留
+    .replace(/^[,，\s]+/, '').replace(/[,，\s]+$/, '').replace(/\s{2,}/g, ' ')
+    .trim()
+
+  if (topic) {
+    setTopic(topic)
+  }
 }
 
 // ═══════════════════ 子组件 ═══════════════════
@@ -823,6 +912,7 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
 // ═══════════════════ 主组件 ═══════════════════
 export default function PlanningDesk() {
   const { seriesId, taskId } = useParams()
+  const { taskDescription } = useProject()
   const projectName = seriesId === 'doutinghao' ? '都挺好' : seriesId === 'yanglaoshi' ? '杨老师教育' : decodeURIComponent(seriesId || '')
   const projectParam = `project=${encodeURIComponent(projectName)}`
 
@@ -837,6 +927,15 @@ export default function PlanningDesk() {
   const [error, setError] = useState('')
 
   const [topic, setTopic] = useState('')
+
+  // ── 任务描述解析：选题 + 剧集选择 ──
+  const [taskParsed, setTaskParsed] = useState(false)
+  useEffect(() => {
+    if (!taskDescription || taskParsed) return
+    _parseTaskDescription(taskDescription, { setTopic, setSelectedEps })
+    setTaskParsed(true)
+  }, [taskDescription, taskParsed])
+
   const [outline, setOutline] = useState([
     { label: '开场hook', narrative_role: 'hook_tension' },
     { label: '提出悬念', narrative_role: 'hook_promise' },

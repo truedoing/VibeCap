@@ -176,7 +176,7 @@ def generate_script(topic: str) -> dict:
 # ── POST /script/generate_script_stream (v3 SSE) ──
 def generate_script_stream(topic: str, emit_progress, emit_complete, emit_error):
     """v3 Agent 流水线 — SSE 流式"""
-    from script_agents import run_pipeline
+    from agents.script_agents import run_pipeline
 
     clean_dir = PROJECT_DIR / "sources_clean"
     classified_files = list(clean_dir.glob("classified_*.json"))
@@ -204,7 +204,7 @@ def generate_script_stream(topic: str, emit_progress, emit_complete, emit_error)
 # ── POST /script/generate_story_first (v4 SSE, 口播专用) ──
 def generate_story_first(topic: str, emit_progress, emit_complete, emit_error):
     """v4 故事优先流水线 — SSE 流式"""
-    from script_agents import story_first_pipeline
+    from agents.script_agents import story_first_pipeline
 
     clean_dir = PROJECT_DIR / "sources_clean"
     enhanced_file = clean_dir / "classified_enhanced.json"
@@ -242,7 +242,7 @@ def generate_story_first(topic: str, emit_progress, emit_complete, emit_error):
 
 # ── POST /script/refine (精切 SSE) ──
 def refine_segments(task_name: str, emit_progress, emit_complete, emit_error):
-    from refine_segments import refine, load_data
+    from cli.refine_segments import refine, load_data
 
     emit_progress("refine", "加载数据...")
     segs, utts = load_data(project_name, task_name)

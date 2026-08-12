@@ -1,68 +1,77 @@
 ---
 name: vibecut-server
-description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + AI流水线 v1.2
+description: VibeCut Python 后端 — FastAPI + 模块化架构 + BGE索引 + AI流水线 v1.3
 ---
 
-## VibeCut Server v1.2
+## VibeCut Server v1.3
 
 ### 架构
 ```
 vibecut-server/
-├── main.py                     ← FastAPI 入口 + 路由注册 + 生命周期
+├── main.py                     ← FastAPI 入口 (50行瘦入口, 路由分发到 routers/)
 ├── config.py                   ← CLI参数 + 项目配置 + 路径解析 (94行)
 ├── db.py                       ← SQLite: dramas/episodes/tasks/task_segments/index_entries
 │
-├── handlers/
+├── routers/                    ← API 路由 (v1.3 新增, 按功能域拆分)
+│   ├── _lifespan.py            ← 启动生命周期: 索引加载 + BGE预热 + Agent注入
+│   ├── search.py               ← GET /status, /search
+│   ├── task_crud.py            ← GET /dramas, /tasks + POST /tasks/* (两个router)
+│   ├── segments.py             ← GET /segments.json, /narration.json
+│   ├── asr.py                  ← GET /asr/raw, /asr/classified
+│   ├── media.py                ← GET /proxies/*, /clips/*, /posters/*; POST 剪辑操作
+│   ├── ai.py                   ← POST /chat, /dialogue_match, /storyboard_suggest, /script/*
+│   ├── sse_script.py           ← SSE: /script/generate_script_stream, /refine, /generate_drama_script
+│   ├── sse_voiceover.py        ← SSE: /voiceover/generate_stream (配音台)
+│   ├── pipeline.py             ← GET/POST /data/*
+│   ├── export.py               ← POST /export/extract_clips
+│   ├── picks.py                ← POST /picks
+│   └── static.py               ← GET /{filename} SPA fallback
+│
+├── handlers/                   ← 业务逻辑 (不变)
 │   ├── search.py               ← BGE语义搜索 + ASR关键词/锚定搜索 (485行)
 │   ├── tasks.py                ← 任务 CRUD (创建/状态/删除/列表, 支持无docx创建)
 │   ├── dialogue.py             ← 对话匹配 + AI聊天 (184行)
 │   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY 分镜 (581行)
 │   ├── script_gen.py           ← interview AI脚本生成 (v3流水线/v4故事优先/精切 SSE)
-│   ├── script_drama.py         ← drama AI脚本生成 SSE handler (新 v1.2)
+│   ├── script_drama.py         ← drama AI脚本生成 SSE handler
+│   ├── voiceover.py            ← 配音台: 配音师Agent + TTS生成
 │   ├── pipeline.py             ← 后台加工流水线 (电视剧+口播)
 │   ├── media.py                ← 媒体服务 (代理视频/片段提取/预览/导出)
 │   ├── static.py               ← SPA前端回退 + 任务目录文件服务
 │   └── prompts/
-│       ├── director.py         ← DIRECTOR_PROMPT 模板 (150行)
-│       └── script_drama.py     ← 编剧Agent Prompt模板 (故事师/策划师/文案师) (新 v1.2)
+│       ├── director.py         ← DIRECTOR_PROMPT 模板
+│       ├── script_drama.py     ← 编剧Agent Prompt (故事师/策划师/文案师)
+│       └── voiceover.py        ← 配音师 Prompt 模板
 │
-├── lib/
+├── agents/                     ← AI Agent 模块 (v1.3 从根目录提升)
+│   ├── script_agents.py        ← interview编剧台 (1045行)
+│   └── drama_script_agents.py  ← drama编剧台 (604行)
+│
+├── cli/                        ← CLI 脚本 (v1.3 从根目录移入, 24个)
+│   ├── build_index.py          ← BGE索引统一入口
+│   ├── analyze_episodes.py     ← 电视剧: 场景+ASR+VLM
+│   ├── refine_segments.py      ← 口播精切引擎
+│   ├── match_split.py          ← 文本对齐+音频分割
+│   └── ...                     ← 其他独立脚本
+│
+├── lib/                        ← 公共库
 │   ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo/DeepSeek)
 │   ├── embeddings.py           ← BGE模型单例管理
-│   ├── sse.py                  ← 可复用SSE发射器 + 心跳
+│   ├── sse.py                  ← 通用 SSE 流式生成器 + 心跳
 │   ├── env.py                  ← 统一.env加载
-│   ├── vlm_cache.py            ← VLM 场景缓存懒加载 (111行)
-│   ├── storyboard_match.py     ← 分镜匹配引擎 — 多维度结构化评分 (195行)
-│   └── scene_map.py            ← 场记Agent: scene_map + synopsis生成 (优化～260行)
+│   ├── vlm_cache.py            ← VLM 场景缓存懒加载
+│   ├── storyboard_match.py     ← 分镜匹配引擎
+│   └── scene_map.py            ← 场记Agent: scene_map + synopsis生成
 │
-├── script_agents.py            ← interview编剧台 AI Agent
-│   ├── run_pipeline()          ← v3 搜索流水线
-│   └── story_first_pipeline()  ← v4 故事优先 (口播专用)
-├── drama_script_agents.py      ← drama编剧台 AI Agent (新 v1.2)
-│   ├── story_master_agent()    ← 故事师: 全剧概要→故事地图
-│   ├── narrative_planner_agent() ← 策划师: 故事地图→章节方案
-│   ├── script_writer_agent()   ← 文案师: 章节+scene_map→解说词+scene_query
-│   └── run_drama_pipeline()    ← 编排器: 协调三个Agent+程序校验
-├── refine_segments.py          ← 口播精切引擎
-├── build_index.py              ← BGE索引统一入口 (--project)
-├── clean_interview_data.py     ← 口播: LLM清洗+说话人识别
-├── classify_transcript.py      ← 口播: LLM ASR分类
-├── export_capcut.py            ← 剪映草稿导出
-├── generate_proxies.py         ← 540p代理视频
-├── analyze_episodes.py         ← 电视剧: 场景+ASR+VLM
-└── ...                         ← 其他独立脚本
+├── tts_engine.py               ← 统一 TTS 引擎 (MiMo API)
+└── export_capcut.py            ← 剪映草稿导出
 ```
 
 ### 启动
 
 ```bash
 cd vibecut-server
-
-# FastAPI (推荐)
 /opt/anaconda3/bin/python3 main.py --project 都挺好 --task Task0804 --port 8765
-
-# 兼容旧版 (server.py 仍然可用, 但功能冻结)
-/opt/anaconda3/bin/python3 server.py --project 杨老师教育 --task 0801学习新东方 --port 8765
 ```
 
 ### 核心API

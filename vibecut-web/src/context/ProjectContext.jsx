@@ -180,6 +180,7 @@ export function TaskProvider({ children }) {
     project,
     seriesId,
     taskId,
+    taskDescription: project?.description || '',
     addPick: handleAddPick,
     removePick: handleRemovePick,
     updatePick: handleUpdatePick,

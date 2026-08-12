@@ -8,6 +8,7 @@ import SeriesPage from './pages/Series'
 import VibeEdit from './pages/VibeEdit'
 import PlanningDesk from './pages/PlanningDesk'
 import DataDesk from './pages/DataDesk'
+import VoiceDesk from './pages/VoiceDesk'
 import { loadSeriesList, loadTask } from './model/series'
 
 // ── 导航栏 ──
@@ -73,6 +74,15 @@ function AppLayout() {
           )}
 
           {isTaskPage ? (
+            <NavLink to={`/${seriesId}/${taskId}/voice`}
+              className={({ isActive }) =>
+                `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm ring-1 ring-green/30' : 'text-green/80 hover:text-green hover:bg-background/50'}`
+              }>配音台</NavLink>
+          ) : (
+            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">配音台</span>
+          )}
+
+          {isTaskPage ? (
             <NavLink to={`/${seriesId}/${taskId}/vibe`}
               className={({ isActive }) =>
                 `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm ring-1 ring-purple/30' : 'text-purple/80 hover:text-purple hover:bg-background/50'}`
@@ -118,6 +128,7 @@ function App() {
               <Route index element={<Navigate to="data" replace />} />
               <Route path="data" element={<DataDesk />} />
               <Route path="planning" element={<PlanningDesk />} />
+              <Route path="voice" element={<VoiceDesk />} />
               <Route path="timeline" element={<Navigate to="vibe" replace />} />
               <Route path="vibe" element={<VibeEdit />} />
             </Route>

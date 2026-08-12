@@ -63,6 +63,7 @@ def list_tasks(drama_name: str):
             tasks.append({
                 "name": name, "status": "editing",
                 "segments": seg_count, "duration": 0,
+                "description": "",
             })
     return tasks
 
@@ -73,6 +74,7 @@ def create_task(data: dict, docx_bytes: bytes = None, audio_bytes: bytes = None,
     drama_name = data.get("drama", project_name)
     task_name = data.get("name", "").strip()
     local_path = data.get("local_path", "").strip()
+    description = data.get("description", "").strip()
 
     if not task_name:
         return {"ok": False, "error": "缺少任务名称"}
@@ -110,7 +112,7 @@ def create_task(data: dict, docx_bytes: bytes = None, audio_bytes: bytes = None,
             if not drama_id:
                 drama_id = db.ensure_drama(drama_name)
             if drama_id:
-                db.create_task(drama_id, task_name)
+                db.create_task(drama_id, task_name, description)
             return {"ok": True, "task": task_name, "steps": [],
                     "note": "未上传docx，脚本可由AI编剧生成"}
 
@@ -126,7 +128,7 @@ def create_task(data: dict, docx_bytes: bytes = None, audio_bytes: bytes = None,
         if not drama_id:
             drama_id = db.ensure_drama(drama_name)
         if drama_id:
-            task_id = db.create_task(drama_id, task_name)
+            task_id = db.create_task(drama_id, task_name, description)
             if r["ok"] and (task_dir / "segments.json").exists():
                 seg_data = json.load(open(task_dir / "segments.json"))
                 db.save_task_segments(task_id, seg_data.get("segments", []))

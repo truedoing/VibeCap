@@ -25,6 +25,7 @@ export default defineConfig({
       '/dramas': 'http://localhost:8765',
       '/tasks': 'http://localhost:8765',
       '/tasks/create': 'http://localhost:8765',
+      '/tasks/description': 'http://localhost:8765',
       '/posters': 'http://localhost:8765',
       '/data': 'http://localhost:8765',
       '/picks': 'http://localhost:8765',

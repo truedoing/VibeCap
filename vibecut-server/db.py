@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     drama_id INTEGER NOT NULL REFERENCES dramas(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
+    description TEXT DEFAULT '',
     status TEXT DEFAULT 'editing' CHECK(status IN ('editing','reviewing','delivered')),
     segments_count INTEGER DEFAULT 0,
     duration REAL DEFAULT 0,
@@ -130,6 +131,7 @@ MIGRATIONS = [
     "ALTER TABLE task_segments ADD COLUMN source_end REAL",
     "ALTER TABLE task_segments ADD COLUMN section_role TEXT DEFAULT ''",
     "ALTER TABLE task_segments ADD COLUMN note TEXT DEFAULT ''",
+    "ALTER TABLE tasks ADD COLUMN description TEXT DEFAULT ''",
 ]
 
 
@@ -350,7 +352,7 @@ class VibeCutDB:
         """返回剧集下所有任务（API: /tasks）"""
         c = self._cursor()
         rows = c.execute("""
-            SELECT name, status, segments_count, duration, picks_json, created_at, updated_at
+            SELECT name, status, segments_count, duration, picks_json, created_at, updated_at, description
             FROM tasks WHERE drama_id = ? ORDER BY created_at DESC
         """, (drama_id,)).fetchall()
         return [
@@ -359,6 +361,7 @@ class VibeCutDB:
                 "segments": r["segments_count"],
                 "status": r["status"],
                 "duration": r["duration"],
+                "description": r["description"] or "",
             }
             for r in rows
         ]
@@ -376,23 +379,32 @@ class VibeCutDB:
         row = c.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return dict(row) if row else None
 
-    def create_task(self, drama_id: int, name: str) -> int:
-        """创建任务，返回 task_id"""
+    def create_task(self, drama_id: int, name: str, description: str = "") -> int:
+        """创建任务，返回 task_id。已有任务时更新 description。"""
         c = self._cursor()
         c.execute(
-            "INSERT OR IGNORE INTO tasks (drama_id, name) VALUES (?, ?)",
-            (drama_id, name),
+            "INSERT INTO tasks (drama_id, name, description) VALUES (?, ?, ?) "
+            "ON CONFLICT(drama_id, name) DO UPDATE SET description=excluded.description",
+            (drama_id, name, description or ""),
         )
         self.commit()
         task = self.get_task(drama_id, name)
         if task:
             return task["id"]
-        # 如果已存在，返回现有 ID
         row = c.execute(
             "SELECT id FROM tasks WHERE drama_id = ? AND name = ?",
             (drama_id, name),
         ).fetchone()
         return row["id"] if row else 0
+
+    def update_task_description(self, drama_id: int, name: str, description: str) -> None:
+        """更新任务描述"""
+        c = self._cursor()
+        c.execute(
+            "UPDATE tasks SET description = ?, updated_at = unixepoch() WHERE drama_id = ? AND name = ?",
+            (description, drama_id, name),
+        )
+        self.commit()
 
     def update_task_picks(self, task_id: int, picks_json: str) -> None:
         c = self._cursor()

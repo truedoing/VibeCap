@@ -1,8 +1,12 @@
-"""可复用的 SSE (Server-Sent Events) 发射器 + 心跳"""
+"""可复用的 SSE (Server-Sent Events) 发射器 + 流式生成器
+
+v1.1 — 提取 main.py 的 _sse_gen() 为通用 sse_stream()，消除 5 处重复代码。
+"""
 
 import json
 import threading
 import time
+import queue
 from typing import Callable
 
 
@@ -55,3 +59,58 @@ def start_heartbeat(emit_fn: Callable, interval: float = 15.0) -> list:
 
     threading.Thread(target=_beat, daemon=True).start()
     return heartbeat_active
+
+
+def sse_stream(inner_fn, *args):
+    """通用 SSE 生成器 — 消除 main.py 中 5 处重复的 _sse_gen 模式。
+
+    用法:
+        def my_work(task_name, emit):
+            emit("progress", {"msg": "starting"})
+            ...
+            emit("complete", {"ok": True})
+
+        return StreamingResponse(
+            sse_stream(my_work, task_name),
+            media_type="text/event-stream"
+        )
+    """
+    q = queue.Queue()
+
+    def _emit(event, data):
+        q.put(f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n")
+
+    heartbeat_active = [True]
+
+    def _heartbeat():
+        while heartbeat_active[0]:
+            time.sleep(15)
+            try:
+                q.put(f"event: heartbeat\ndata: {json.dumps({'ts': time.time()})}\n\n")
+            except Exception:
+                break
+
+    threading.Thread(target=_heartbeat, daemon=True).start()
+
+    def _run():
+        try:
+            inner_fn(*args, _emit)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            try:
+                _emit("error", {"error": str(e)[:200]})
+            except Exception:
+                pass
+        finally:
+            time.sleep(0.5)
+            heartbeat_active[0] = False
+            q.put(None)  # sentinel
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    while True:
+        chunk = q.get()
+        if chunk is None:
+            break
+        yield chunk

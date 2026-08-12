@@ -60,6 +60,7 @@ export function createTask(seriesId, name, extras = {}) {
     id: 't_' + Date.now(),
     seriesId,
     name,
+    description: extras.description || '',
     status: 'editing',  // editing | reviewing | delivered
     picks: {},
     timeline: null,

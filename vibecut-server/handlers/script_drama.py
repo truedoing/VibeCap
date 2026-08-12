@@ -35,7 +35,7 @@ def generate_drama_script(
       3. 保存结果
       4. 发送 complete/error 事件
     """
-    from drama_script_agents import run_drama_pipeline
+    from agents.drama_script_agents import run_drama_pipeline
 
     drama = drama_name or project_name
     emit_progress("init", f"🎬 编剧Agent启动 · 剧目: {drama} · 选题: {topic[:40]}")

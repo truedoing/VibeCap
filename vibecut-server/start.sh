@@ -22,4 +22,4 @@ fi
 
 echo "VibeCut 生产模式: http://localhost:$PORT"
 echo "  drama=$DRAMA  task=$TASK"
-/opt/anaconda3/bin/python3 server.py --drama "$DRAMA" --task "$TASK" --port "$PORT"
+/opt/anaconda3/bin/python3 main.py --project "$DRAMA" --task "$TASK" --port "$PORT"

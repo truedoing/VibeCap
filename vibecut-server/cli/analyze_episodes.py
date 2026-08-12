@@ -17,7 +17,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent  # cli/ → vibecut-server/ → VIBECAP/
 DRAMA_DIR = BASE_DIR / "都挺好"
 SRC_VIDEOS = Path("/Users/zgl/解说剪辑/都挺好原剧")
 PROXY_DIR = DRAMA_DIR / "proxies"

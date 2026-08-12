@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { loadSeriesList, createSeries, createTask, loadTasks, saveTask } from '../model/series'
-import { Plus, Tv, FolderOpen, RefreshCw, Upload, X, ChevronRight, AlertTriangle, CheckCircle, XCircle, Info } from 'lucide-react'
+import { Plus, Tv, FolderOpen, RefreshCw, Upload, X, ChevronRight, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, XCircle, Info } from 'lucide-react'
 
-// ── Toast 通知系统 ──
+// Toast components (unchanged)
 const TOAST_ICONS = { ok: CheckCircle, error: XCircle, info: Info }
 const TOAST_CLASSES = {
   ok: 'border-green-500/20 bg-green-500/5 text-green-400',
@@ -45,13 +45,10 @@ function ToastContainer() {
   )
 }
 
-// ── 删除确认弹窗 ──
 function DeleteConfirmModal({ taskName, onConfirm, onClose }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={onClose}>
-      <div className="bg-card border border-border rounded-xl p-6 w-[380px] shadow-2xl animate-in fade-in zoom-in-95 duration-150"
-        onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-card border border-border rounded-xl p-6 w-[380px] shadow-2xl animate-in fade-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
             <AlertTriangle size={20} className="text-red-400" />
@@ -64,26 +61,20 @@ function DeleteConfirmModal({ taskName, onConfirm, onClose }) {
         <p className="text-xs text-muted-foreground mb-1">将永久删除任务及所有关联数据：</p>
         <div className="p-3 rounded-lg bg-secondary/30 border border-border mb-5">
           <p className="text-sm font-medium text-foreground">{taskName}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">分段 · 时间轴缓存 · picks</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">分段 ・ 时间轴缓存 ・ picks</p>
         </div>
         <div className="flex gap-2 justify-end">
-          <button onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-border text-xs text-muted-foreground hover:bg-accent transition-colors">
-            取消
-          </button>
-          <button onClick={onConfirm}
-            className="px-4 py-2 rounded-lg bg-red-500/15 border border-red-500/20 text-xs text-red-400 hover:bg-red-500/25 transition-colors font-medium">
-            确认删除
-          </button>
+          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-xs text-muted-foreground hover:bg-accent transition-colors">取消</button>
+          <button onClick={onConfirm} className="px-4 py-2 rounded-lg bg-red-500/15 border border-red-500/20 text-xs text-red-400 hover:bg-red-500/25 transition-colors font-medium">确认删除</button>
         </div>
       </div>
     </div>
   )
 }
 
-// ── 新建任务内联表单 ──
 function NewTaskForm({ dramaName, onCreated, onClose }) {
   const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
   const [docxFile, setDocxFile] = useState(null)
   const [audioFile, setAudioFile] = useState(null)
   const [localPath, setLocalPath] = useState('')
@@ -93,15 +84,12 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
 
   const handleCreate = async () => {
     if (!name.trim()) return
-    if (!docxFile && !audioFile && !useLocalPath) {
-      setResult({ ok: false, error: '请至少上传解说文案或音频' })
-      return
-    }
     setCreating(true)
     try {
       const fd = new FormData()
       fd.append('drama', dramaName)
       fd.append('name', name.trim())
+      if (description.trim()) fd.append('description', description.trim())
       if (useLocalPath && localPath.trim()) {
         fd.append('local_path', localPath.trim())
       } else {
@@ -123,17 +111,18 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={14} /></button>
       </div>
       <input autoFocus value={name} onChange={e => setName(e.target.value)}
-        placeholder="任务名称，如 Task7030"
+        placeholder="任务名称，如 Task0804"
         className="w-full bg-card border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary/50" />
+      <textarea value={description} onChange={e => setDescription(e.target.value)}
+        placeholder="任务描述（将自动填入编剧台选题），如：苏明成人物线：从妈宝到守护者"
+        rows={2}
+        className="w-full bg-card border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary/50 resize-none" />
       <div className="flex gap-1 text-[10px]">
-        <button onClick={() => setUseLocalPath(false)}
-          className={`px-2 py-1 rounded ${!useLocalPath ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>上传文件</button>
-        <button onClick={() => setUseLocalPath(true)}
-          className={`px-2 py-1 rounded ${useLocalPath ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>本地路径</button>
+        <button onClick={() => setUseLocalPath(false)} className={`px-2 py-1 rounded ${!useLocalPath ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>上传文件</button>
+        <button onClick={() => setUseLocalPath(true)} className={`px-2 py-1 rounded ${useLocalPath ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>本地路径</button>
       </div>
       {useLocalPath ? (
-        <input value={localPath} onChange={e => setLocalPath(e.target.value)}
-          placeholder="素材目录路径"
+        <input value={localPath} onChange={e => setLocalPath(e.target.value)} placeholder="素材目录路径"
           className="w-full bg-card border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary/50" />
       ) : (
         <div className="flex gap-2">
@@ -147,11 +136,7 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
           </label>
         </div>
       )}
-      {result && (
-        <p className={`text-[10px] ${result.ok ? 'text-green-400' : 'text-red-400'}`}>
-          {result.ok ? '✅ 创建成功' : result.error || '失败'}
-        </p>
-      )}
+      {result && <p className={`text-[10px] ${result.ok ? 'text-green-400' : 'text-red-400'}`}>{result.ok ? '✅ 创建成功' : result.error || '失败'}</p>}
       <button onClick={handleCreate} disabled={!name.trim() || creating}
         className="w-full py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-40">
         {creating ? '创建中...' : '创建任务'}
@@ -163,12 +148,74 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
 const SLUG_MAP = { '都挺好': 'doutinghao', '杨老师教育': 'yanglaoshi' }
 function toSlug(name) { return SLUG_MAP[name] || encodeURIComponent(name) }
 
+function TaskDetail({ task, dramaName }) {
+  const nav = useNavigate()
+  const [info, setInfo] = useState(null)
+
+  useEffect(() => {
+    fetch(`/segments.json?task=${encodeURIComponent(task.name)}`)
+      .then(r => r.json())
+      .then(data => {
+        const segs = data.segments || []
+        const narrCount = segs.filter(s => s.narration_text || s.highlight_text).length
+        const totalChars = segs.reduce((sum, s) => sum + (s.narration_text || '').length, 0)
+        const hasAudio = data.audio_verified || segs.some(s => s.audio_duration > 0)
+        setInfo({ count: segs.length, narrCount, totalChars, hasAudio })
+      })
+      .catch(() => setInfo({ count: 0, narrCount: 0, totalChars: 0, hasAudio: false }))
+  }, [task.name])
+
+  return (
+    <div className="px-4 pb-3 border-t border-border/50">
+      <div className="p-3 rounded-lg bg-secondary/20 space-y-2">
+        {/* 任务描述 — 始终显示，直接就是 task.description */}
+        <div>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">任务描述</p>
+          <p className="text-xs text-foreground/80 leading-relaxed">
+            {task.description || '暂无描述'}
+          </p>
+        </div>
+        {/* 状态网格 */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded bg-card px-2 py-1.5">
+            <p className="text-[9px] text-muted-foreground">分段</p>
+            <p className="text-sm font-bold text-foreground">{info ? info.count : '...'}</p>
+          </div>
+          <div className="rounded bg-card px-2 py-1.5">
+            <p className="text-[9px] text-muted-foreground">解说词</p>
+            <p className="text-sm font-bold text-foreground">{info ? info.narrCount : '...'}</p>
+          </div>
+          <div className="rounded bg-card px-2 py-1.5">
+            <p className="text-[9px] text-muted-foreground">配音</p>
+            <p className="text-sm font-bold text-foreground">{info ? (info.hasAudio ? '✅' : '―') : '...'}</p>
+          </div>
+        </div>
+        <div className="flex gap-1.5">
+          <button onClick={() => nav(`/${toSlug(dramaName)}/${task.name}/planning`)}
+            className="flex-1 py-1 rounded text-[10px] bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors font-medium">
+            ✍️ 编剧台
+          </button>
+          <button onClick={() => nav(`/${toSlug(dramaName)}/${task.name}/voice`)}
+            className="flex-1 py-1 rounded text-[10px] bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors font-medium">
+            🎙️ 配音台
+          </button>
+          <button onClick={() => nav(`/${toSlug(dramaName)}/${task.name}/vibe`)}
+            className="flex-1 py-1 rounded text-[10px] bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors font-medium">
+            🎬 分镜台
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Home() {
   const nav = useNavigate()
   const [dramas, setDramas] = useState([])
   const [syncing, setSyncing] = useState(false)
   const [showNewTask, setShowNewTask] = useState(null)
-  const [deleteTarget, setDeleteTarget] = useState(null)  // { drama, name }
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [expandedTask, setExpandedTask] = useState(null)
 
   const syncFromBackend = async () => {
     setSyncing(true)
@@ -181,8 +228,6 @@ export default function Home() {
         return { ...d, taskList: tasks }
       }))
       setDramas(enriched)
-
-      // 同步到 localStorage
       let lsList = loadSeriesList()
       for (const d of enriched) {
         let existing = lsList.find(s => s.name === d.name)
@@ -194,10 +239,17 @@ export default function Home() {
           const existingTasks = loadTasks(existing.id)
           if (!existingTasks.find(et => et.name === t.name)) {
             const task = createTask(existing.id, t.name, {
+              description: t.description || '',
               narrText: `${t.segments} 段解说`,
             })
             task._realName = t.name
             saveTask(task)
+          } else {
+            const et = existingTasks.find(et2 => et2.name === t.name)
+            if (et && (t.description || '') !== (et.description || '')) {
+              et.description = t.description || ''
+              saveTask(et)
+            }
           }
         }
       }
@@ -230,8 +282,6 @@ export default function Home() {
   return (
     <div className="flex-1 flex flex-col overflow-auto bg-background">
       <div className="max-w-4xl mx-auto w-full p-6">
-
-        {/* 顶部操作栏 */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-lg font-bold text-foreground">项目</h1>
@@ -241,17 +291,13 @@ export default function Home() {
                 : '同步项目数据'}
             </p>
           </div>
-          <button
-            onClick={syncFromBackend}
-            disabled={syncing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-accent transition-all"
-          >
+          <button onClick={syncFromBackend} disabled={syncing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-accent transition-all">
             <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
             {syncing ? '同步中...' : '刷新'}
           </button>
         </div>
 
-        {/* 空状态 */}
         {dramas.length === 0 && !syncing ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <Tv size={48} className="text-muted-foreground/30 mb-4" />
@@ -264,13 +310,9 @@ export default function Home() {
               const tasks = d.taskList || []
               return (
                 <div key={d.name} className="rounded-xl border border-border bg-card overflow-hidden">
-                  {/* 剧集头部 */}
                   <div className="flex items-center gap-4 p-4">
-                    {/* 封面 */}
                     <div className="w-16 h-22 rounded-lg overflow-hidden bg-secondary shrink-0">
-                      <img
-                        src={`/posters/${encodeURIComponent(d.name)}/cover.jpg`}
-                        alt={d.name}
+                      <img src={`/posters/${encodeURIComponent(d.name)}/cover.jpg`} alt={d.name}
                         className="w-full h-full object-cover"
                         onError={(e) => {
                           e.target.style.display = 'none'
@@ -281,24 +323,18 @@ export default function Home() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <h2 className="text-base font-bold text-foreground">{d.name}</h2>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
-                        {tasks.length} 个任务
-                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">{tasks.length} 个任务</p>
                     </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setShowNewTask(showNewTask === d.name ? null : d.name) }}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                    >
+                    <button onClick={(e) => { e.stopPropagation(); setShowNewTask(showNewTask === d.name ? null : d.name) }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
                       <Plus size={13} /> 新建任务
                     </button>
                   </div>
 
-                  {/* 新建任务表单 */}
                   {showNewTask === d.name && (
                     <NewTaskForm dramaName={d.name} onCreated={() => { setShowNewTask(null); syncFromBackend() }} onClose={() => setShowNewTask(null)} />
                   )}
 
-                  {/* 任务列表 */}
                   {tasks.length > 0 && (
                     <div className="border-t border-border">
                       {tasks.map(t => {
@@ -325,33 +361,47 @@ export default function Home() {
                           e.preventDefault()
                           setDeleteTarget({ drama: d.name, name: t.name })
                         }
+                        const isExpanded = expandedTask === `${d.name}||${t.name}`
                         return (
-                          <div
-                            key={t.name}
-                            onClick={() => nav(`/${toSlug(d.name)}/${t.name}`)}
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-accent transition-colors border-b border-border last:border-b-0 cursor-pointer"
-                          >
-                            <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                              <FolderOpen size={13} className="text-primary" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-medium text-foreground">{t.name}</p>
-                                <span onClick={(e) => { e.stopPropagation(); cycleStatus() }} className={`text-[10px] px-1.5 py-0.5 rounded border cursor-pointer hover:opacity-80 ${st.cls}`}>{st.label}</span>
-                              </div>
-                              <p className="text-[11px] text-muted-foreground">
-                                {t.segments} 段解说
-                                {t.duration > 0 && ` · ${Math.round(t.duration)}秒`}
-                              </p>
-                            </div>
-                            <ChevronRight size={14} className="text-muted-foreground/30" />
-                            <button
-                              onClick={deleteTask}
-                              className="flex items-center justify-center w-6 h-6 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors shrink-0"
-                              title="删除任务"
+                          <div key={t.name}>
+                            <div
+                              onClick={() => nav(`/${toSlug(d.name)}/${t.name}/data`)}
+                              className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-accent transition-colors border-b border-border last:border-b-0 cursor-pointer"
                             >
-                              <X size={13} />
-                            </button>
+                              <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                                <FolderOpen size={13} className="text-primary" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium text-foreground">{t.name}</p>
+                                  <span onClick={(e) => { e.stopPropagation(); cycleStatus() }}
+                                    className={`text-[10px] px-1.5 py-0.5 rounded border cursor-pointer hover:opacity-80 ${st.cls}`}
+                                  >{st.label}</span>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground">
+                                  {t.segments} 段解说
+                                  {t.duration > 0 && ` · ${Math.round(t.duration)}秒`}
+                                </p>
+                                {t.description && (
+                                  <p className="text-[10px] text-purple-400/60 mt-0.5 truncate max-w-[300px]"
+                                     title={t.description}>📝 {t.description}</p>
+                                )}
+                              </div>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setExpandedTask(isExpanded ? null : `${d.name}||${t.name}`) }}
+                                className="flex items-center justify-center w-6 h-6 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                                title="展开任务详情"
+                              >
+                                {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                              </button>
+                              <ChevronRight size={14} className="text-muted-foreground/30" />
+                              <button onClick={deleteTask}
+                                className="flex items-center justify-center w-6 h-6 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors shrink-0"
+                                title="删除任务">
+                                <X size={13} />
+                              </button>
+                            </div>
+                            {isExpanded && <TaskDetail task={t} dramaName={d.name} />}
                           </div>
                         )
                       })}
@@ -364,16 +414,11 @@ export default function Home() {
         )}
       </div>
 
-      {/* 删除确认弹窗 */}
       {deleteTarget && (
-        <DeleteConfirmModal
-          taskName={deleteTarget.name}
+        <DeleteConfirmModal taskName={deleteTarget.name}
           onConfirm={handleDeleteConfirm}
-          onClose={() => setDeleteTarget(null)}
-        />
+          onClose={() => setDeleteTarget(null)} />
       )}
-
-      {/* Toast 通知容器 */}
       <ToastContainer />
     </div>
   )
