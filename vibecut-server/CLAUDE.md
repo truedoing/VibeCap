@@ -21,7 +21,7 @@ vibecut-server/
 │   ├── media.py                ← GET /proxies/*, /clips/*, /posters/*; POST 剪辑操作
 │   ├── ai.py                   ← POST /chat, /dialogue_match, /storyboard_suggest, /script/*
 │   ├── sse_script.py           ← SSE: /script/generate_script_stream, /refine, /generate_drama_script
-│   ├── sse_voiceover.py        ← SSE: /voiceover/generate_stream (配音台)
+│   ├── sse_voiceover.py        ← SSE: /voiceover/generate_stream, /import_audio, /regenerate_segment (配音台)
 │   ├── pipeline.py             ← GET/POST /data/*
 │   ├── export.py               ← POST /export/extract_clips
 │   ├── picks.py                ← POST /picks
@@ -34,7 +34,7 @@ vibecut-server/
 │   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY 分镜 (581行)
 │   ├── script_gen.py           ← interview AI脚本生成 (v3流水线/v4故事优先/精切 SSE)
 │   ├── script_drama.py         ← drama AI脚本生成 SSE handler
-│   ├── voiceover.py            ← 配音台: 配音师Agent + TTS生成
+│   ├── voiceover.py            ← 配音台: 配音师Agent + 音频导入
 │   ├── pipeline.py             ← 后台加工流水线 (电视剧+口播)
 │   ├── media.py                ← 媒体服务 (代理视频/片段提取/预览/导出)
 │   ├── static.py               ← SPA前端回退 + 任务目录文件服务
@@ -61,9 +61,10 @@ vibecut-server/
 │   ├── env.py                  ← 统一.env加载
 │   ├── vlm_cache.py            ← VLM 场景缓存懒加载
 │   ├── storyboard_match.py     ← 分镜匹配引擎
+│   ├── f5_worker.py            ← F5-TTS 常驻 worker (stdin/stdout JSON 协议, 备用)
 │   └── scene_map.py            ← 场记Agent: scene_map + synopsis生成
 │
-├── tts_engine.py               ← 统一 TTS 引擎 (MiMo API)
+├── tts_engine.py               ← 统一 TTS 引擎 (F5-TTS subprocess + MiMo API 双引擎)
 └── export_capcut.py            ← 剪映草稿导出
 ```
 
@@ -94,6 +95,10 @@ cd vibecut-server
 | /script/refine | POST | 精切 SSE |
 | /script/analyze_transcript | POST | LLM 转写分析 |
 | /script/generate_from_outline | POST | 大纲→segments |
+| /voiceover/import_audio | POST | **配音台: 导入整段解说音频 SSE (ASR→对齐→切分)** |
+| /voiceover/generate_stream | POST | 配音台: 配音师Agent + TTS生成 SSE |
+| /voiceover/regenerate_segment | POST | 配音台: 单段重生成 SSE |
+| /voiceover/preview_voice | POST | 配音台: 音色试听 (磁盘缓存) |
 | /chat | POST | 对话式素材搜索 |
 | /dialogue_match | POST | 台词拆解+ASR匹配 |
 | /storyboard_suggest | POST | 分镜推荐 |
@@ -151,6 +156,15 @@ cd vibecut-server
 ```
 
 **scene_map 质量**: 46集共1511个场景，event/mood/location/characters 完整率 100%
+
+### VLM 管线关键修复 (v8.5.6)
+
+1. **MiMo v2.5 推理模型适配**: MiMo 是推理模型，`reasoning_content` 占满 token 导致 `content` 为空 → 大量 NoneType 错误。修复：content 空时 fallback 到 reasoning_content，max_tokens 1200→4000。
+2. **抽帧缺失**: `pick_keyframes_for_segment` 的 `n==0` 分支漏 `return`，返回 None。修复：补 return。
+3. **帧目录误删**: `analyze_episode` 每次传 `--proxy` 都 `rmtree(frames)` 强制重抽帧，并发 ffmpeg 超时。修复：复用已有帧。
+4. **ASR 人名标准化**: whisper 同音字误识别人名（朱莉→朱丽 107次、明诚→明成 107次等）。修复：`cli/normalize_asr_names.py` 全量修复 46 集 326 处 + scene_map prompt 加"人名归一化铁律"。
+
+**结果**: 46 集 VLM 全部完成，空响应 452→17，情绪矛盾 22→0。
 
 ### 依赖
 

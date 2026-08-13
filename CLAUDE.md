@@ -32,11 +32,11 @@
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 产品定位：四台流水线
+## 产品定位：五台流水线
 
 ```
-项目 ──→ 数据台 ──→ 编剧台 ──→ 分镜台 ──→ 剪映
-制片      建索引     写解说词    分镜匹配     精剪导出
+项目 ──→ 数据台 ──→ 编剧台 ──→ 配音台 ──→ 分镜台 ──→ 剪映
+制片      建索引     写解说词    导入配音    分镜匹配    精剪导出
 ```
 
 | 台 | 角色 | 职责 |
@@ -44,6 +44,7 @@
 | 项目 | 制片 | 选项目，管进度 |
 | 数据台 | DIT | 建索引，跑管线 |
 | 编剧台 | 编剧 | 写解说词，生成脚本 (interview + drama双模式) |
+| 配音台 | 配音导演 | 导入整段解说音频 → ASR对齐切分 → 逐段试听 |
 | 分镜台 | 导演/分镜师 | 解说词 → 镜头匹配 |
 
 ## 项目类型
@@ -72,12 +73,14 @@ VibeCut/
 │   │   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY (581行)
 │   │   ├── script_gen.py           ← interview AI脚本生成 (SSE)
 │   │   ├── script_drama.py         ← drama AI脚本生成 SSE handler (新)
+│   │   ├── voiceover.py            ← 配音台: 配音师Agent + 音频导入 (新)
 │   │   ├── pipeline.py             ← 后台流水线
 │   │   ├── media.py                ← 媒体服务
 │   │   ├── static.py               ← SPA前端回退
 │   │   └── prompts/
 │   │       ├── director.py         ← DIRECTOR_PROMPT 模板 (150行)
-│   │       └── script_drama.py     ← 编剧Agent Prompt模板 (新)
+│   │       ├── script_drama.py     ← 编剧Agent Prompt模板 (新)
+│   │       └── voiceover.py        ← 配音师 Prompt模板 (新)
 │   │
 │   └── lib/
 │       ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo/DeepSeek)
@@ -91,6 +94,7 @@ VibeCut/
 │   └── src/
 │       ├── pages/
 │       │   ├── PlanningDesk.jsx  ← 编剧台: interview+drama双模式
+│       │   ├── VoiceDesk.jsx     ← 配音台: 音频导入 + 逐段试听
 │       │   ├── VibeEdit.jsx      ← 分镜台: 解说词→镜头匹配
 │       │   ├── DataDesk.jsx      ← 数据台: 流水线管理+质量评分
 │       │   └── Home.jsx          ← 项目
@@ -136,6 +140,8 @@ cd vibecut-web && npm run dev
 | POST /script/generate_story_first | POST | v4故事优先 SSE (interview) |
 | POST /script/generate_drama_script | POST | **v1 编剧Agent SSE (drama) — 新** |
 | POST /script/refine | POST | 精切 SSE |
+| POST /voiceover/import_audio | POST | **配音台: 导入整段解说音频 SSE (ASR→对齐→切分)** |
+| POST /voiceover/generate_stream | POST | 配音台: 配音师Agent + TTS生成 SSE |
 | POST /tasks/create_json | POST | 创建任务 (支持无docx, AI编剧模式) |
 | GET /data/quality?project= | GET | 每集数据质量统计 (ASR+VLM+scene_map+概要) |
 | GET /proxies/manifest | GET | 代理视频清单 |
@@ -146,6 +152,7 @@ cd vibecut-web && npm run dev
 - `/` — 项目 (Home)
 - `/:project/:task/data` — 数据台 (DataDesk)
 - `/:project/:task/planning` — 编剧台 (PlanningDesk, interview+drama双模式)
+- `/:project/:task/voice` — 配音台 (VoiceDesk, 音频导入)
 - `/:project/:task/vibe` — 分镜台 (VibeEdit)
 
 ## 电视剧数据管线 (v3.1)
@@ -175,6 +182,15 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 - 46集共1511个场景，event/mood完整率 100%
 - 场景维度: time_range, location, characters, event, mood
 - 每个场景对话段60-120s，相邻场景间隔≤15s
+
+### VLM 管线关键修复 (v8.5.6)
+
+1. **MiMo v2.5 推理模型适配**: MiMo 是推理模型，`reasoning_content` 占满 token 导致 `content` 为空 → NoneType 错误。修复：content 空时 fallback 到 reasoning_content，max_tokens 1200→4000。
+2. **抽帧缺失**: `pick_keyframes_for_segment` 的 `n==0` 分支漏 `return` 返回 None。修复：补 return。
+3. **帧目录误删**: `analyze_episode` 传 `--proxy` 时 `rmtree(frames)` 强制重抽帧，并发 ffmpeg 超时。修复：复用已有帧。
+4. **ASR 人名标准化**: whisper 同音字误识别人名（朱莉→朱丽、明诚→明成、宋明成→苏明成等）。修复：`cli/normalize_asr_names.py` 全量修复 46 集 326 处 + scene_map prompt 加"人名归一化铁律"。
+
+**结果**: 46 集 VLM 全部完成，空响应 452→17，情绪矛盾 22→0。
 
 ## 编剧Agent v1 — Drama脚本生成 (新)
 
@@ -224,6 +240,33 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 ```json
 {"narration_text": "...", "highlight_text": "...", "scene_query": {"episode":21, "time_range":[240,330], "characters":["苏明成","苏明玉"], "mood":"愤怒"}, "episode_marker":{"episode":21, "approx_minute":4.0}, "source_start":240.0, "source_end":330.0, "mode":"A"}
 ```
+
+## 配音台 v1.2 — 音频导入
+
+**定位**: 配音是一次性操作，本机（Intel i5 + AMD Radeon Pro 570，无 CUDA 无 Apple Silicon）跑神经 TTS 分钟级，故走"别的机器生成 → 导入"路线。
+
+```
+整段解说音频.wav → faster-whisper ASR (narration_asr.json)
+                 → 文案↔ASR 对齐 (match_split.py, difflib)
+                 → 切分 narr_*.wav + narration.json + tts_meta.json
+                 → 反写 segments.json (audio_verified=true + audio_duration)
+```
+
+**关键模块**:
+- `handlers/voiceover.py` — `import_voiceover_audio()` 编排导入流程 + 补产物 gap
+- `cli/asr_narration.py` — 整段音频 ASR (faster-whisper base)
+- `cli/match_split.py` — 文案↔ASR 对齐切分
+- `lib/f5_worker.py` — F5-TTS 常驻 worker (备用，本机不启用)
+- `tts_engine.py` — 双引擎 (F5-TTS subprocess + MiMo API)
+
+**API**: `POST /voiceover/import_audio`
+```json
+{"task": "Task0804", "audio_path": "/path/to/解说音频.wav"}
+```
+
+**产出**: work_dir/tts_segments/narr_*.wav + segments.json 带 audio_duration (分镜台消费)
+
+**注意**: 导入前需 segments.json 文案与音频内容一致，否则 ASR 对齐失败 (所有段落切分成 0.3s)。
 
 ## 分镜匹配策略 (v8.5 — 导演Agent)
 

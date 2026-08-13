@@ -34,6 +34,7 @@ export default defineConfig({
       '/script': 'http://localhost:8765',
       '/export': 'http://localhost:8765',
       '/export_clips': 'http://localhost:8765',
+      '/voiceover': 'http://localhost:8765',
     }
   }
 })

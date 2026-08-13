@@ -9,7 +9,7 @@ A2: 对解说音频做本地 ASR → 带时间戳的文本（faster-whisper）
 import sys, os, json, subprocess
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent  # cli/ 目录上移两层到 VIBECAP/
 DRAMA_DIR = BASE_DIR / os.environ.get("VibeCut_DRAMA", "都挺好")
 TASK_DIR = DRAMA_DIR / "tasks" / os.environ.get("VibeCut_TASK", "Task7024")
 AUDIO_PATH = TASK_DIR / "解说音频.wav"

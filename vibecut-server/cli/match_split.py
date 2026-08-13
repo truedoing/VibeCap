@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from difflib import SequenceMatcher
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent  # cli/ 目录上移两层到 VIBECAP/
 DRAMA_DIR = BASE_DIR / os.environ.get("VibeCut_DRAMA", "都挺好")
 TASK_DIR = DRAMA_DIR / "tasks" / os.environ.get("VibeCut_TASK", "Task7024")
 SEGMENTS_PATH = TASK_DIR / "segments.json"

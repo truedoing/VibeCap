@@ -11,7 +11,8 @@ router = APIRouter(prefix="/data", tags=["流水线"])
 @router.get("/quality")
 def api_data_quality(project: str = "都挺好"):
     """返回每集的数据质量统计，供 DataDesk 展示"""
-    drama_dir = Path(__file__).resolve().parent.parent / project
+    # routers/pipeline.py → vibecut-server/ → VIBECAP/（项目数据在 VIBECAP/ 下）
+    drama_dir = Path(__file__).resolve().parent.parent.parent / project
     episodes = []
 
     for ep in range(1, 47):

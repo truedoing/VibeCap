@@ -27,7 +27,13 @@ def run_script(
     """
     if args_list is None:
         args_list = []
-    cmd = [PYTHON_BIN, "-u", str(SERVER_DIR / script_name)] + args_list
+    # v1.3 脚本移入 cli/ 目录，自动兼容根目录和 cli/ 两种位置
+    script_path = SERVER_DIR / script_name
+    if not script_path.exists() and not script_name.startswith("cli/"):
+        cli_path = SERVER_DIR / "cli" / script_name
+        if cli_path.exists():
+            script_path = cli_path
+    cmd = [PYTHON_BIN, "-u", str(script_path)] + args_list
     env = {**os.environ, "PYTHONUNBUFFERED": "1",
            "VibeCut_PROJECT": project_name, "VibeCut_TASK": args.task}
     if env_extra:

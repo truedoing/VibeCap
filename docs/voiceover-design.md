@@ -1,4 +1,4 @@
-# VibeCut 配音台设计文档 v1.0
+# VibeCut 配音台设计文档 v1.2
 
 ## 概述
 
@@ -6,12 +6,30 @@
 
 **设计理念**: AI 配音不是传统的“对口型”，而是“解说脚本的声音化”——先有音频时长，分镜台就能按精确时长配画面。
 
+**v1.2 架构调整**: 本机（Intel i5 + AMD Radeon Pro 570，无 CUDA 无 Apple Silicon）跑神经 TTS 是分钟级（F5-TTS 单段 6-13 分钟），不适合交互式生成。改为**"别的机器生成 → 本机导入"**：配音台核心从"TTS 生成"转为"整段音频导入 + ASR 对齐切分 + 逐段试听"。
+
 ## 流水线位置
 
 ```
 项目 ──→ 数据台 ──→ 编剧台 ──→ 配音台 ──→ 分镜台 ──→ 剪映
-制片      建索引     写脚本     AI语音     分镜匹配    精剪导出
+制片      建索引     写脚本     导入配音    分镜匹配    精剪导出
 ```
+
+## 导入流程 (v1.2 核心路径)
+
+```
+整段解说音频.wav → faster-whisper ASR (narration_asr.json)
+                 → 文案↔ASR 对齐 (match_split.py, difflib.SequenceMatcher)
+                 → 切分 narr_*.wav + narration.json + tts_meta.json
+                 → 反写 segments.json (audio_verified=true + audio_duration)
+```
+
+**API**: `POST /voiceover/import_audio`
+```json
+{"task": "Task0804", "audio_path": "/path/to/解说音频.wav"}
+```
+
+**关键约束**: 导入前需 segments.json 文案与音频内容**一致**，否则 ASR 对齐失败（所有段落切分成 0.3s）。
 
 ## 配音师 Agent (VoiceDirector)
 
@@ -245,9 +263,9 @@ work_dir/tts_segments/
 
 ## 已知限制与后续迭代
 
-1. **F5-TTS 未接入**: `f5tts_clone.py` 是离线方案，本次只用 MiMo 云 API
+1. **本机 TTS 慢**: F5-TTS 在本机（Intel i5 + AMD 无 CUDA）单段 6-13 分钟，仅作备用引擎；主流程走"别的机器生成 → 导入"
 2. **无波形可视化**: 当前用简单 `<audio>` 播放，Web Audio API 波形渲染待后续
-3. **无批量 re-generate**: 仅支持单段逐个生成 + 一键全部生成
+3. **导入需文案音频一致**: 文案与音频不匹配时 ASR 对齐失败（切分成 0.3s），需保证同版解说词
 4. **音色预览**: 预设音色无 sample 试听，需后续添加
 5. **分镜台消费**: `audio_duration` 已注入 segments.json，分镜台集成放下个迭代
 
@@ -255,4 +273,6 @@ work_dir/tts_segments/
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.2 | 2026-08-13 | 架构调整: 音频导入为主（ASR→对齐→切分→反写），TTS 生成降级备用 |
+| v1.1 | 2026-08-12 | 单段重生成 + 段级覆盖 + 音色试听 |
 | v1.0 | 2026-08-12 | 初始实现: 配音师 Agent + MiMo TTS 引擎 + VoiceDesk 页面 |

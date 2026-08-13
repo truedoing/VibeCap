@@ -1,14 +1,20 @@
 /**
- * 配音台 v1 — AI 解说语音生成
+ * 配音台 v1.1 — AI 解说语音生成
  * 三栏：音色库 | 脚本段落 | 全局控制
  *
  * 流水线位置: 编剧台 → 配音台 → 分镜台
  * 核心: 配音师Agent (VoiceDirector) 设计配音方案 → MiMo TTS 逐段生成
+ *
+ * v1.1 新增:
+ *  - 音色试听 (voicePreviewCache + previewVoice)
+ *  - 单段重生成 + 段级覆盖 (segOverrides + regenerateSegment)
+ *  - 文本展开/折叠 (80字符threshold)
+ *  - Audio cleanup on unmount
  */
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { useParams } from 'react-router-dom'
 import { colors, space, font, radius } from '../styles/theme'
-import { flexRow, flexCol, panelHeader, panelRoot, title, subtitle, label, mono, btn, card, divider as dividerStyle } from '../styles/mixins'
+import { flexRow, flexCol, panelHeader, panelRoot, title, subtitle, label, mono, btn, card, select as selectStyle, divider as dividerStyle } from '../styles/mixins'
 
 const F = { xs: 13, sm: 14, md: 15, lg: 16, xl: 18, mono: font.mono }
 
@@ -61,7 +67,7 @@ const Divider = memo(function Divider({ onDrag, dir = 'v' }) {
 })
 
 // ── 左侧：音色库 ──
-const VoiceLibrary = memo(function VoiceLibrary({ voice, setVoice, refAudio, setRefAudio }) {
+const VoiceLibrary = memo(function VoiceLibrary({ voice, setVoice, refAudio, setRefAudio, onPreviewVoice, previewingVoice }) {
   const [refPath, setRefPath] = useState(refAudio || '')
 
   return (
@@ -79,8 +85,22 @@ const VoiceLibrary = memo(function VoiceLibrary({ voice, setVoice, refAudio, set
               cursor: 'pointer', marginBottom: space.xs,
               transition: 'border-color 0.15s',
             }}>
-            <div style={{ ...title(), fontSize: F.sm }}>{v.label}</div>
-            <div style={{ ...subtitle(), fontSize: F.xs }}>{v.desc}</div>
+            <div style={{ ...flexRow(), justifyContent: 'space-between' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ ...title(), fontSize: F.sm }}>{v.label}</div>
+                <div style={{ ...subtitle(), fontSize: F.xs }}>{v.desc}</div>
+              </div>
+              <button
+                onClick={e => { e.stopPropagation(); onPreviewVoice(v.id) }}
+                disabled={previewingVoice === v.id}
+                style={{
+                  ...btn(previewingVoice === v.id ? 'disabled' : 'ghost', 'xs'),
+                  flexShrink: 0, marginLeft: space.xs,
+                }}
+                title="试听">
+                {previewingVoice === v.id ? '⏳' : '🔊'}
+              </button>
+            </div>
           </div>
         ))}
 
@@ -108,13 +128,26 @@ const VoiceLibrary = memo(function VoiceLibrary({ voice, setVoice, refAudio, set
 })
 
 // ── 中间：脚本段落列表 ──
-const SegmentList = memo(function SegmentList({ segments, ttsState, playingIdx, setPlayingIdx }) {
+const SegmentList = memo(function SegmentList({
+  segments, ttsState, playingIdx, setPlayingIdx,
+  segOverrides, setSegOverrides, onRegenerate, regeneratingSegs, generating,
+}) {
   const audioRefs = useRef({})
-  const scrollRef = useRef(null)
+
+  // Audio cleanup on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(audioRefs.current).forEach(a => {
+        try { a.pause(); a.src = '' } catch {}
+      })
+    }
+  }, [])
+
+  // 段文本展开/折叠
+  const [expandedSegs, setExpandedSegs] = useState({})
 
   const handlePlay = useCallback((idx, path) => {
     if (playingIdx === idx) {
-      // 暂停
       if (audioRefs.current[idx]) {
         audioRefs.current[idx].pause()
         audioRefs.current[idx].currentTime = 0
@@ -122,13 +155,11 @@ const SegmentList = memo(function SegmentList({ segments, ttsState, playingIdx, 
       setPlayingIdx(null)
       return
     }
-    // 停止当前
     if (audioRefs.current[playingIdx]) {
       audioRefs.current[playingIdx].pause()
       audioRefs.current[playingIdx].currentTime = 0
     }
-    // 播放新的
-    const url = `/tts_segments/${path.split('/').pop()}`
+    const url = `/tts_segments/${path.split('/').pop()}?t=${Date.now()}`
     const audio = new Audio(url)
     audioRefs.current[idx] = audio
     audio.onended = () => setPlayingIdx(null)
@@ -162,7 +193,7 @@ const SegmentList = memo(function SegmentList({ segments, ttsState, playingIdx, 
           {Object.values(ttsState).filter(s => s.status === 'ready').length}/{segments.length} 已生成
         </span>
       </div>
-      <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: space.sm }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: space.sm }}>
         {segments.map((seg, i) => {
           const state = ttsState[seg.seg_id] || { status: 'pending' }
           const isReady = state.status === 'ready'
@@ -203,25 +234,106 @@ const SegmentList = memo(function SegmentList({ segments, ttsState, playingIdx, 
                 )}
               </div>
 
-              {/* 解说词文本 */}
+              {/* 解说词文本 (可展开/折叠) */}
               <div style={{
                 fontSize: F.sm, color: isReady ? colors.text : colors.textDim,
-                lineHeight: 1.5, marginBottom: isReady ? space.xs : 0,
+                lineHeight: 1.5, marginBottom: space.xs,
                 fontStyle: isReady ? 'normal' : 'italic',
               }}>
-                {seg.narration_text.length > 80
-                  ? seg.narration_text.slice(0, 80) + '...'
-                  : seg.narration_text}
+                {(() => {
+                  const LIMIT = 80
+                  const tooLong = seg.narration_text.length > LIMIT
+                  const showFull = expandedSegs[seg.seg_id]
+                  if (tooLong && !showFull) return seg.narration_text.slice(0, LIMIT) + '...'
+                  return seg.narration_text
+                })()}
               </div>
+              {seg.narration_text.length > 80 && (
+                <button
+                  onClick={() => setExpandedSegs(prev => ({ ...prev, [seg.seg_id]: !prev[seg.seg_id] }))}
+                  style={{ ...btn('ghost', 'xs'), marginBottom: space.xs, fontSize: F.xs, color: colors.blue }}>
+                  {expandedSegs[seg.seg_id] ? '收起 ▲' : '展开全文 ▼'}
+                </button>
+              )}
 
-              {/* 播放按钮 (仅已生成段) */}
-              {isReady && (
-                <div style={S.flexRow}>
-                  <button
-                    onClick={() => handlePlay(seg.seg_id, state.audioPath)}
-                    style={btn(isPlaying ? 'danger' : 'success', 'xs')}>
-                    {isPlaying ? '⏹ 停止' : '▶ 播放'}
-                  </button>
+              {/* ── 覆盖参数 (collapsible) ── */}
+              {(state.status === 'pending' || isReady) && (
+                <details style={{ marginTop: space.xs }}>
+                  <summary style={{
+                    ...label(), fontSize: F.xs, cursor: 'pointer',
+                    color: segOverrides[seg.seg_id] ? colors.blue : colors.textFaint,
+                  }}>
+                    {segOverrides[seg.seg_id] ? '⚙️ 已覆盖' : '⚙️ 覆盖参数'}
+                  </summary>
+                  <div style={{ ...flexCol({ gap: 2 }), marginTop: space.xs }}>
+                    <div style={flexRow({ gap: 2 })}>
+                      <span style={{ ...label(), fontSize: F.xs, width: 32, flexShrink: 0 }}>音色</span>
+                      <select
+                        value={segOverrides[seg.seg_id]?.voice || ''}
+                        onChange={e => {
+                          const v = e.target.value
+                          setSegOverrides(prev => {
+                            const cur = { ...(prev[seg.seg_id] || {}) }
+                            if (v) cur.voice = v; else delete cur.voice
+                            if (!Object.keys(cur).length) { const n = { ...prev }; delete n[seg.seg_id]; return n }
+                            return { ...prev, [seg.seg_id]: cur }
+                          })
+                        }}
+                        style={{
+                          flex: 1, background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`,
+                          borderRadius: radius.sm, padding: '1px 4px', fontSize: F.xs,
+                        }}>
+                        <option value="">默认</option>
+                        {PRESET_VOICES.map(v => (
+                          <option key={v.id} value={v.id}>{v.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={flexRow({ gap: 2 })}>
+                      <span style={{ ...label(), fontSize: F.xs, width: 32, flexShrink: 0 }}>情绪</span>
+                      <select
+                        value={segOverrides[seg.seg_id]?.emotion || ''}
+                        onChange={e => {
+                          const em = e.target.value
+                          setSegOverrides(prev => {
+                            const cur = { ...(prev[seg.seg_id] || {}) }
+                            if (em) cur.emotion = em; else delete cur.emotion
+                            if (!Object.keys(cur).length) { const n = { ...prev }; delete n[seg.seg_id]; return n }
+                            return { ...prev, [seg.seg_id]: cur }
+                          })
+                        }}
+                        style={{
+                          flex: 1, background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`,
+                          borderRadius: radius.sm, padding: '1px 4px', fontSize: F.xs,
+                        }}>
+                        <option value="">配音师自动</option>
+                        {Object.entries(EMOTION_LABELS).map(([key, label]) => (
+                          <option key={key} value={key}>{EMOTION_ICONS[key]} {label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </details>
+              )}
+
+              {/* ── 播放 + 重生成按钮 ── */}
+              {(isReady || isGenerating) && (
+                <div style={{ ...S.flexRow, marginTop: space.xs }}>
+                  {isReady && (
+                    <button
+                      onClick={() => handlePlay(seg.seg_id, state.audioPath)}
+                      style={btn(isPlaying ? 'danger' : 'success', 'xs')}>
+                      {isPlaying ? '⏹ 停止' : '▶ 播放'}
+                    </button>
+                  )}
+                  {isReady && (
+                    <button
+                      onClick={() => onRegenerate(seg.seg_id)}
+                      disabled={generating || regeneratingSegs.has(seg.seg_id)}
+                      style={btn(generating || regeneratingSegs.has(seg.seg_id) ? 'disabled' : 'ghost', 'xs')}>
+                      {regeneratingSegs.has(seg.seg_id) ? '🔄 重生成中...' : '🔄 重生成'}
+                    </button>
+                  )}
                   {state.pause_after_ms > 0 && (
                     <span style={{ ...label(), fontSize: F.xs }}>
                       停顿 {state.pause_after_ms}ms
@@ -241,6 +353,7 @@ const SegmentList = memo(function SegmentList({ segments, ttsState, playingIdx, 
 const ControlPanel = memo(function ControlPanel({
   voice, speed, setSpeed, pauseMs, setPauseMs,
   generating, progress, startGeneration, segments, ttsState,
+  importAudioPath, setImportAudioPath, importAudio, importing,
 }) {
   const readyCount = Object.values(ttsState).filter(s => s.status === 'ready').length
   const allDone = readyCount === segments.length && segments.length > 0
@@ -325,20 +438,52 @@ const ControlPanel = memo(function ControlPanel({
           </div>
         )}
 
-        {/* 一键生成按钮 */}
+        {/* ── 音频导入 (主入口) ── */}
+        <div style={{ ...card({ active: true }), marginBottom: space.sm, borderColor: colors.blue }}>
+          <div style={{ ...title(), fontSize: F.sm, color: colors.blue, marginBottom: space.xs }}>
+            📥 导入配音音频
+          </div>
+          <div style={{ ...subtitle(), fontSize: F.xs, marginBottom: space.sm }}>
+            在别的机器生成整段解说音频后，填路径导入。本机自动 ASR 对齐 + 切分。
+          </div>
+          <input
+            value={importAudioPath}
+            onChange={e => setImportAudioPath(e.target.value)}
+            placeholder="音频路径，如 /path/to/解说音频.wav"
+            disabled={importing}
+            style={{
+              width: '100%', padding: '4px 8px', fontSize: F.xs,
+              background: colors.bg, color: colors.text,
+              border: `1px solid ${colors.border}`, borderRadius: radius.sm,
+              outline: 'none', marginBottom: space.sm, boxSizing: 'border-box',
+            }}
+          />
+          <button
+            onClick={importAudio}
+            disabled={importing || !importAudioPath.trim()}
+            style={{
+              ...btn(importing || !importAudioPath.trim() ? 'disabled' : 'primary', 'md'),
+              width: '100%', padding: '6px 12px', fontSize: F.md,
+            }}>
+            {importing ? '🔄 导入中...' : '📥 开始导入'}
+          </button>
+        </div>
+
+        {/* 一键生成按钮 (降级为次要) */}
         <button
           onClick={startGeneration}
           disabled={generating || !segments.length}
+          title="需在别的机器生成后导入，本机仅作 fallback"
           style={{
-            ...btn(generating || !segments.length ? 'disabled' : 'primary', 'md'),
-            width: '100%', padding: '6px 12px', fontSize: F.md,
+            ...btn(generating || !segments.length ? 'disabled' : 'ghost', 'md'),
+            width: '100%', padding: '6px 12px', fontSize: F.sm,
             marginBottom: space.sm,
           }}>
-          {generating ? '🔄 生成中...' : segments.length ? '🎙️ 一键生成配音' : '📭 暂无脚本'}
+          {generating ? '🔄 生成中...' : segments.length ? '🎙️ 本机生成 (慢)' : '📭 暂无脚本'}
         </button>
 
         <div style={{ ...label(), textAlign: 'center', marginTop: space.sm }}>
-          配音师Agent: 脚本分析 → 配音方案 → TTS生成
+          导入: 音频 → ASR对齐 → 切分 → 逐段播放
         </div>
       </div>
     </div>
@@ -363,8 +508,50 @@ export default function VoiceDesk() {
   const [genLog, setGenLog] = useState([])          // SSE 日志
   const [loaded, setLoaded] = useState(false)
 
-  // ── 加载 segments ──
-  useEffect(() => {
+  // ── v1.1 新增: 段级覆盖 + 单段重生成 + 音色试听 ──
+  const [segOverrides, setSegOverrides] = useState({})
+  // {seg_id: {voice?, emotion?, speed?, pauseMs?}}
+  const [regeneratingSegs, setRegeneratingSegs] = useState(new Set())
+  const voicePreviewCache = useRef({})
+  const [previewingVoice, setPreviewingVoice] = useState(null)
+
+  // ── v1.2 新增: 音频导入 ──
+  const [importAudioPath, setImportAudioPath] = useState('')
+  const [importing, setImporting] = useState(false)
+
+  // 音色试听
+  const previewVoice = useCallback(async (voiceId) => {
+    if (previewingVoice === voiceId) return
+
+    if (voicePreviewCache.current[voiceId]) {
+      const audio = new Audio(voicePreviewCache.current[voiceId] + '&_t=' + Date.now())
+      audio.play().catch(() => {})
+      return
+    }
+
+    setPreviewingVoice(voiceId)
+    try {
+      const resp = await fetch('/voiceover/preview_voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: taskId, voice: voiceId }),
+      })
+      const data = await resp.json()
+      if (data.ok) {
+        const url = `/tts_segments/_voice_sample_${voiceId}.wav?task=${taskId}`
+        voicePreviewCache.current[voiceId] = url
+        const audio = new Audio(url)
+        audio.play().catch(() => {})
+      }
+    } catch (err) {
+      console.error('Preview failed:', err)
+    } finally {
+      setPreviewingVoice(null)
+    }
+  }, [previewingVoice, taskId])
+
+  // ── 加载 segments (可复用) ──
+  const reloadSegments = useCallback(() => {
     if (!taskId) return
     setLoaded(false)
     fetch(`/segments.json?task=${taskId}`)
@@ -397,6 +584,61 @@ export default function VoiceDesk() {
       })
   }, [taskId])
 
+  useEffect(() => {
+    reloadSegments()
+  }, [reloadSegments])
+
+  // ── 音频导入 SSE ──
+  const importAudio = useCallback(async () => {
+    if (importing || !importAudioPath.trim()) return
+    setImporting(true)
+    setGenLog([])
+
+    try {
+      const resp = await fetch('/voiceover/import_audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: taskId, audio_path: importAudioPath.trim() }),
+      })
+
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        let event = ''
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            event = line.slice(7).trim()
+          } else if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              if (event === 'progress') {
+                setGenLog(prev => [...prev, { ...data, _ts: Date.now() }])
+              } else if (event === 'complete') {
+                setGenLog(prev => [...prev, { step: 'complete', msg: '✅ 导入完成', _ts: Date.now() }])
+              } else if (event === 'error') {
+                setGenLog(prev => [...prev, { step: 'error', msg: `❌ ${data.error}`, _ts: Date.now() }])
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (err) {
+      console.error('导入失败', err)
+      setGenLog(prev => [...prev, { step: 'error', msg: `❌ 连接异常: ${err.message}`, _ts: Date.now() }])
+    } finally {
+      setImporting(false)
+      // 导入完成刷新 segments + ttsState (触发恢复逻辑)
+      reloadSegments()
+    }
+  }, [importing, importAudioPath, taskId, reloadSegments])
+
   // ── SSE 流式生成 ──
   const startGeneration = useCallback(async () => {
     if (generating || !segments.length) return
@@ -412,6 +654,7 @@ export default function VoiceDesk() {
         body: JSON.stringify({
           task: taskId, voice, speed, pause_ms: pauseMs,
           ref_audio_path: refAudio || undefined,
+          seg_overrides: Object.keys(segOverrides).length > 0 ? segOverrides : undefined,
         }),
       })
 
@@ -484,7 +727,121 @@ export default function VoiceDesk() {
     } finally {
       setGenerating(false)
     }
-  }, [generating, segments, taskId, voice, speed, pauseMs, refAudio])
+  }, [generating, segments, taskId, voice, speed, pauseMs, refAudio, segOverrides])
+
+  // ── v1.1: 单段重生成 SSE ──
+  const regenerateSegment = useCallback(async (segId) => {
+    if (regeneratingSegs.has(segId) || generating) return
+
+    setRegeneratingSegs(prev => new Set(prev).add(segId))
+
+    const overrides = segOverrides[segId] || {}
+    const body = { task: taskId, seg_id: segId }
+    if (overrides.voice) body.voice = overrides.voice
+    if (overrides.emotion) body.emotion = overrides.emotion
+    if (overrides.speed != null) body.speed = overrides.speed
+    if (overrides.pauseMs != null) body.pause_ms = overrides.pauseMs
+
+    try {
+      const resp = await fetch('/voiceover/regenerate_segment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        let event = ''
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            event = line.slice(7).trim()
+          } else if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              if (event === 'progress' && data.step === 'segment_start') {
+                setTtsState(prev => ({
+                  ...prev,
+                  [segId]: {
+                    ...prev[segId],
+                    status: 'generating',
+                    emotion: data.emotion || prev[segId]?.emotion,
+                  },
+                }))
+              }
+              if (event === 'progress' && data.step === 'segment_done') {
+                setTtsState(prev => ({
+                  ...prev,
+                  [segId]: {
+                    status: 'ready',
+                    audioPath: `tts_segments/narr_${String(data.index).padStart(3, '0')}.wav`,
+                    duration: data.duration,
+                    emotion: data.emotion || prev[segId]?.emotion,
+                    speed: data.speed || prev[segId]?.speed,
+                    pause_after_ms: prev[segId]?.pause_after_ms || 300,
+                  },
+                }))
+              }
+              if (event === 'complete') {
+                setGenLog(prev => [...prev, {
+                  step: 'regenerate_done',
+                  msg: `✅ S${segId} 重生成完成 · ${data.duration?.toFixed(1)}s`,
+                  _ts: Date.now()
+                }])
+              }
+              if (event === 'error') {
+                setGenLog(prev => [...prev, {
+                  step: 'error',
+                  msg: `❌ S${segId}: ${data.error}`,
+                  _ts: Date.now()
+                }])
+                // Roll back status
+                setTtsState(prev => {
+                  const cur = prev[segId]
+                  return {
+                    ...prev,
+                    [segId]: {
+                      ...cur,
+                      status: cur?.audioPath ? 'ready' : 'pending',
+                    },
+                  }
+                })
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Regenerate SSE failed', err)
+      setGenLog(prev => [...prev, {
+        step: 'error',
+        msg: `❌ S${segId} 重生成连接异常: ${err.message}`,
+        _ts: Date.now()
+      }])
+      setTtsState(prev => {
+        const cur = prev[segId]
+        return {
+          ...prev,
+          [segId]: {
+            ...cur,
+            status: cur?.audioPath ? 'ready' : 'pending',
+          },
+        }
+      })
+    } finally {
+      setRegeneratingSegs(prev => {
+        const next = new Set(prev)
+        next.delete(segId)
+        return next
+      })
+    }
+  }, [regeneratingSegs, generating, segOverrides, taskId])
 
   // ── 面板宽度 ──
   const [leftW, setLeftW] = useState(220)
@@ -494,7 +851,8 @@ export default function VoiceDesk() {
     <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       {/* 音色库 */}
       <div style={{ width: leftW, flexShrink: 0 }}>
-        <VoiceLibrary voice={voice} setVoice={setVoice} refAudio={refAudio} setRefAudio={setRefAudio} />
+        <VoiceLibrary voice={voice} setVoice={setVoice} refAudio={refAudio} setRefAudio={setRefAudio}
+          onPreviewVoice={previewVoice} previewingVoice={previewingVoice} />
       </div>
 
       <Divider onDrag={e => {
@@ -512,7 +870,11 @@ export default function VoiceDesk() {
           </div>
         ) : (
           <SegmentList segments={segments} ttsState={ttsState}
-            playingIdx={playingIdx} setPlayingIdx={setPlayingIdx} />
+            playingIdx={playingIdx} setPlayingIdx={setPlayingIdx}
+            segOverrides={segOverrides} setSegOverrides={setSegOverrides}
+            onRegenerate={regenerateSegment}
+            regeneratingSegs={regeneratingSegs}
+            generating={generating} />
         )}
       </div>
 
@@ -531,6 +893,8 @@ export default function VoiceDesk() {
           generating={generating} progress={progress}
           startGeneration={startGeneration}
           segments={segments} ttsState={ttsState}
+          importAudioPath={importAudioPath} setImportAudioPath={setImportAudioPath}
+          importAudio={importAudio} importing={importing}
         />
       </div>
 

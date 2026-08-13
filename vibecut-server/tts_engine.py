@@ -1,157 +1,251 @@
 """
-vibecut-server/tts_engine.py — 统一 TTS 引擎 v1.0
+vibecut-server/tts_engine.py — 统一 TTS 引擎 v2.0
 
-重构自 tts_voice_clone.py，模块化为可调用库。
-支持默认音色 + 声音克隆双模式。
+双引擎:
+  F5-TTS (主):   零样本音色克隆, 通过 f5_worker.py 常驻子进程调用
+  MiMo API (备):  云端 TTS, 速度快, 支持预设音色和声音克隆
 
 用法:
-    from tts_engine import generate_speech
-    result = generate_speech("测试文本", "/tmp/out.wav", voice="default_zh")
-    if result["ok"]:
-        print(f"duration={result['duration']:.1f}s")
+  from tts_engine import generate_speech, ensure_f5_worker, shutdown_f5_worker
+  result = generate_speech("测试", out_path, voice="default_zh", ref_audio_path="...")
 """
 
+import atexit
 import base64
 import json
 import os
+import select
 import subprocess
+import threading
 import time
 import urllib.request
 from pathlib import Path
 
-# ── 预设音色表 ──
+# ── 预设音色 ──
 PRESET_VOICES = {
-    "default_zh":         {"voice": "default_zh",         "label": "默认女声"},
-    "narrator_male":      {"voice": "narrator_male",      "label": "沉稳男声"},
-    "narrator_female":    {"voice": "narrator_female",    "label": "温柔女声"},
-    "storyteller_male":   {"voice": "storyteller_male",   "label": "激昂男声"},
+    "default_zh":       {"voice": "default_zh",       "label": "默认女声"},
+    "narrator_male":    {"voice": "narrator_male",    "label": "沉稳男声"},
+    "narrator_female":  {"voice": "narrator_female",  "label": "温柔女声"},
+    "storyteller_male": {"voice": "storyteller_male", "label": "激昂男声"},
 }
+
+# ── F5 Worker 常量 ──
+F5_WORKER_SCRIPT = str(Path(__file__).resolve().parent / "lib" / "f5_worker.py")
+F5_PYTHON = "/opt/anaconda3/envs/cosyvoice/bin/python3"
+F5_DEFAULT_REF_AUDIO = "/Users/zgl/VIBECAP/都挺好/tasks/Task0804/work_dir/解说音频_30s.wav"
+F5_DEFAULT_REF_TEXT = "如果一个男人，没家庭，没事业、没道德、那他就没有弱点。他不光窝里横，在外边他也照样狂。"
+F5_NFE_STEP = 32
+F5_SPEED = 1.05
+
+# ── 全局 Worker 锁 ──
+_f5_lock = threading.Lock()
+_f5_proc: subprocess.Popen | None = None
+_f5_loaded = False
+
+
+def ensure_f5_worker(timeout: float = 120) -> bool:
+    """确保 F5 worker 进程已启动且模型已加载（幂等）"""
+    global _f5_proc, _f5_loaded
+    with _f5_lock:
+        if _f5_proc is not None and _f5_loaded:
+            # 检查进程是否还活着
+            if _f5_proc.poll() is not None:
+                _f5_proc = None
+                _f5_loaded = False
+            else:
+                return True
+
+        if _f5_proc is None:
+            _f5_proc = subprocess.Popen(
+                [F5_PYTHON, "-u", F5_WORKER_SCRIPT],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True, bufsize=1,
+            )
+
+        # 发送 load_model
+        _f5_proc.stdin.write(json.dumps({"action": "load_model"}) + "\n")
+        _f5_proc.stdin.flush()
+
+        ready, _, _ = select.select([_f5_proc.stdout], [], [], timeout)
+        if ready:
+            resp = json.loads(_f5_proc.stdout.readline())
+            if resp.get("ok"):
+                _f5_loaded = True
+                return True
+
+        return False
+
+
+def shutdown_f5_worker():
+    """关闭 F5 worker"""
+    global _f5_proc, _f5_loaded
+    with _f5_lock:
+        if _f5_proc and _f5_proc.poll() is None:
+            try:
+                _f5_proc.stdin.write(json.dumps({"action": "quit"}) + "\n")
+                _f5_proc.stdin.flush()
+                _f5_proc.wait(timeout=5)
+            except Exception:
+                _f5_proc.kill()
+        _f5_proc = None
+        _f5_loaded = False
+
+
+atexit.register(shutdown_f5_worker)
 
 
 def generate_speech(text: str, out_path: str, *,
                     voice: str = "default_zh",
                     speed: float = 1.0,
                     ref_audio_path: str = None,
+                    ref_text: str = None,
                     style_hint: str = None,
                     output_format: str = "wav",
-                    timeout: int = 120,
-                    retries: int = 2,
+                    timeout: int = 600,
+                    retries: int = 1,
+                    engine: str = "auto",
                     ) -> dict:
-    """TTS 语音合成 (MiMo API)
+    """TTS 语音合成
 
-    Args:
-        text: 要合成的文本
-        out_path: 输出音频路径
-        voice: 预设音色 ID (default_zh / narrator_male / narrator_female / storyteller_male)
-        speed: 语速倍率 (通过 style_hint 传递)
-        ref_audio_path: 可选参考音频路径 (触发声音克隆)
-        style_hint: 可选情绪/风格指导
-        output_format: wav 或 mp3
-        timeout: API 超时秒数
-        retries: 重试次数
-
-    Returns:
-        {"ok": True, "path": str, "duration": float} |
-        {"ok": False, "error": str}
+    Returns: {"ok": True, "path": str, "duration": float, "engine": str}
     """
-    api_key = os.environ.get("MIMO_API_KEY", "")
-    if not api_key:
-        return {"ok": False, "error": "未配置 MIMO_API_KEY"}
-
-    api_url = os.environ.get("MIMO_API_URL", "https://api.xiaomimimo.com/v1")
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # ── 构建 messages ──
-    messages = []
-
-    # 速度指令
-    speed_hint = ""
-    if speed != 1.0:
-        if speed < 1.0:
-            speed_hint = f"语速放慢至{speed:.1f}x，咬字清晰"
+    if engine == "auto":
+        if ref_audio_path and os.path.exists(ref_audio_path):
+            engine = "f5"
         else:
-            speed_hint = f"语速加快至{speed:.1f}x，保持自然"
+            engine = "mimo"
 
-    if style_hint or speed_hint:
-        hint_parts = []
-        if style_hint:
-            hint_parts.append(style_hint)
-        if speed_hint:
-            hint_parts.append(speed_hint)
-        messages.append({"role": "user", "content": "；".join(hint_parts)})
+    if engine == "f5":
+        return _generate_f5(text, out_path, voice=voice,
+                            ref_audio_path=ref_audio_path,
+                            ref_text=ref_text,
+                            speed=speed, timeout=timeout)
+    return _generate_mimo(text, out_path, voice=voice, speed=speed,
+                          ref_audio_path=ref_audio_path,
+                          style_hint=style_hint,
+                          output_format=output_format,
+                          timeout=min(timeout, 120), retries=retries)
 
+
+# ═══ F5-TTS ═══
+
+def _generate_f5(text: str, out_path: str, *,
+                 voice: str = "default_zh",
+                 ref_audio_path: str = None,
+                 ref_text: str = None,
+                 speed: float = 1.0,
+                 timeout: int = 600) -> dict:
+    global _f5_proc
+
+    ref_audio = ref_audio_path or F5_DEFAULT_REF_AUDIO
+    if not os.path.exists(ref_audio):
+        return {"ok": False, "error": f"参考音频不存在: {ref_audio}", "engine": "f5"}
+
+    ref_t = ref_text or text  # 没提供 ref_text 则用 gen_text (短文本可接受)
+
+    out_abs = str(Path(out_path).resolve())
+
+    with _f5_lock:
+        if not ensure_f5_worker(timeout=30):
+            return {"ok": False, "error": "F5 worker 未就绪", "engine": "f5"}
+
+        _f5_proc.stdin.write(json.dumps({
+            "action": "infer",
+            "ref_audio": ref_audio,
+            "ref_text": ref_t,
+            "gen_text": text,
+            "out_path": out_abs,
+            "speed": speed,
+        }, ensure_ascii=False) + "\n")
+        _f5_proc.stdin.flush()
+
+    ready, _, _ = select.select([_f5_proc.stdout], [], [], timeout)
+    if not ready:
+        return {"ok": False, "error": f"F5 推理超时 ({timeout}s)", "engine": "f5"}
+
+    try:
+        resp = json.loads(_f5_proc.stdout.readline())
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "F5 worker 返回异常", "engine": "f5"}
+
+    if resp.get("ok"):
+        return {
+            "ok": True, "path": out_abs,
+            "duration": round(resp["duration"], 2),
+            "size": resp.get("size", 0),
+            "engine": "f5",
+        }
+    return {"ok": False, "error": resp.get("error", "F5 推理失败"), "engine": "f5"}
+
+
+# ═══ MiMo API ═══
+
+def _generate_mimo(text: str, out_path: str, *,
+                   voice: str = "default_zh",
+                   speed: float = 1.0,
+                   ref_audio_path: str = None,
+                   style_hint: str = None,
+                   output_format: str = "wav",
+                   timeout: int = 120,
+                   retries: int = 2) -> dict:
+    api_key = os.environ.get("MIMO_API_KEY", "")
+    if not api_key:
+        return {"ok": False, "error": "未配置 MIMO_API_KEY", "engine": "mimo"}
+
+    api_url = os.environ.get("MIMO_API_URL", "https://api.xiaomimimo.com/v1")
+
+    messages = []
+    hints = []
+    if style_hint:
+        hints.append(style_hint)
+    if speed != 1.0:
+        hints.append(f"语速{'放慢' if speed < 1 else '加快'}至{speed:.1f}x")
+    if hints:
+        messages.append({"role": "user", "content": "；".join(hints)})
     messages.append({"role": "assistant", "content": text})
 
-    # ── 构建 payload ──
     audio_config = {"format": output_format, "voice": voice}
-
     if ref_audio_path and os.path.exists(ref_audio_path):
-        # 声音克隆模式
         with open(ref_audio_path, "rb") as f:
-            audio_bytes = f.read()
-        if len(audio_bytes) > 10 * 1024 * 1024:
-            print(f"[tts] ⚠️ 参考音频过大 ({len(audio_bytes)/1024/1024:.1f}MB)")
+            ab = f.read()
+        if len(ab) > 10 * 1024 * 1024:
+            ab = ab[:10 * 1024 * 1024]
         ext = os.path.splitext(ref_audio_path)[1].lstrip(".").lower()
         mime = "mp3" if ext == "mp3" else "wav"
-        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-        audio_config["input_audio"] = f"data:audio/{mime};base64,{audio_b64}"
+        audio_config["input_audio"] = f"data:audio/{mime};base64,{base64.b64encode(ab).decode()}"
 
-    payload = json.dumps({
-        "model": "mimo-v2.5-tts-voiceclone",
-        "messages": messages,
-        "audio": audio_config,
-    }).encode("utf-8")
+    payload = json.dumps({"model": "mimo-v2.5-tts-voiceclone", "messages": messages, "audio": audio_config}).encode()
 
-    # ── 带重试的 API 调用 ──
     last_error = None
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(
-                f"{api_url}/chat/completions",
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
-            )
+                f"{api_url}/chat/completions", data=payload,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                result = json.loads(resp.read())
-
-            # 解析音频
-            try:
-                audio_data_b64 = result["choices"][0]["message"]["audio"]["data"]
-            except (KeyError, IndexError):
-                return {"ok": False, "error": f"API 响应格式异常: {json.dumps(result, ensure_ascii=False)[:300]}"}
-
-            output_bytes = base64.b64decode(audio_data_b64)
+                r = json.loads(resp.read())
+            audio_b64 = r["choices"][0]["message"]["audio"]["data"]
             with open(out_path, "wb") as f:
-                f.write(output_bytes)
-
-            # ── 获取音频时长 ──
-            duration = _get_audio_duration(out_path)
-
-            return {"ok": True, "path": out_path, "duration": duration,
-                    "size": len(output_bytes)}
-
+                f.write(base64.b64decode(audio_b64))
+            dur = _get_audio_duration(out_path)
+            return {"ok": True, "path": out_path, "duration": dur, "size": len(base64.b64decode(audio_b64)), "engine": "mimo"}
         except urllib.error.HTTPError as e:
             last_error = f"HTTP {e.code} {e.reason}: {e.read().decode()[:200]}"
         except Exception as e:
             last_error = str(e)[:200]
-
         if attempt < retries:
             time.sleep(2.0 * (attempt + 1))
-
-    return {"ok": False, "error": last_error or "未知错误"}
+    return {"ok": False, "error": last_error or "未知错误", "engine": "mimo"}
 
 
 def _get_audio_duration(path: str) -> float:
-    """通过 ffprobe 获取音频时长 (秒)"""
     try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", path],
-            capture_output=True, text=True, timeout=10,
-        )
-        return float(result.stdout.strip())
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "default=noprint_wrappers=1:nokey=1", path],
+                           capture_output=True, text=True, timeout=10)
+        return float(r.stdout.strip())
     except Exception:
         return 0.0
