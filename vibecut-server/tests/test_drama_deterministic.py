@@ -23,6 +23,7 @@ from agents.drama_script_agents import (
     _load_all_synopses,
     _emotion_signature,
     _infer_episodes_from_topic,
+    _extract_key_episodes_from_story_map,
 )
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent / "都挺好"
@@ -146,3 +147,40 @@ def test_episode_marker_degrades_to_mode_c_when_invalid():
     seg = _fill_episode_marker({}, {"episode": None, "time_range": None})
     assert seg["episode_marker"] is None
     assert seg["mode"] == "C"
+
+
+# ── _extract_key_episodes_from_story_map（纯函数，选集权上移）────
+
+def test_extract_key_episodes_from_story_map_hits_target_char():
+    """story_map 里有多个角色的弧光，应只提取 topic 命中角色的 key_episodes"""
+    story_map = {
+        "character_arcs": [
+            {"name": "苏明成", "key_episodes": [1, 9, 21, 45]},
+            {"name": "苏明玉", "key_episodes": [8, 16, 39]},
+        ]
+    }
+    eps = _extract_key_episodes_from_story_map(story_map, "苏明成人物线")
+    assert eps == [1, 9, 21, 45]  # 只取苏明成，不含苏明玉的集
+
+
+def test_extract_key_episodes_dedup_and_keep_order():
+    """去重且保持首次出现顺序"""
+    story_map = {
+        "character_arcs": [
+            {"name": "苏明成", "key_episodes": [1, 21, 21, 45, 1]},
+        ]
+    }
+    eps = _extract_key_episodes_from_story_map(story_map, "苏明成")
+    assert eps == [1, 21, 45]
+
+
+def test_extract_key_episodes_fallback_to_all_when_no_name_hit():
+    """topic 未命中任何人物名时，取全部弧光"""
+    story_map = {
+        "character_arcs": [
+            {"name": "苏明成", "key_episodes": [1, 21]},
+            {"name": "苏明玉", "key_episodes": [8]},
+        ]
+    }
+    eps = _extract_key_episodes_from_story_map(story_map, "家庭矛盾主题")
+    assert set(eps) == {1, 21, 8}

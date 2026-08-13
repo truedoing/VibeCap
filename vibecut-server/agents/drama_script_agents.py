@@ -319,6 +319,42 @@ def _infer_episodes_from_topic_llm(project_dir: Path, topic: str, limit: int = 8
     return eps[:limit] if eps else None
 
 
+def _extract_key_episodes_from_story_map(story_map: dict, topic: str, limit: int = 8) -> list[int]:
+    """从故事师产出的 story_map 提取关键集（替代独立反推的选集方案）。
+
+    为什么：故事师已通读全 46 集概要，产出的 character_arcs[].key_episodes
+    就是「人物弧线的关键集」，比 _infer_episodes_from_topic_llm 的逐集字段匹配
+    精确得多（后者漏掉了 EP45 这种"主动守护"的弧线终点）。
+    """
+    # 找到与选题最相关的主角（topic 命中的人名）
+    from lib.vlm_cache import KNOWN_CHARACTERS as _KC
+    names_hit = [n for n in _KC if n in topic]
+    arcs = story_map.get("character_arcs", [])
+
+    target_arcs = []
+    if names_hit:
+        target_arcs = [a for a in arcs if a.get("name") in names_hit]
+    if not target_arcs:
+        target_arcs = arcs  # 未命中则取全部弧光
+
+    eps = []
+    for a in target_arcs:
+        for ep in (a.get("key_episodes") or []):
+            try:
+                eps.append(int(ep))
+            except (TypeError, ValueError):
+                continue
+
+    # 去重保序，取 top-N
+    seen = set()
+    ordered = []
+    for ep in eps:
+        if ep not in seen:
+            seen.add(ep)
+            ordered.append(ep)
+    return ordered[:limit] if ordered else None
+
+
 # ═══════════════════════════════════════════════════════════════
 # Agent 1: 故事师 — 通读全部剧集概要，提取故事地图
 # ═══════════════════════════════════════════════════════════════
@@ -564,16 +600,14 @@ def run_drama_pipeline(
         if emit_progress:
             emit_progress(step, msg, data)
 
-    # ── Phase 0: 深层 RAG 检索键（未指定集时，从选题反推相关集）──
+    # ── Phase 0 + 1: 故事师（读全 46 集，其 key_episodes 即选集答案）──
+    # 优化（2026-08-13）：不再用独立的 _infer_episodes_from_topic_llm 反推，
+    # 而是让故事师读全 46 集概要，从它的 character_arcs[].key_episodes 提取关键集。
+    # 理由：故事师懂全局弧线，比逐集字段匹配反推精确（后者漏掉 EP45 弧线终点）。
     if focus_episodes is None:
-        focus_episodes = _infer_episodes_from_topic_llm(project_dir, topic)
-        if focus_episodes:
-            progress("story", f"🔎 深层RAG(LLM): 从选题反推相关剧集 → {focus_episodes}")
-        else:
-            progress("story", "⚠️ 深层RAG: LLM 反推失败，回退全量概要")
-
-    # ── Phase 1: 故事师 ──
-    progress("story", "📖 故事师: 通读剧情概要，提取故事地图...")
+        progress("story", "📖 故事师: 通读全部剧情概要（其人物弧光 key_episodes 即选集）...")
+    else:
+        progress("story", f"📖 故事师: 通读剧情概要（指定集 {focus_episodes}）...")
     start = time.time()
     story_result = story_master_agent(project_dir, drama_name, focus_episodes)
 
@@ -587,6 +621,14 @@ def run_drama_pipeline(
     progress("story_done",
         f"✅ 故事地图: {char_count}个人物弧光 · {len(story_map.get('turning_points', []))}个转折点 · {topic_count}个选题 · {elapsed:.0f}s",
         {"story_map": story_map})
+
+    # 深层 RAG 选集：未指定集时，从故事师的弧光 key_episodes 提取（复用其全局理解）
+    if focus_episodes is None:
+        focus_episodes = _extract_key_episodes_from_story_map(story_map, topic)
+        if focus_episodes:
+            progress("story", f"🔎 深层RAG: 从故事师弧光提取关键集 → {focus_episodes}")
+        else:
+            progress("story", "⚠️ 深层RAG: 未提取到关键集，回退全量 scene_map")
 
     # ── Phase 2: 策划师 ──
     progress("planning", "📐 策划师: 设计叙事结构和章节规划...")

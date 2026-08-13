@@ -174,6 +174,8 @@ RAG 闭环测试暴露：**人工指定集本身有偏差**（EP35 苏明成线�
 
 平均召回 0.60。ground truth 从结构化 synopsis 的 `character_arcs` 提取，而非人工标注——这正是"评估指标升级"的落地。
 
+> **架构演进（2026-08-13 更新）**：检索方案已从"独立反推 `_infer_episodes_from_topic_llm`"改为"复用故事师 `_extract_key_episodes_from_story_map`"（选集权上移）。后者是纯函数（0 LLM），已进确定性单测；前者仅保留作课程对照。详见 `RAG_RETRIEVAL_TEST.md` 第六节。
+
 ### E2E harness 实测（2026-08-13）
 
 全维度评估揭示：**事实准确性（0%）、语言质量（4.4-4.8/5）、硬门槛（全过）都达标**。时长是**参考指标，不是生产门槛**——解说脚本的真实时长由配音台 TTS 决定，`total_chars/4` 只是粗估。
