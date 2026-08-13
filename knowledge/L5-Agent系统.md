@@ -14,6 +14,7 @@ created: 2026-08-04
 | 笔记 | 主题 | 难度 | 状态 |
 |------|------|------|------|
 | [[Agent核心概念]] | Agent 定义、三要素、Agent Loop | 🔴 | 📝 |
+| [[Agent测试与评估]] | Harness、评估边界、对比评估 | 🔴 | 📝 |
 | [[LangGraph框架]] | StateGraph, Node, ConditionalEdge, Checkpointer | 🔴 | 🔄 |
 | [[工具定义与MCP]] | Tool Schema, MCP 协议, 工具标准化 | 🔴 | 🔄 |
 | [[人机协作HITL]] | interrupt/resume, 审批流设计 | 🔴 | 🔄 |
@@ -73,4 +74,6 @@ L4 (RAG体系) ──→ L5 (Agent系统) ──→ L6 (前端工程)
 [[人机协作HITL]] — 设计人机协作边界
   ↓
 [[Agent-First方法论]] — 从方法论高度理解 Agent 开发
+  ↓
+[[Agent测试与评估]] — 用 Harness 评估 Agent 输出质量
 ```

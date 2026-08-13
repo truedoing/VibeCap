@@ -235,7 +235,9 @@ def _infer_episodes_from_topic_llm(project_dir: Path, topic: str, limit: int = 8
     names_hit = [n for n in KNOWN_CHARACTERS if n in topic]
     main_char = names_hit[0] if names_hit else None
 
-    # 每集取 synopsis 前 200 字作为梗概
+    # 字段级检索：直接喂 LLM 结构化 synopsis 的「人物弧线 + 关键冲突」字段，
+    # 不再取 to_text() 前 N 字（会把关键人物弧线字段截掉，见 V4 教训）。
+    # 若识别到主角，额外把该主角的 arc 单独拎出来（弧线信号最精确）。
     lines = []
     sources = project_dir / "sources"
 
@@ -243,11 +245,31 @@ def _infer_episodes_from_topic_llm(project_dir: Path, topic: str, limit: int = 8
     sig = _emotion_signature(project_dir, main_char) if main_char else {}
 
     for ep in range(1, 47):
-        syn_file = sources / f"ep{ep}" / "ep_synopsis.json"
-        if not syn_file.exists():
-            continue
         syn = load_synopsis(project_dir, ep)
-        brief = to_text(syn).strip().replace("\n", " ")[:200]
+        if not syn:
+            continue
+        if syn.get("_legacy"):
+            # 旧纯文本：取前 200 字兜底
+            brief = to_text(syn).strip().replace("\n", " ")[:200]
+        else:
+            # 新结构化：拼「关键冲突 + 该主角人物弧线」两个字段
+            parts = []
+            conflicts = syn.get("key_conflicts") or []
+            if conflicts:
+                parts.append("冲突:" + "；".join(conflicts[:3]))
+            if main_char:
+                for a in (syn.get("character_arcs") or []):
+                    if a.get("character") == main_char:
+                        seg = f"弧线:{a.get('arc','')}"
+                        rc = a.get("relations_change") or []
+                        if rc:
+                            seg += "(" + "；".join(rc) + ")"
+                        parts.append(seg)
+                        break
+            if not parts:
+                # 该集无主角弧线 → 用主题兜底
+                parts.append("主题:" + (syn.get("theme") or "")[:40])
+            brief = " ".join(parts)
         # 拼情绪签名
         emo = ""
         if ep in sig:

@@ -206,6 +206,16 @@ SCRIPT_WRITER_PROMPT = """你是影视解说领域的头部创作者（文案师
 6. highlight_text 从 ASR 台词中选最具冲击力的一句作为"原声证据"
 7. 结尾金句: 每章最后一段必须有价值观升华，让人想转发
 
+★ 铁律（scene_query 字段的「原样复制」规则——最重要，务必遵守）：
+- narration_text 可以自由渲染情绪（写得激烈、煽情都没问题），
+  但 scene_query 里的 mood / event / characters 是「该场景的事实标签」，不是你的创作。
+- scene_query.mood 必须从 scene_map 该场景的 mood 字段【原样复制】，一个字都不能改，
+  不得用解说词的语气代替。mood 固定词表：温馨 / 激烈 / 紧张 / 愤怒 / 悲伤 / 轻松 /
+  焦虑 / 压抑 / 尴尬 / 感动 / 严肃 / 平静 / 无奈 / 期待 / 担忧。
+- scene_query.event 必须忠实照抄 scene_map 该场景的 event 原文，不得缩写或改写。
+- scene_query.characters 必须与 scene_map 该场景的 characters 一致（可少写但不可凭空增删）。
+- 判断标准：你写的 scene_query 要和 scene_map 那一行【逐字对得上】，而不是"意思差不多"。
+
 输入：
 - 当前章节方案（含叙事目标、场景锚点、导演手法）
 - 场景锚点对应的完整 scene_map 数据（time_range, characters, location, event, mood）
