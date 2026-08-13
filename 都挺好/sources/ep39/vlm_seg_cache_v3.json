@@ -2,49 +2,71 @@
   "0": {
     "scene_map_index": 0,
     "start": 60,
-    "end": 270,
-    "visual_summary": "餐馆圆桌旁，三人安静用餐。穿棕色毛衣的苏明成低头吃饭，穿深色外套的苏大强用手帕擦嘴，穿白衬衫的苏明玉平静注视。氛围沉默而缓和。",
-    "shot_size": "全景",
-    "composition": "三人",
+    "end": 120,
+    "visual_summary": "苏明哲（棕衣）、苏大强（黑衣）、苏明玉（白衣）共处室内，神情低落沉重，整体氛围压抑沉闷",
+    "shot_size": "中景",
+    "composition": "群像",
     "angle": "平视",
-    "emotional_tone": "释然温馨",
-    "intensity": 3,
-    "lighting": "自然光",
+    "emotional_tone": "压抑沉重",
+    "intensity": 4,
+    "lighting": "暗调",
     "actions": [
-      "用餐",
-      "倾听"
+      "苏明哲神情严肃开口",
+      "苏大强托腮神情低落",
+      "苏明玉凝重注视前方"
     ],
     "_tokens": {
-      "prompt_tokens": 1506,
-      "completion_tokens": 480,
-      "total_tokens": 1986
+      "prompt_tokens": 1503,
+      "completion_tokens": 752,
+      "total_tokens": 2255
     },
     "_chars": [
       "苏大强",
-      "苏明成",
+      "苏明哲",
       "苏明玉"
     ]
   },
   "1": {
     "scene_map_index": 1,
-    "start": 270,
-    "end": 390,
-    "visual_summary": "餐馆圆桌旁，苏明成（棕色毛衣）与苏明玉（白衬衫）轻松斗嘴，苏明哲（深色外套）劝和，气氛调侃。",
+    "start": 120,
+    "end": 180,
+    "visual_summary": "苏明玉与苏明哲在餐厅相对而坐，神情悲伤，氛围压抑沉闷。",
     "shot_size": "中景",
-    "composition": "群像",
+    "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "轻松调侃",
+    "emotional_tone": "悲伤沉重",
+    "intensity": 4,
+    "lighting": "暗调",
+    "actions": [],
+    "_tokens": {
+      "prompt_tokens": 1540,
+      "completion_tokens": 1800,
+      "total_tokens": 3340
+    },
+    "_chars": [
+      "苏明哲",
+      "苏明玉"
+    ]
+  },
+  "2": {
+    "scene_map_index": 2,
+    "start": 180,
+    "end": 240,
+    "visual_summary": "餐厅内，苏明成、苏明玉与苏明哲围坐一桌，明成明玉以言语和动作安慰明哲，强调兄弟情谊，氛围温馨感人。",
+    "shot_size": "中景",
+    "composition": "三人",
+    "angle": "平视",
+    "emotional_tone": "温馨感人",
     "intensity": 3,
     "lighting": "暖调",
     "actions": [
-      "苏明成说话",
-      "苏明玉反驳",
-      "苏明哲劝和"
+      "苏明玉轻声说话安慰",
+      "苏明成拍苏明哲肩膀鼓励"
     ],
     "_tokens": {
-      "prompt_tokens": 1565,
-      "completion_tokens": 1202,
-      "total_tokens": 2767
+      "prompt_tokens": 1524,
+      "completion_tokens": 1617,
+      "total_tokens": 3141
     },
     "_chars": [
       "苏明哲",
@@ -52,444 +74,817 @@
       "苏明玉"
     ]
   },
-  "2": {
-    "scene_map_index": 2,
-    "start": 390,
-    "end": 570,
-    "visual_summary": "走廊中红衣女性与穿棕色大围巾的男性相对，男性手提黑色包袋，两人神情凝重，似在告别。",
-    "shot_size": "中景",
-    "composition": "双人",
-    "angle": "平视",
-    "emotional_tone": "离别感伤、依依不舍",
-    "intensity": 4,
-    "lighting": "自然光",
-    "actions": [
-      "红衣女性站立凝视",
-      "男性提包转身"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1551,
-      "completion_tokens": 672,
-      "total_tokens": 2223
-    },
-    "_chars": []
-  },
   "3": {
     "scene_map_index": 3,
-    "start": 570,
-    "end": 690,
-    "visual_summary": "工厂过道中，身着深色西装的黄总停下脚步，侧身对身旁穿着工装、略显拘谨的实习生苏明玉说话。",
-    "shot_size": "中景",
-    "composition": "双人",
+    "start": 240,
+    "end": 300,
+    "visual_summary": "餐厅内，苏明哲（灰色高领毛衣）、苏明成（黑色上衣）、苏明玉（白色衬衫）围坐圆桌，桌摆餐食，三人氛围轻松，苏明哲开口回应，兄妹相处融洽",
+    "shot_size": "全景",
+    "composition": "三人",
     "angle": "平视",
-    "emotional_tone": "正式谨慎",
+    "emotional_tone": "轻松融洽",
     "intensity": 3,
-    "lighting": "冷调",
+    "lighting": "自然光",
     "actions": [
-      "黄总停下脚步侧身说话",
-      "苏明玉挺直身体认真回应"
+      "苏明哲开口说话",
+      "苏明成看向苏明哲",
+      "苏明玉聆听回应"
     ],
     "_tokens": {
-      "prompt_tokens": 1530,
-      "completion_tokens": 751,
-      "total_tokens": 2281
+      "prompt_tokens": 1544,
+      "completion_tokens": 1454,
+      "total_tokens": 2998
     },
     "_chars": [
+      "苏明哲",
+      "苏明成",
       "苏明玉"
     ]
   },
   "4": {
     "scene_map_index": 4,
-    "start": 690,
-    "end": 780,
-    "visual_summary": "全景中，现代办公室内，穿深绿外套的苏明玉背对镜头站在桌前，黄总（蓝西装）立于窗边。近景中，黄总低头凝视，神情专注。",
+    "start": 300,
+    "end": 390,
+    "visual_summary": "餐厅圆桌旁，苏明哲穿灰色毛衣，苏明成穿黑色上衣，苏明玉穿白色衬衫，三人轻松用餐，明成明玉斗嘴，明哲劝和。",
     "shot_size": "中景",
-    "composition": "双人",
+    "composition": "三人",
     "angle": "平视",
-    "emotional_tone": "温和亲切",
+    "emotional_tone": "轻松愉快",
     "intensity": 3,
-    "lighting": "自然光",
+    "lighting": "暖调",
     "actions": [
-      "苏明玉倾听",
-      "黄总说话"
+      "苏明成调侃",
+      "苏明玉回应",
+      "苏明哲劝解"
     ],
     "_tokens": {
-      "prompt_tokens": 1537,
-      "completion_tokens": 599,
-      "total_tokens": 2136
+      "prompt_tokens": 1560,
+      "completion_tokens": 1638,
+      "total_tokens": 3198
     },
     "_chars": [
+      "苏明哲",
+      "苏明成",
       "苏明玉"
     ]
   },
   "5": {
     "scene_map_index": 5,
-    "start": 780,
-    "end": 870,
-    "visual_summary": "工厂办公室内，苏明玉收拾文件准备下班，同事在旁微笑，氛围轻松愉快。",
+    "start": 390,
+    "end": 420,
+    "visual_summary": "餐厅门口，苏明哲穿深色外套手提包站立告别，表情悲伤；苏明玉穿红色上衣背对镜头目送，氛围沉重离别。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "轻松愉快",
-    "intensity": 2,
-    "lighting": "自然光",
+    "emotional_tone": "悲伤告别",
+    "intensity": 4,
+    "lighting": "冷调",
     "actions": [
-      "收拾文件",
-      "微笑告别"
+      "告别说话",
+      "目送离开"
     ],
     "_tokens": {
-      "prompt_tokens": 1542,
-      "completion_tokens": 1250,
-      "total_tokens": 2792
+      "prompt_tokens": 1548,
+      "completion_tokens": 1794,
+      "total_tokens": 3342
     },
     "_chars": [
+      "苏明哲",
       "苏明玉"
     ]
   },
   "6": {
     "scene_map_index": 6,
-    "start": 870,
-    "end": 930,
-    "visual_summary": "工厂食堂内，灰衣的苏明玉招呼同事围坐铺红桌布的圆桌，正热情招呼大家点菜，氛围热络",
-    "shot_size": "全景",
-    "composition": "群像",
+    "start": 420,
+    "end": 510,
+    "visual_summary": "苏明哲身穿深色外套手提公文包，在餐厅门口与穿红色上衣的苏明玉告别，表情感动中带着悲伤，氛围沉重而深情。",
+    "shot_size": "中景",
+    "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "热络欢快",
+    "emotional_tone": "感动离别",
     "intensity": 4,
     "lighting": "自然光",
     "actions": [
-      "苏明玉招呼点菜",
-      "同事围坐响应"
+      "站立告别",
+      "手提公文包",
+      "背身侧目"
     ],
     "_tokens": {
-      "prompt_tokens": 1516,
-      "completion_tokens": 654,
-      "total_tokens": 2170
+      "prompt_tokens": 1539,
+      "completion_tokens": 1748,
+      "total_tokens": 3287
     },
     "_chars": [
+      "苏明哲",
       "苏明玉"
     ]
   },
   "7": {
     "scene_map_index": 7,
-    "start": 930,
-    "end": 1020,
-    "visual_summary": "苏明玉手持文件袋，在派出所门口焦躁徘徊，不时探头向内张望，神情紧张不安。",
+    "start": 510,
+    "end": 570,
+    "visual_summary": "苏明哲手提公文包与穿红色上衣的苏明玉在餐厅门口平静告别，氛围宁静。",
     "shot_size": "中景",
-    "composition": "单人",
+    "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "紧张焦虑",
-    "intensity": 4,
-    "lighting": "冷调",
+    "emotional_tone": "平静告别",
+    "intensity": 2,
+    "lighting": "自然光",
     "actions": [
-      "徘徊",
-      "探头张望"
+      "告别",
+      "感慨"
     ],
     "_tokens": {
-      "prompt_tokens": 1533,
-      "completion_tokens": 579,
-      "total_tokens": 2112
+      "prompt_tokens": 1538,
+      "completion_tokens": 1362,
+      "total_tokens": 2900
     },
     "_chars": [
+      "苏明哲",
       "苏明玉"
     ]
   },
   "8": {
     "scene_map_index": 8,
-    "start": 1020,
-    "end": 1140,
-    "visual_summary": "苏明成在派出所内向苏明玉解释打架原因，苏明玉手持文件袋紧张聆听，氛围紧张又带温情。",
+    "start": 570,
+    "end": 630,
+    "visual_summary": "工厂内部走廊，穿灰色夹克的苏明玉与穿西装的黄叔叔并肩行走，严肃对话，背景有工业设备。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "冲突感动",
+    "emotional_tone": "严肃对话",
     "intensity": 4,
-    "lighting": "暖调",
+    "lighting": "冷调",
     "actions": [
-      "苏明成解释",
-      "苏明玉紧握文件袋"
+      "行走",
+      "交谈"
     ],
     "_tokens": {
-      "prompt_tokens": 1524,
-      "completion_tokens": 1613,
-      "total_tokens": 3137
+      "prompt_tokens": 1520,
+      "completion_tokens": 1388,
+      "total_tokens": 2908
     },
     "_chars": [
-      "苏明成",
       "苏明玉"
     ]
   },
   "9": {
     "scene_map_index": 9,
-    "start": 1140,
-    "end": 1230,
-    "visual_summary": "苏明成和苏明玉站在派出所外，苏明成侧身看着苏明玉，苏明玉手持文件袋回望，两人表情复杂，氛围微妙。",
+    "start": 630,
+    "end": 690,
+    "visual_summary": "施总（深蓝西装黑内搭）在工厂办公室，神情严肃地低头开口，随后与仅露背影的老毛对话，严肃谈及小萌下基层的安排",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "微妙和解",
-    "intensity": 3,
-    "lighting": "自然光",
+    "emotional_tone": "严肃质问",
+    "intensity": 4,
+    "lighting": "冷调",
     "actions": [
-      "苏明成双手插兜站立",
-      "苏明玉手持文件袋回望"
+      "低头陈述内容",
+      "与老毛对峙交谈"
     ],
     "_tokens": {
-      "prompt_tokens": 1529,
-      "completion_tokens": 1156,
-      "total_tokens": 2685
+      "prompt_tokens": 1530,
+      "completion_tokens": 1086,
+      "total_tokens": 2616
     },
-    "_chars": [
-      "苏明成",
-      "苏明玉"
-    ]
+    "_chars": []
   },
   "10": {
     "scene_map_index": 10,
-    "start": 1230,
-    "end": 1260,
-    "visual_summary": "派出所外，苏明成侧身站立注视苏明玉，苏明玉手持文件袋回望，两人目光交汇，表情复杂，空气中弥漫着微妙的情绪张力。",
-    "shot_size": "中景",
+    "start": 690,
+    "end": 750,
+    "visual_summary": "在工厂办公室，施总手触额头沉思，苏明玉面对他温柔劝说，场景情感流露，氛围感动。",
+    "shot_size": "近景",
     "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "五味杂陈/嘴硬心软",
+    "emotional_tone": "感动深情",
     "intensity": 4,
-    "lighting": "自然光",
+    "lighting": "暖调",
     "actions": [
-      "苏明成侧身站立",
-      "苏明玉手握文件袋",
-      "两人对视"
+      "施总手触额头沉思",
+      "苏明玉注视施总劝说"
     ],
     "_tokens": {
-      "prompt_tokens": 1534,
-      "completion_tokens": 555,
-      "total_tokens": 2089
+      "prompt_tokens": 1538,
+      "completion_tokens": 1238,
+      "total_tokens": 2776
     },
     "_chars": [
-      "苏明成",
       "苏明玉"
     ]
   },
   "11": {
     "scene_map_index": 11,
-    "start": 1260,
-    "end": 1410,
-    "visual_summary": "苏明成在餐桌旁整理物品，朱丽穿着粉色睡衣倚靠在沙发上休息，家中陈设温馨，充满生活气息。",
-    "shot_size": "全景",
-    "composition": "双人",
-    "angle": "平视",
-    "emotional_tone": "家庭温馨",
-    "intensity": 3,
-    "lighting": "自然光",
-    "actions": [
-      "苏明成整理物品",
-      "朱丽倚靠休息"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1540,
-      "completion_tokens": 435,
-      "total_tokens": 1975
-    },
-    "_chars": [
-      "苏明成",
-      "朱丽"
-    ]
-  },
-  "12": {
-    "scene_map_index": 12,
-    "start": 1410,
-    "end": 1530,
-    "visual_summary": "苏明成（黑白条纹衫）从背后拥抱朱丽（黑衣），二人在厨房吧台前低声交谈，家中暖调灯光与照片墙烘托出温馨而恳切的氛围。",
-    "shot_size": "近景",
-    "composition": "双人",
-    "angle": "平视",
-    "emotional_tone": "诚恳、歉疚",
-    "intensity": 4,
-    "lighting": "暖调",
-    "actions": [
-      "拥抱",
-      "低语"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1528,
-      "completion_tokens": 432,
-      "total_tokens": 1960
-    },
-    "_chars": [
-      "苏明成",
-      "朱丽"
-    ]
-  },
-  "13": {
-    "scene_map_index": 13,
-    "start": 1530,
-    "end": 1650,
-    "visual_summary": "宽敞明亮的办公室内，苏明成走向坐在工位前的同事齐哥，神情略显迟疑，准备开口谈论非洲轮转之事。",
-    "shot_size": "全景",
-    "composition": "群像",
-    "angle": "平视",
-    "emotional_tone": "犹豫、局促",
-    "intensity": 3,
-    "lighting": "自然光",
-    "actions": [
-      "苏明成走向同事",
-      "同事转头看向苏明成"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1536,
-      "completion_tokens": 1564,
-      "total_tokens": 3100
-    },
-    "_chars": [
-      "苏明成"
-    ]
-  },
-  "14": {
-    "scene_map_index": 14,
-    "start": 1650,
-    "end": 1710,
-    "visual_summary": "办公室内，苏明玉自信站立，面对主任被任命项目负责人，表情坚定，姿态从容。",
+    "start": 750,
+    "end": 810,
+    "visual_summary": "施总和苏明玉在工厂办公室的落地窗前交谈，施总微笑着点头，苏明玉礼貌回应后转身走向门口，准备下班，气氛轻松。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "自信满满",
-    "intensity": 4,
+    "emotional_tone": "轻松友好的告别",
+    "intensity": 2,
     "lighting": "自然光",
     "actions": [
-      "自信站立",
-      "微笑交谈"
+      "施总笑着点头",
+      "苏明玉转身离开"
     ],
     "_tokens": {
-      "prompt_tokens": 1526,
-      "completion_tokens": 847,
-      "total_tokens": 2373
+      "prompt_tokens": 1529,
+      "completion_tokens": 561,
+      "total_tokens": 2090
     },
     "_chars": [
       "苏明玉"
     ]
   },
-  "15": {
-    "scene_map_index": 15,
-    "start": 1710,
-    "end": 1800,
-    "visual_summary": "办公桌前，苏明玉身着职业装，自信地对主任点头。她眼神明亮，姿态挺拔，展现出承担重任的决心。",
+  "12": {
+    "scene_map_index": 12,
+    "start": 810,
+    "end": 870,
+    "visual_summary": "身着黄色花边上衣、外搭米白开衫的苏明玉，在厨房台前，正将容器内食材倒入面粉堆，动作从容。",
     "shot_size": "中景",
-    "composition": "双人",
+    "composition": "单人",
     "angle": "平视",
-    "emotional_tone": "昂扬、笃定",
+    "emotional_tone": "平静从容",
+    "intensity": 2,
+    "lighting": "自然光",
+    "actions": [
+      "倾倒容器内食材",
+      "准备处理台上面粉"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1529,
+      "completion_tokens": 1053,
+      "total_tokens": 2582
+    },
+    "_chars": [
+      "苏明玉"
+    ]
+  },
+  "13": {
+    "scene_map_index": 13,
+    "start": 870,
+    "end": 930,
+    "visual_summary": "明亮餐厅里，身着灰上衣黑裤的苏明玉站在一旁，招呼围坐红桌布圆桌的同事们准备点菜，氛围轻松。",
+    "shot_size": "中景",
+    "composition": "群像",
+    "angle": "平视",
+    "emotional_tone": "轻松愉悦",
+    "intensity": 2,
+    "lighting": "自然光",
+    "actions": [
+      "招呼同事点菜",
+      "围坐就座"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1528,
+      "completion_tokens": 877,
+      "total_tokens": 2405
+    },
+    "_chars": [
+      "苏明玉"
+    ]
+  },
+  "14": {
+    "scene_map_index": 14,
+    "start": 930,
+    "end": 990,
+    "visual_summary": "派出所内，一名穿浅色外套的女子表情严肃地站着，旁边穿深色外套的男子面露担忧，灰衣男子低头坐着，神情紧张。",
+    "shot_size": "中景",
+    "composition": "三人",
+    "angle": "平视",
+    "emotional_tone": "紧张压抑",
     "intensity": 4,
     "lighting": "自然光",
     "actions": [
-      "坚定地点头",
-      "有力地握手"
+      "女子训斥",
+      "男子低头"
     ],
     "_tokens": {
-      "prompt_tokens": 1514,
-      "completion_tokens": 546,
-      "total_tokens": 2060
+      "prompt_tokens": 1533,
+      "completion_tokens": 320,
+      "total_tokens": 1853
+    },
+    "_chars": []
+  },
+  "15": {
+    "scene_map_index": 15,
+    "start": 990,
+    "end": 1050,
+    "visual_summary": "派出所调解室内，苏明成紧张地低头坐着，随后苏明玉站立质问，苏明成起身让座。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "紧张",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "低头坐",
+      "起身让座",
+      "站立质问"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1538,
+      "completion_tokens": 809,
+      "total_tokens": 2347
     },
     "_chars": [
+      "苏明成",
       "苏明玉"
     ]
   },
   "16": {
     "scene_map_index": 16,
-    "start": 1800,
-    "end": 2040,
-    "visual_summary": "餐厅中，朱丽向苏明玉递上精美礼盒，桌上摆放着水果蛋糕，苏明玉微笑回应，氛围温馨而庄重。",
-    "shot_size": "中景",
+    "start": 1050,
+    "end": 1110,
+    "visual_summary": "派出所调解室内，苏明成紧张地解释为苏明玉出头，苏明玉愤怒站立质问，两人激烈对峙。",
+    "shot_size": "近景",
     "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "感动成熟",
-    "intensity": 4,
-    "lighting": "暖调",
+    "emotional_tone": "激烈冲突",
+    "intensity": 5,
+    "lighting": "冷调",
     "actions": [
-      "朱丽递礼盒",
-      "苏明玉微笑回应"
+      "苏明成紧张解释",
+      "苏明玉愤怒质问"
     ],
     "_tokens": {
-      "prompt_tokens": 1534,
-      "completion_tokens": 600,
-      "total_tokens": 2134
+      "prompt_tokens": 1527,
+      "completion_tokens": 1448,
+      "total_tokens": 2975
     },
     "_chars": [
-      "苏明玉",
-      "朱丽"
+      "苏明成",
+      "苏明玉"
     ]
   },
   "17": {
     "scene_map_index": 17,
-    "start": 2040,
-    "end": 2130,
-    "visual_summary": "餐厅中朱丽接起电话贴在耳边，苏明玉坐在对面，氛围尴尬凝滞",
+    "start": 1110,
+    "end": 1170,
+    "visual_summary": "派出所内浅棕外套的苏明玉神情激动站立，室外格子外套的苏明成低头，因说出维护苏家尊严的话，二人氛围满是动容。",
+    "shot_size": "中景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "感动动容",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "苏明玉站立，情绪翻涌",
+      "苏明成低头，神情动容"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1529,
+      "completion_tokens": 961,
+      "total_tokens": 2490
+    },
+    "_chars": [
+      "苏明成",
+      "苏明玉"
+    ]
+  },
+  "18": {
+    "scene_map_index": 18,
+    "start": 1170,
+    "end": 1230,
+    "visual_summary": "派出所外，浅棕外套的苏明玉与格子外套的同事站立对话，同事神情感慨地诉说对明成护妹的感动。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
-    "emotional_tone": "尴尬局促",
+    "emotional_tone": "感慨万千",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "同事侧身面向苏明玉说话",
+      "苏明玉微微低头，神情动容"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1535,
+      "completion_tokens": 1217,
+      "total_tokens": 2752
+    },
+    "_chars": [
+      "苏明玉"
+    ]
+  },
+  "19": {
+    "scene_map_index": 19,
+    "start": 1230,
+    "end": 1260,
+    "visual_summary": "派出所外，浅棕外套的苏明玉与格子外套的同事站立对话，同事神情感慨，明玉面露局促。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "尴尬窘迫",
+    "intensity": 2,
+    "lighting": "自然光",
+    "actions": [
+      "轻抿嘴唇",
+      "微侧头看向对方"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1533,
+      "completion_tokens": 614,
+      "total_tokens": 2147
+    },
+    "_chars": [
+      "苏明玉"
+    ]
+  },
+  "20": {
+    "scene_map_index": 20,
+    "start": 1260,
+    "end": 1380,
+    "visual_summary": "苏明成走进家中厨房，朱丽在料理台前料理食材，她停下动作看向苏明成，氛围平静温馨",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "平静关切",
+    "intensity": 2,
+    "lighting": "暖调",
+    "actions": [
+      "苏明成走进厨房",
+      "朱丽停下料理动作看向苏明成"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1529,
+      "completion_tokens": 1128,
+      "total_tokens": 2657
+    },
+    "_chars": [
+      "苏明成",
+      "朱丽"
+    ]
+  },
+  "21": {
+    "scene_map_index": 21,
+    "start": 1380,
+    "end": 1440,
+    "visual_summary": "苏明成坐在沙发上和女儿摆弄粉色玩偶，朱丽在厨房料理台前忙碌，画面透着家庭的温馨融洽。",
+    "shot_size": "中景",
+    "composition": "三人",
+    "angle": "平视",
+    "emotional_tone": "温馨融洽",
     "intensity": 3,
     "lighting": "暖调",
     "actions": [
-      "朱丽接电话贴耳",
-      "苏明玉看向朱丽"
+      "陪女儿玩粉色玩偶",
+      "在厨房料理"
     ],
     "_tokens": {
-      "prompt_tokens": 1527,
-      "completion_tokens": 266,
-      "total_tokens": 1793
+      "prompt_tokens": 1525,
+      "completion_tokens": 665,
+      "total_tokens": 2190
+    },
+    "_chars": [
+      "苏明成",
+      "朱丽"
+    ]
+  },
+  "22": {
+    "scene_map_index": 22,
+    "start": 1440,
+    "end": 1530,
+    "visual_summary": "苏明成穿着黑白条纹衫，双手扶着朱丽肩膀。朱丽穿黑色西装，微微低头。两人在厨房，背景有木质橱柜和贴满照片的冰箱。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "郑重承诺",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "双手扶肩",
+      "凝视对方",
+      "微微低头"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1525,
+      "completion_tokens": 864,
+      "total_tokens": 2389
+    },
+    "_chars": [
+      "苏明成",
+      "朱丽"
+    ]
+  },
+  "23": {
+    "scene_map_index": 23,
+    "start": 1530,
+    "end": 1590,
+    "visual_summary": "苏明玉和同事在办公室，同事递上礼物并调侃，明玉面带微笑回应，氛围轻松。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "轻松愉悦",
+    "intensity": 2,
+    "lighting": "自然光",
+    "actions": [
+      "同事递礼物并调侃",
+      "明玉微笑接受"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1534,
+      "completion_tokens": 1152,
+      "total_tokens": 2686
+    },
+    "_chars": [
+      "苏明玉"
+    ]
+  },
+  "24": {
+    "scene_map_index": 24,
+    "start": 1590,
+    "end": 1650,
+    "visual_summary": "开放式办公区，一位穿黑色西装的男同事正走向一位坐在工位的男同事，两人目光交汇似乎在交谈。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "轻松愉悦",
+    "intensity": 2,
+    "lighting": "暖调",
+    "actions": [
+      "行走",
+      "微笑"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1518,
+      "completion_tokens": 309,
+      "total_tokens": 1827
+    },
+    "_chars": []
+  },
+  "25": {
+    "scene_map_index": 25,
+    "start": 1650,
+    "end": 1710,
+    "visual_summary": "办公室里，主任面色严肃地与站立的苏明玉对话，似乎在进行一项正式的工作任命。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "严肃、正式",
+    "intensity": 3,
+    "lighting": "冷调",
+    "actions": [
+      "站立对话",
+      "记录指令"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1521,
+      "completion_tokens": 442,
+      "total_tokens": 1963
+    },
+    "_chars": [
+      "苏明玉"
+    ]
+  },
+  "26": {
+    "scene_map_index": 26,
+    "start": 1710,
+    "end": 1800,
+    "visual_summary": "办公室内，朱丽（白色上衣）与苏明玉（深色西装）近距离交流，朱丽似提出用餐邀约，明玉神态平和，环境简洁明亮。",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "平静从容",
+    "intensity": 1,
+    "lighting": "自然光",
+    "actions": [
+      "朱丽提出约饭",
+      "明玉平静回应"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1518,
+      "completion_tokens": 554,
+      "total_tokens": 2072
     },
     "_chars": [
       "苏明玉",
       "朱丽"
     ]
   },
-  "18": {
-    "scene_map_index": 18,
-    "start": 2130,
-    "end": 2340,
-    "visual_summary": "在苏大强家的餐厅，小蔡（穿红色上衣）正为苏大强（穿深色衣服）盛饭，两人围坐在餐桌旁，阳光透过窗户洒入，氛围温馨。",
+  "27": {
+    "scene_map_index": 27,
+    "start": 1800,
+    "end": 1890,
+    "visual_summary": "餐厅内，朱丽将包递给苏明玉，两人微笑回忆往事，桌上蛋糕蜡烛点燃，气氛温馨亲切。",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "温馨愉悦",
+    "intensity": 4,
+    "lighting": "暖调",
+    "actions": [
+      "朱丽递送包",
+      "苏明玉微笑接过"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1535,
+      "completion_tokens": 1087,
+      "total_tokens": 2622
+    },
+    "_chars": [
+      "苏明玉",
+      "朱丽"
+    ]
+  },
+  "28": {
+    "scene_map_index": 28,
+    "start": 1890,
+    "end": 1950,
+    "visual_summary": "餐厅内，朱丽将包递给苏明玉，两人在蛋糕蜡烛旁微笑对视，苏明玉平静拒收礼物。",
     "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "平静温馨",
+    "intensity": 1,
+    "lighting": "暖调",
+    "actions": [
+      "递包",
+      "拒收",
+      "对视微笑"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1523,
+      "completion_tokens": 946,
+      "total_tokens": 2469
+    },
+    "_chars": [
+      "苏明玉",
+      "朱丽"
+    ]
+  },
+  "29": {
+    "scene_map_index": 29,
+    "start": 1950,
+    "end": 2010,
+    "visual_summary": "餐厅内，朱丽将手包递给苏明玉，两人隔着蛋糕微笑对视，苏明玉平静摇头拒收。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "轻松对话",
+    "intensity": 2,
+    "lighting": "暖调",
+    "actions": [
+      "递出手包",
+      "微笑对视",
+      "平静摇头"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1526,
+      "completion_tokens": 742,
+      "total_tokens": 2268
+    },
+    "_chars": [
+      "苏明玉",
+      "朱丽"
+    ]
+  },
+  "30": {
+    "scene_map_index": 30,
+    "start": 2010,
+    "end": 2070,
+    "visual_summary": "明玉在餐厅拒收朱丽递来的手包，朱丽虽被拒却闭眼微笑，神情真挚。明玉面对朱丽的坚持与真诚，内心触动，情绪从平静转向感动。",
+    "shot_size": "特写",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "感动释然",
+    "intensity": 4,
+    "lighting": "暖调",
+    "actions": [
+      "明玉平静摇头拒收礼物",
+      "朱丽闭眼微笑，神情真挚"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1525,
+      "completion_tokens": 774,
+      "total_tokens": 2299
+    },
+    "_chars": [
+      "朱丽"
+    ]
+  },
+  "31": {
+    "scene_map_index": 31,
+    "start": 2070,
+    "end": 2130,
+    "visual_summary": "朱丽在餐厅接母亲电话，被催相亲，表情尴尬不安，手轻触脸颊回应。",
+    "shot_size": "近景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "尴尬不安",
+    "intensity": 3,
+    "lighting": "暖调",
+    "actions": [
+      "接电话",
+      "说话"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1541,
+      "completion_tokens": 1209,
+      "total_tokens": 2750
+    },
+    "_chars": [
+      "朱丽"
+    ]
+  },
+  "32": {
+    "scene_map_index": 32,
+    "start": 2130,
+    "end": 2250,
+    "visual_summary": "朱丽在厨房为苏明成炖汤，两人相对而坐，面带柔和微笑，灯光暖黄，营造出家庭温馨氛围。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "温馨",
+    "intensity": 3,
+    "lighting": "暖调",
+    "actions": [
+      "朱丽炖汤",
+      "苏明成观看"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1516,
+      "completion_tokens": 980,
+      "total_tokens": 2496
+    },
+    "_chars": [
+      "苏明成",
+      "朱丽"
+    ]
+  },
+  "33": {
+    "scene_map_index": 33,
+    "start": 2250,
+    "end": 2310,
+    "visual_summary": "朱丽与苏明成在家中餐厅相对而坐，共进晚餐，桌上菜肴丰盛，两人专注于用餐，气氛宁静温馨。",
+    "shot_size": "近景",
     "composition": "双人",
     "angle": "平视",
     "emotional_tone": "温馨和谐",
     "intensity": 3,
-    "lighting": "自然光",
+    "lighting": "暖调",
     "actions": [
-      "盛饭",
-      "进食"
+      "用餐",
+      "喝汤"
     ],
     "_tokens": {
-      "prompt_tokens": 1520,
-      "completion_tokens": 1165,
-      "total_tokens": 2685
+      "prompt_tokens": 1524,
+      "completion_tokens": 423,
+      "total_tokens": 1947
+    },
+    "_chars": [
+      "苏明成",
+      "朱丽"
+    ]
+  },
+  "34": {
+    "scene_map_index": 34,
+    "start": 2310,
+    "end": 2400,
+    "visual_summary": "苏大强在走廊活动，小蔡在厨房准备食物，两人各自忙碌，氛围平静。",
+    "shot_size": "中景",
+    "composition": "单人",
+    "angle": "平视",
+    "emotional_tone": "平静安详",
+    "intensity": 2,
+    "lighting": "暖调",
+    "actions": [
+      "洗碗",
+      "备菜"
+    ],
+    "_tokens": {
+      "prompt_tokens": 1527,
+      "completion_tokens": 1160,
+      "total_tokens": 2687
     },
     "_chars": [
       "苏大强",
       "小蔡"
     ]
   },
-  "19": {
-    "scene_map_index": 19,
-    "start": 2340,
+  "35": {
+    "scene_map_index": 35,
+    "start": 2400,
     "end": 2430,
-    "visual_summary": "苏大强坐在餐桌旁，目光时不时望向门口，小蔡默默坐在对面陪伴，碗中饭菜热气渐散，两人之间是漫长等待的沉默。",
+    "visual_summary": "苏大强独自坐在客厅沙发上，目光紧锁在房门方向，整个屋子寂静无声，只有墙上挂钟的轻微滴答声伴着他等待的背影。",
     "shot_size": "中景",
-    "composition": "双人",
+    "composition": "单人",
     "angle": "平视",
-    "emotional_tone": "孤独守望",
+    "emotional_tone": "寂寞守望",
     "intensity": 3,
-    "lighting": "自然光",
+    "lighting": "暗调",
     "actions": [
-      "苏大强望向门口",
-      "小蔡低头陪伴"
+      "坐在沙发",
+      "望向门口"
     ],
     "_tokens": {
-      "prompt_tokens": 1548,
-      "completion_tokens": 774,
-      "total_tokens": 2322
+      "prompt_tokens": 1518,
+      "completion_tokens": 868,
+      "total_tokens": 2386
     },
     "_chars": [
-      "苏大强",
-      "小蔡"
+      "苏大强"
     ]
   }
 }

@@ -112,8 +112,22 @@ lib/scene_map.py              ← 场记Agent: scene_map + synopsis 生成
 - VLM prompt 注入 scene_map mood 作为情绪基调提示
 - "emotional_tone 和 intensity 必须反映这个情绪基调，不能输出相反的温和情绪"
 
-### max_tokens
-- 1200 → 1800，防止情绪锚定指令导致 JSON 截断
+### MiMo v2.5 推理模型适配 (v8.5.6)
+- **问题**: MiMo v2.5 是推理模型，`reasoning_content` 字段占满 token，`content` 常为空 → 大量"NoneType object is not iterable"错误
+- **修复**: content 为空时 fallback 到 `reasoning_content`；max_tokens 1200→4000
+
+### 抽帧缺失修复 (v8.5.6)
+- **问题**: `pick_keyframes_for_segment` 的 `n==0` 分支（场景时间范围无帧命中）忘记 `return`，函数返回 None → `for f in seg_frames` 报 NoneType
+- **修复**: `n==0` 分支补上 `return`
+
+### 帧目录误删修复 (v8.5.6)
+- **问题**: `analyze_episode` 每次传 `--proxy` 都 `rmtree(frames)` 强制重新抽帧，并发时 ffmpeg 同时写磁盘导致 180s 超时
+- **修复**: 移除强制删帧，复用已有帧
+
+### ASR 人名标准化 (v8.5.6)
+- **问题**: whisper 转写同音字误识别人名（朱莉→朱丽 107次、明诚→明成 107次、宋明成→苏明成等），污染 scene_map 和下游 Agent
+- **修复**: 新建 `cli/normalize_asr_names.py`，全量扫描修复 46 集共 326 处误识别
+- **scene_map prompt 加人名归一化铁律**: 要求 DeepSeek 输出 characters 时纠正误识别写法，绝不照抄
 
 ### 场记Agent (`lib/scene_map.py`)
 - DeepSeek 读取 ASR + 概要 → scene_map
@@ -156,6 +170,7 @@ vibecut-server/
 
 | 版本 | 改动 | 效果 |
 |------|------|------|
+| v8.5.6 | MiMo推理模型适配 + 抽帧/帧目录/人名标准化修复 | 46集VLM全完成, 空响应452→17, 情绪矛盾→0 |
 | v8.5.5 | dialogue_match 第一句锚定 + cluster scoring | 台词定位 0ms (无 LLM 调用) |
 | v8.5.4 | 开篇/总论点多剧集 PRIMARY 分配 | 总论点镜头覆盖多事件 |
 | v8.5.3 | LLM prompt: 已知地名 + 核心动作词 | 查询更贴合 VLM 数据 |
@@ -165,3 +180,27 @@ vibecut-server/
 | v8.4 | 三层剧集权重 + Agent推理过程 | 标的集内优先匹配 |
 | v8.1 | 开篇模式 + 导演手法扩展 | 6种导演手法 |
 | v8 | 导演Agent: beats + PRIMARY/SECONDARY | 叙事驱动分镜 |
+
+## 待办: ep_synopsis 结构化升级
+
+**背景**: 当前 ep_synopsis.json 是 400-600 字剧情简介文本，格式混乱（EP41半结构化 vs 其他散文式），且塞入了本属 scene_map 的细粒度字段（location/characters/time_range），职责越界。
+
+**方向**: 升级为结构化宏观叙事索引（JSON），与 scene_map 分工：
+- scene_map 保持逐场景细粒度（location/characters/event/mood）
+- synopsis 聚焦宏观叙事（主题/人物弧线/情感曲线/关键冲突/关键事件时间锚）
+
+**目标结构草案**:
+```json
+{
+  "theme": "本集核心主题",
+  "plot_arc": "起承转合概括",
+  "character_arcs": [{"character":"苏明成","arc":"...","relations_change":["与苏明玉和解"]}],
+  "key_conflicts": ["父子冲突"],
+  "emotional_curve": ["紧张","冲突","和解"],
+  "key_events": [{"event":"苏明成持刀阻婚","time_range":[450,570]}]
+}
+```
+
+**下游影响**: handlers/storyboard.py + agents/drama_script_agents.py 需从读纯文本改为读结构化字段。
+
+**关键约束**: key_events 的 time_range 要能映射到 scene_map；人名标准化铁律继续生效。
