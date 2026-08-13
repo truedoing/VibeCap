@@ -14,6 +14,7 @@ created: 2026-08-04
 | 笔记 | 主题 | 难度 | 状态 |
 |------|------|------|------|
 | [[Agent核心概念]] | Agent 定义、三要素、Agent Loop | 🔴 | 📝 |
+| [[Agent职责分离]] | 生成层 vs 决策层、制片Agent案例 | 🔴 | 📝 |
 | [[Agent测试与评估]] | Harness、评估边界、对比评估 | 🔴 | 📝 |
 | [[LangGraph框架]] | StateGraph, Node, ConditionalEdge, Checkpointer | 🔴 | 🔄 |
 | [[工具定义与MCP]] | Tool Schema, MCP 协议, 工具标准化 | 🔴 | 🔄 |

@@ -117,6 +117,7 @@ Agent 解决的问题：**把编排权从人类交给 LLM。**
 ## 延伸
 
 - [[Agentic-RAG]] — Agent + RAG 的结合
+- [[Agent职责分离]] — 生成层 vs 决策层，多 Agent 协作的基础
 - [[人机协作HITL]] — Agent 不完全自主，关键节点需要人类确认
 - [[多Agent协作]] — 多个 Agent 分工合作
 - [[Agent自我学习]] — Agent 从经验中改进

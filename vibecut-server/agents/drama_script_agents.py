@@ -356,6 +356,70 @@ def _extract_key_episodes_from_story_map(story_map: dict, topic: str, limit: int
 
 
 # ═══════════════════════════════════════════════════════════════
+# Agent 0: 制片 — 选题决策层（评判候选 + 排序 + 推荐理由）
+# ═══════════════════════════════════════════════════════════════
+
+PRODUCER_PROMPT = """你是影视解说工作室的「制片人」。你的职责不是生成选题，而是从候选选题中【评判、排序、拍板】——决定哪个选题最值得做成解说视频。
+
+评判维度（每个 1-5 分）：
+- traffic（流量潜力）：话题是否自带讨论度、共鸣点、搜索热度
+- differentiation（差异化）：是否足够独特，不会被同质化解说淹没
+- hook（钩子强度）：能否提炼出 3 秒抓人的开场观点
+- fit（账号匹配）：是否契合账号定位（影视解说 · 人物线/情感/冲突向）
+
+输出 JSON：
+{
+  "ranked": [
+    {"title": "选题标题", "score": 总分, "scores": {"traffic":5,"differentiation":4,"hook":5,"fit":4},
+     "reason": "为什么这个值得做（≤40字）", "recommend": true/false}
+  ],
+  "top_pick": "首推选题标题",
+  "strategy_note": "一句话整体选题策略"
+}
+
+规则：
+- 只排序输入的候选，不要凭空生成新选题
+- recommend=true 的应占少数（精选，不是全推）
+- reason 要具体（数据支撑 + 叙事角度），不要空话
+- ★ 证据公平性：候选有两种来源——「数据向」（evidence 是硬数据，如"冲突密度100%"）和「叙事向」（evidence 是 hook/角度，如"最不受宠的女儿"）。两者证据性质不同，但价值等同，不得因叙事向缺少硬数字而系统性降级。叙事向选题的 hook 本身就是它的"数据"。
+"""
+
+
+def producer_agent(candidates: list, account_positioning: str = "影视解说 · 人物线/情感/冲突向") -> dict:
+    """制片 Agent（决策层）：消费候选选题，评判排序，输出推荐。
+
+    Args:
+      candidates: 候选选题列表，每项 {"title", "type", "episodes"/"evidence", "hook"/"angle"}
+      account_positioning: 账号定位（用于 fit 维度评判）
+
+    Returns:
+      {"ok": True, "result": {...}} | {"ok": False, "error": ...}
+    """
+    if not candidates:
+        return {"ok": False, "error": "无候选选题"}
+
+    # 候选序列化为文本（限长，控制 token）
+    cand_text = "\n".join(
+        f"{i+1}. {c.get('title','')} [{c.get('type','')}] "
+        f"集{c.get('episodes', c.get('episodes_covered', []))} "
+        f"| 证据:{c.get('evidence', c.get('hook', ''))}"
+        for i, c in enumerate(candidates[:15])
+    )
+
+    user = (
+        f"账号定位：{account_positioning}\n\n"
+        f"候选选题（共 {len(candidates)} 个）：\n{cand_text}\n\n"
+        f"请评判、排序，给出首推选题和推荐理由。"
+    )
+
+    res = call_deepseek_json(PRODUCER_PROMPT, user, temperature=0.4, max_tokens=2000,
+                             timeout=180, label="producer_agent")
+    if not res.get("ok"):
+        return {"ok": False, "error": res.get("error", "?")[:200]}
+    return {"ok": True, "result": res.get("data") or {}}
+
+
+# ═══════════════════════════════════════════════════════════════
 # Agent 1: 故事师 — 通读全部剧集概要，提取故事地图
 # ═══════════════════════════════════════════════════════════════
 

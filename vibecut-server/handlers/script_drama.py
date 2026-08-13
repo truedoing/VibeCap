@@ -84,6 +84,9 @@ def _save_drama_segments(result: dict, topic: str):
         "time_estimate": result.get("time_estimate", {}),
         "review_verdict": result.get("review_verdict", "?"),
         "review_issues": result.get("review_issues", []),
+        # 选题推荐：故事师已产出，此前被精简 schema 丢弃
+        "topic_suggestions": result.get("story_map", {}).get("topic_suggestions", []),
+        "highlight_scenes": result.get("story_map", {}).get("highlight_scenes", []),
     }
     json.dump(save_data, open(script_file, "w"), ensure_ascii=False, indent=2)
     result["script_file"] = str(script_file)
