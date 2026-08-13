@@ -33,6 +33,28 @@ def find_source_video(project_cfg, seg_source_file):
     return None
 
 
+def find_source_video_for_episode(project_cfg, ep):
+    """按集号定位源视频（drama 多集导出用）
+
+    源视频命名约定：`都挺好 01_1080p.mp4`（剧名 + 空格 + 零填充集号）。
+    """
+    if not ep:
+        return None
+    src_dir = Path(project_cfg.get("source_videos", ""))
+    name = project_cfg.get("name", "")
+    # 候选：带零填充集号（01/02/...）的常见命名
+    ep_str = f"{int(ep):02d}"
+    candidates = [
+        *sorted(src_dir.glob(f"*{ep_str}_*.mp4")),   # 都挺好 01_1080p.mp4
+        *sorted(src_dir.glob(f"*EP{ep_str}*.mp4")),
+        *sorted(src_dir.glob(f"*第{int(ep)}集*.mp4")),
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
+
+
 def extract_clip(src_video, start_sec, end_sec, output_path):
     dur = end_sec - start_sec
     subprocess.run([
@@ -420,10 +442,24 @@ def main():
     cfg = load_project(args.project)
     segments = load_segments(args.project, args.task)
 
-    src_file = segments.get("source") or segments["segments"][0].get("source_file", "")
+    seg_list = segments.get("segments", [])
+    src_file = segments.get("source") or (seg_list[0].get("source_file", "") if seg_list else "")
+
+    # drama 多集：source 是占位符（如 "AI编剧Agent"），须按段 episode 定位各集源视频。
+    # 但 build_draft 目前是"单一源视频"设计，暂只支持单集导出；
+    # 多集导出（每集一个 material）属后续重构，见 docs/tech/AGENT_TESTING.md 遗留项。
     src_video = find_source_video(cfg, src_file)
     if not src_video:
-        print(f"❌ 找不到源视频: {src_file}")
+        # 兜底：按第一段的 episode 定位
+        first_ep = None
+        for seg in seg_list:
+            first_ep = seg.get("video_episode") or (
+                seg.get("episode_marker") or {}).get("episode")
+            if first_ep:
+                break
+        src_video = find_source_video_for_episode(cfg, first_ep)
+    if not src_video:
+        print(f"❌ 找不到源视频: {src_file} (episode={first_ep})")
         return 1
 
     draft_name = args.name or f"{args.project}_{args.task}"

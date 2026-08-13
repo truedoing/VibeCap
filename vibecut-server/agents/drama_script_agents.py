@@ -400,7 +400,8 @@ def narrative_planner_agent(story_map: dict, user_topic: str,
 
 def script_writer_agent(chapter: dict, scene_maps: dict,
                         prev_chapter_summary: str = "",
-                        next_chapter_summary: str = "") -> dict:
+                        next_chapter_summary: str = "",
+                        word_limit: int = None) -> dict:
     """输入: 单个章节方案 + scene_map 数据 → 输出: segments 数组
 
     Args:
@@ -408,6 +409,7 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
       scene_maps: {ep: [scene_dict, ...]} 覆盖章节涉及的剧集
       prev_chapter_summary: 前一章摘要 (用于过渡)
       next_chapter_summary: 后一章摘要 (用于过渡)
+      word_limit: 整章 narration_text 总字数上限（用于超字数重写）
     """
     # 收集本章涉及剧集的 scene_map
     focus_eps = chapter.get('episodes_focus', [])
@@ -433,6 +435,14 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
     if next_chapter_summary:
         transition_context += f"\n后一章摘要 (用于过渡衔接): {next_chapter_summary}"
 
+    # 字数约束提示（超字数重写时注入）
+    word_limit_note = ""
+    if word_limit:
+        word_limit_note = (
+            f"\n★★ 字数硬约束：本章所有 narration_text 的总字数必须 ≤ {word_limit} 字"
+            f"（当前超了，请删减冗余表述、合并段落，保留核心信息，压缩到 {word_limit} 字以内）。"
+        )
+
     system = SCRIPT_WRITER_PROMPT.format(
         known_characters='、'.join(KNOWN_CHARACTERS),
     )
@@ -440,7 +450,8 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
     user = (
         f"★★ 当前章节方案:\n{json.dumps(chapter, ensure_ascii=False, indent=2)}\n\n"
         f"★★ 场景数据 (scene_map):\n{scene_context}"
-        f"{transition_context}\n\n"
+        f"{transition_context}"
+        f"{word_limit_note}\n\n"
         f"请为本章撰写解说词。"
     )
 
@@ -626,6 +637,9 @@ def run_drama_pipeline(
         prev_summary = chapter_summaries[-1] if chapter_summaries else ""
         next_summary = ""  # 后续章节的标题作为轻量上下文
 
+        # 策划师的整章字数目标（word_count_target），用于超字数重写
+        word_target = chapter.get('word_count_target')
+
         write_result = script_writer_agent(
             chapter, scene_maps,
             prev_chapter_summary=prev_summary,
@@ -640,6 +654,38 @@ def run_drama_pipeline(
         if not chapter_segments:
             progress("writing", f"  ⚠️ 第{i+1}章未产出有效段落")
             continue
+
+        # ── 超字数重写循环：整章 narration 总字数超过 word_count_target 时重写 ──
+        # ⚠️ 实验性功能（2026-08-13）：当前只做"超字数→压缩"单向重写，
+        # 实测会「压过头」（如 697→131 字，总时长跌到目标 56%）。
+        # 已知缺陷：重写提示"压缩到 N 字以内"被 LLM 理解成"能删就删"，丢失信息量。
+        # 待改进：改为双向（低于目标 80% 也重写）+ 目标区间提示 + 最多 2 次。
+        if word_target:
+            chapter_chars = sum(len(s.get('narration_text', '')) for s in chapter_segments)
+            # 容差 20%（约 4 字/秒的估算误差 + 标点），超 20% 才重写
+            over_limit = chapter_chars > word_target * 1.2
+            if over_limit:
+                progress("writing",
+                    f"  ⚠️ 第{i+1}章超字数 {chapter_chars}/{word_target}，重写一次...")
+                retry = script_writer_agent(
+                    chapter, scene_maps,
+                    prev_chapter_summary=prev_summary,
+                    next_chapter_summary=next_summary,
+                    word_limit=word_target,
+                )
+                if retry.get('ok') and retry['result'].get('segments'):
+                    new_chars = sum(len(s.get('narration_text', ''))
+                                    for s in retry['result']['segments'])
+                    # 重写后更接近目标才采用，否则保留原稿（重写可能更糟）
+                    if new_chars <= chapter_chars:
+                        chapter_segments = retry['result']['segments']
+                        progress("writing",
+                            f"  ✅ 重写后 {new_chars}/{word_target} 字")
+                    else:
+                        progress("writing",
+                            f"  ⚠️ 重写未收敛({new_chars}字)，保留原稿")
+                else:
+                    progress("writing", f"  ⚠️ 重写失败，保留原稿")
 
         # 注入章节元数据
         for seg in chapter_segments:

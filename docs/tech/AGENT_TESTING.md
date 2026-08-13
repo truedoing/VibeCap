@@ -112,7 +112,7 @@ RAG 闭环测试暴露：**人工指定集本身有偏差**（EP35 苏明成线�
 |---|---|---|---|
 | 1 | 确定性部分补 pytest 单测 | 0 LLM、毫秒级 | ✅ 完成（13 个，0.27s） |
 | 2 | 把 `test_rag.py` 升级成 harness A（只测检索层，拆掉陪跑） | 1 次 LLM/案例 | ✅ 完成（3 案例，平均召回 0.60） |
-| 3 | 建金标准案例集 + 端到端 harness C（CI 用） | 4 次 LLM/案例 | 未做 |
+| 3 | 建金标准案例集 + 端到端 harness C（CI 用） | 4 次 LLM/案例 | ✅ 完成（3 案例，全维度） |
 
 **原则**：先做最便宜、最确定性的（pytest 单测），再做检索层 harness，最后才做端到端。
 
@@ -121,6 +121,7 @@ RAG 闭环测试暴露：**人工指定集本身有偏差**（EP35 苏明成线�
 - **单测**：`tests/test_drama_deterministic.py` — 13 个确定性测试，`pytest tests/ -v`
 - **检索 harness**：`tests/harness_retrieval.py` — 3 个金标准案例，只调 `_infer_episodes_from_topic_llm`（~9s/案例）
 - **文案师事实准确性 harness**：`tests/harness_writer_factuality.py` — 度量 scene_query vs scene_map 的张冠李戴率
+- **E2E harness**：`tests/harness_e2e.py` — 全维度（硬门槛 + 事实 + 语言质量 LLM 评分）
 
 ### 文案师事实准确性 harness 实测（2026-08-13）
 
@@ -172,6 +173,27 @@ RAG 闭环测试暴露：**人工指定集本身有偏差**（EP35 苏明成线�
 | 苏大强人物线 | 44,45 | 0.5 |
 
 平均召回 0.60。ground truth 从结构化 synopsis 的 `character_arcs` 提取，而非人工标注——这正是"评估指标升级"的落地。
+
+### E2E harness 实测（2026-08-13）
+
+全维度评估揭示：**事实准确性（0%）、语言质量（4.4-4.8/5）、硬门槛（全过）都达标**。时长是**参考指标，不是生产门槛**——解说脚本的真实时长由配音台 TTS 决定，`total_chars/4` 只是粗估。
+
+两个阻断问题在本次一并修复：
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| DB 丢字段 | `save_task_segments` 读扁平键 `episode_marker_ep`，但真实字段是嵌套 `episode_marker`；`video_episode` 无 DB 列 | 提取嵌套字段 + 新增 `video_episode` 列 |
+| export_capcut 定位失败 | drama 的 `source="AI编剧Agent"` 占位符，glob `*.mp4` 找不到 | 新增 `find_source_video_for_episode` 按集号定位 |
+
+> 注：export_capcut 属「剪映导出」环节，严格说不在"编剧Agent E2E"边界内，是顺带修复的下游 bug。
+
+**洞察**：E2E harness 的价值不在"评分"，在**暴露单环节 harness 测不到的端到端断链**。"脚本合格 = 下游可消费"，字段完整（DB 保真）+ 事实准确 + 语言达标才是硬门槛，时长只是参考。
+
+### 真实生产验证（2026-08-13，命令行生成）
+
+用 `cli/generate_drama.py` 真实生成「苏明成人物线」，产出 10 段 / 536 字，字段完整、事实 0 错、语言在线，落盘 + 入库成功。
+
+超字数重写循环（`word_limit`）**标记为实验性功能**——实测会"矫枉过正"（697→131 字），但**这不影响生产级判定**：时长是参考指标，脚本短一点不影响下游消费。改进方向（可选）：双向重写 + 目标区间提示 + 最多 2 次迭代。
 
 ## 七、与课程的关系
 

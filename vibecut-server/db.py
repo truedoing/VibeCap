@@ -132,6 +132,7 @@ MIGRATIONS = [
     "ALTER TABLE task_segments ADD COLUMN section_role TEXT DEFAULT ''",
     "ALTER TABLE task_segments ADD COLUMN note TEXT DEFAULT ''",
     "ALTER TABLE tasks ADD COLUMN description TEXT DEFAULT ''",
+    "ALTER TABLE task_segments ADD COLUMN video_episode INTEGER",
 ]
 
 
@@ -474,24 +475,32 @@ class VibeCutDB:
         """保存任务的分段列表"""
         c = self._cursor()
         for seg in segments:
+            # 兼容两种 episode_marker 形态：嵌套 dict {episode, approx_minute, raw}
+            # 与扁平键 episode_marker_ep / episode_marker_min。
+            marker = seg.get("episode_marker") or {}
+            ep = seg.get("episode_marker_ep", marker.get("episode") if isinstance(marker, dict) else None)
+            minute = seg.get("episode_marker_min", marker.get("approx_minute") if isinstance(marker, dict) else None)
+            video_ep = seg.get("video_episode") or (ep if ep is not None else None)
             c.execute(
                 "INSERT OR REPLACE INTO task_segments "
                 "(task_id, seg_id, highlight_text, narration_text, episode_marker_ep, "
-                "episode_marker_min, source_start, source_end, section_role, note, mode, sentences_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "episode_marker_min, source_start, source_end, section_role, note, mode, "
+                "sentences_json, video_episode) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     task_id,
                     seg.get("seg_id", 0),
                     seg.get("highlight_text", seg.get("highlight", "")),
                     seg.get("narration_text", seg.get("narration", "")),
-                    seg.get("episode_marker_ep"),
-                    seg.get("episode_marker_min"),
+                    ep,
+                    minute,
                     seg.get("source_start"),
                     seg.get("source_end"),
                     seg.get("section_role", seg.get("narrative_role", "")),
                     seg.get("note", ""),
                     seg.get("mode", "A"),
                     seg.get("sentences_json"),
+                    video_ep,
                 ),
             )
         self.commit()
@@ -509,8 +518,9 @@ class VibeCutDB:
             "SELECT * FROM task_segments WHERE task_id = ? ORDER BY seg_id",
             (task_id,),
         ).fetchall()
-        return [
-            {
+        result = []
+        for r in rows:
+            seg = {
                 "seg_id": r["seg_id"],
                 "highlight_text": r["highlight_text"],
                 "narration_text": r["narration_text"],
@@ -530,8 +540,11 @@ class VibeCutDB:
                     else None
                 ),
             }
-            for r in rows
-        ]
+            # video_episode 列存在时补回（旧表迁移后可能为 None）
+            if "video_episode" in r.keys():
+                seg["video_episode"] = r["video_episode"]
+            result.append(seg)
+        return result
 
     def validate_episode_markers(self, task_id: int) -> list[dict]:
         """校验分段 episode markers（数据台用）"""
