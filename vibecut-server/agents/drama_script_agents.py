@@ -382,6 +382,15 @@ PRODUCER_PROMPT = """你是影视解说工作室的「制片人」。你的职�
 - recommend=true 的应占少数（精选，不是全推）
 - reason 要具体（数据支撑 + 叙事角度），不要空话
 - ★ 证据公平性：候选有两种来源——「数据向」（evidence 是硬数据，如"冲突密度100%"）和「叙事向」（evidence 是 hook/角度，如"最不受宠的女儿"）。两者证据性质不同，但价值等同，不得因叙事向缺少硬数字而系统性降级。叙事向选题的 hook 本身就是它的"数据"。
+- ★ 选题主体铁律：短视频解说只做「剧情弧」类选题，只有三种切法——
+  1. 人物性格型（这个人是什么性格，锚定一个性格弧）
+  2. 事件策略型（这件事怎么破的局，锚定一个事件弧）
+  3. 反差打脸型（都以为XX结果YY，锚定一个反转弧）
+  硬约束：
+  · 社会议题（重男轻女/养老/啃老）只能作为钩子或结尾升华点，【不得作为选题主体/标题】——议题是主题不是弧，没有起承转合，撑不起短视频。
+  · 成长蜕变型（全剧长弧，素材跨 46 集）违反"集数集中"，【排除】——蜕变融入关系型/反差型作副线。
+  · 金句盘点型（全剧金句合集）是碎片无主体，【排除】。
+  当候选里出现上述三类违规选题时，即使数据好看也要降级或不推荐，并在 reason 里说明"违反弧约束"。
 """
 
 
@@ -501,7 +510,8 @@ def narrative_planner_agent(story_map: dict, user_topic: str,
 def script_writer_agent(chapter: dict, scene_maps: dict,
                         prev_chapter_summary: str = "",
                         next_chapter_summary: str = "",
-                        word_limit: int = None) -> dict:
+                        word_limit: int = None,
+                        synopses: dict = None) -> dict:
     """输入: 单个章节方案 + scene_map 数据 → 输出: segments 数组
 
     Args:
@@ -510,6 +520,7 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
       prev_chapter_summary: 前一章摘要 (用于过渡)
       next_chapter_summary: 后一章摘要 (用于过渡)
       word_limit: 整章 narration_text 总字数上限（用于超字数重写）
+      synopses: {ep: synopsis_dict} 剧情概要（补因果链，防文案师脑补"为什么"）
     """
     # 收集本章涉及剧集的 scene_map
     focus_eps = chapter.get('episodes_focus', [])
@@ -527,6 +538,16 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
             scene_context_parts.append(_format_scene_map_text(sm, ep))
 
     scene_context = '\n\n'.join(scene_context_parts) if scene_context_parts else "(无场景数据)"
+
+    # 剧情概要上下文（补因果链：让文案师理解"为什么"，而非脑补）
+    synopsis_context = ""
+    if synopses:
+        syn_parts = []
+        for ep in focus_eps:
+            if ep in synopses:
+                syn_parts.append(f"第{ep}集概要: {to_text(synopses[ep])[:400]}")
+        if syn_parts:
+            synopsis_context = "\n\n★★ 剧情概要（因果链，写『为什么』时只能据此推断，不得凭记忆脑补）:\n" + "\n".join(syn_parts)
 
     # 过渡上下文
     transition_context = ""
@@ -550,6 +571,7 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
     user = (
         f"★★ 当前章节方案:\n{json.dumps(chapter, ensure_ascii=False, indent=2)}\n\n"
         f"★★ 场景数据 (scene_map):\n{scene_context}"
+        f"{synopsis_context}"
         f"{transition_context}"
         f"{word_limit_note}\n\n"
         f"请为本章撰写解说词。"
@@ -729,6 +751,8 @@ def run_drama_pipeline(
         for e in range(max(1, ep-2), min(47, ep+3)):
             expanded_eps.add(e)
     scene_maps = _load_scene_maps(project_dir, sorted(expanded_eps))
+    # 剧情概要（因果链）：文案师写"为什么"时据此推断，防脑补
+    synopses = _load_all_synopses(project_dir, sorted(expanded_eps))
 
     # ── Phase 3: 文案师 (逐章写作) ──
     progress("writing", f"✍️ 文案师: 逐章写作解说词 (共{len(chapters)}章)...")
@@ -750,6 +774,7 @@ def run_drama_pipeline(
             chapter, scene_maps,
             prev_chapter_summary=prev_summary,
             next_chapter_summary=next_summary,
+            synopses=synopses,
         )
 
         if not write_result.get('ok'):
@@ -778,6 +803,7 @@ def run_drama_pipeline(
                     prev_chapter_summary=prev_summary,
                     next_chapter_summary=next_summary,
                     word_limit=word_target,
+                    synopses=synopses,
                 )
                 if retry.get('ok') and retry['result'].get('segments'):
                     new_chars = sum(len(s.get('narration_text', ''))
@@ -885,6 +911,8 @@ def run_drama_pipeline(
             sq['mood'] = sm_entry.get('mood', sq.get('mood', ''))
             sq['location'] = sm_entry.get('location', sq.get('location', ''))
             sq['characters'] = sm_entry.get('characters', sq.get('characters', []))
+            # mode 归一化：有有效锚定即 A（文案师可能误写 B 等非法值）
+            seg['mode'] = 'A'
             verified.append(seg)
         else:
             # 找最近匹配
@@ -897,6 +925,7 @@ def run_drama_pipeline(
                 sq['mood'] = closest.get('mood', sq.get('mood', ''))
                 sq['location'] = closest.get('location', sq.get('location', ''))
                 sq['characters'] = closest.get('characters', sq.get('characters', []))
+                seg['mode'] = 'A'  # 归一化：有有效锚定即 A
                 fixed += 1
                 verified.append(seg)
             else:
