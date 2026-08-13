@@ -15,7 +15,7 @@ import json, re, subprocess, base64, os, time, argparse
 from pathlib import Path
 
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")  # cli/ → vibecut-server/
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent  # cli/ → vibecut-server/ → VIBECAP/
 DRAMA_DIR = BASE_DIR / "都挺好"
@@ -146,6 +146,7 @@ def pick_keyframes_for_segment(sm, frames, frame_times, max_frames=2):
     if n == 0:
         mid_t = (start + end) / 2
         seg_frames = [min(frames, key=lambda f: abs(frame_times.get(f, 999) - mid_t))]
+        return seg_frames
     elif n <= max_frames:
         return seg_frames
     elif max_frames == 1:
@@ -214,7 +215,7 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
             payload_str = json.dumps({
                 "model": VLM_MODEL,
                 "messages": [{"role": "user", "content": content_parts}],
-                "max_tokens": 1800,
+                "max_tokens": 4000,  # v3.2: MiMo 推理模型 reasoning 占 token，需更大空间
             }).encode("utf-8")
             req = _ur2.Request(
                 f"{api_url}/chat/completions",
@@ -222,7 +223,11 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
             )
             resp_data = json.loads(_ur2.urlopen(req, timeout=120).read())
-            raw = resp_data["choices"][0]["message"].get("content", "")
+            msg = resp_data["choices"][0]["message"]
+            raw = msg.get("content", "") or ""
+            # MiMo v2.5 推理模型: content 常为空, 实际输出在 reasoning_content
+            if not raw.strip():
+                raw = msg.get("reasoning_content", "") or ""
             usage = resp_data.get("usage", {})
             if raw and raw.strip():
                 break
@@ -236,16 +241,17 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
     parsed = _parse_vlm_json(raw)
 
     # 用 scene_map 信息补充：验证人物标签（从文本中提取已知角色名）
-    visible_chars = [c for c in KNOWN_CHARACTERS if c in parsed.get("visual_summary", "")]
+    vs = parsed.get("visual_summary", "") or ""
+    visible_chars = [c for c in KNOWN_CHARACTERS if c in vs]
     # 也检查整个 raw 文本
     if not visible_chars:
-        visible_chars = [c for c in KNOWN_CHARACTERS if c in raw]
+        visible_chars = [c for c in KNOWN_CHARACTERS if c in (raw or "")]
 
     return {
         "scene_map_index": seg_index,
         "start": round(start, 2),
         "end": round(end, 2),
-        "visual_summary": parsed.get("visual_summary", "")[:200],
+        "visual_summary": (parsed.get("visual_summary", "") or "")[:200],
         "shot_size": parsed.get("shot_size", "未知"),
         "composition": parsed.get("composition", "未知"),
         "angle": parsed.get("angle", "未知"),
@@ -426,10 +432,8 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
     work_dir.mkdir(parents=True, exist_ok=True)
 
     proxy_label = f" [{proxy_res}p]" if proxy_res else ""
-    if proxy_res:
-        frames_dir = work_dir / "frames"
-        if frames_dir.exists():
-            import shutil; shutil.rmtree(frames_dir)
+    # 注: 不再强制删除 frames 目录 —— 已有帧直接复用，避免并发时重复 ffmpeg 提取超时
+    # 若需强制重新抽帧，手动删除 ep{N}/frames/ 目录即可
 
     print(f"\n{'='*60}")
     print(f"EP{ep} 分析: {video_path.name}{proxy_label}")
@@ -466,15 +470,18 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
     # [3/5]
     print("\n[3/5] Scene Map")
     from lib.scene_map import SceneMapAgent
+    from lib.synopsis import to_text
     agent = SceneMapAgent()
     syn_file = work_dir / "ep_synopsis.json"
     if syn_file.exists():
-        synopsis = json.load(open(syn_file)).get('synopsis', '')
-        print(f"  synopsis: 已有 ({synopsis[:80]}...)")
+        syn_data = json.load(open(syn_file))
+        # 新结构以 theme 键判定；旧结构则只取 synopsis 纯文本
+        synopsis = syn_data if "theme" in syn_data else syn_data.get('synopsis', '')
+        print(f"  synopsis: 已有 ({to_text(synopsis) if isinstance(synopsis, dict) else str(synopsis)[:80]}...)")
     else:
         synopsis = agent.build_synopsis(asr_segments, ep)
         if synopsis:
-            json.dump({"synopsis": synopsis}, open(syn_file, 'w'), ensure_ascii=False, indent=2)
+            json.dump(synopsis, open(syn_file, 'w'), ensure_ascii=False, indent=2)
             print(f"  synopsis: 已生成")
         else:
             print(f"  synopsis: 失败, 使用 ASR-only fallback")

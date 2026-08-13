@@ -16,8 +16,9 @@ API_URL = "https://api.xiaomimimo.com/v1"
 BASE = Path('/Users/zgl/VIBECAP/都挺好')
 
 # 加载数据
+from lib.synopsis import load_synopsis, to_text
 with open(BASE / 'sources/ep41/scenes.json') as f: scenes = json.load(f)
-with open(BASE / 'sources/ep41/ep_synopsis.json') as f: syn = json.load(f)['synopsis']
+syn = to_text(load_synopsis(BASE, 41))
 
 frames_dir = BASE / 'sources/ep41/frames'
 frame_files = sorted(frames_dir.glob("*.jpg"))

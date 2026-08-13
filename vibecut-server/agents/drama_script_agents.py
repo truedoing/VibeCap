@@ -15,10 +15,12 @@ Agent 协议:
 import json
 import re
 import time
+from collections import Counter
 from pathlib import Path
 
 from lib.llm import call_deepseek_json, call_deepseek
 from lib.vlm_cache import KNOWN_CHARACTERS, get_char_counts
+from lib.synopsis import load_synopsis, to_text
 
 # ── Prompt 模板 ──
 from handlers.prompts.script_drama import (
@@ -48,8 +50,12 @@ def _call_llm(system_prompt, user_content, temp=0.4, max_tokens=4000, timeout=18
 # 数据加载辅助函数
 # ═══════════════════════════════════════════════════════════════
 
-def _load_all_synopses(project_dir: Path) -> dict:
-    """加载全部剧集的剧情概要 → {ep: synopsis_text}"""
+def _load_all_synopses(project_dir: Path, episodes: list[int] = None) -> dict:
+    """加载剧集剧情概要 → {ep: synopsis_dict}
+
+    episodes: 指定则只加载这些集（浅层 RAG 的检索键），None 则加载全部。
+    兼容旧纯文本结构与新结构化结构，统一返回 dict (经 lib.synopsis)。
+    """
     synopses = {}
     sources = project_dir / "sources"
     if not sources.exists():
@@ -62,10 +68,11 @@ def _load_all_synopses(project_dir: Path) -> dict:
             ep = int(ep_dir.name[2:])
         except ValueError:
             continue
-        syn_file = ep_dir / "ep_synopsis.json"
-        if syn_file.exists():
-            data = json.load(open(syn_file))
-            synopses[ep] = data.get("synopsis", "")
+        if episodes is not None and ep not in episodes:
+            continue
+        data = load_synopsis(project_dir, ep)
+        if data:
+            synopses[ep] = data
     return synopses
 
 
@@ -96,10 +103,10 @@ def _load_vlm_descriptions(project_dir: Path, episodes: list[int]) -> dict:
 
 
 def _format_synopses_text(synopses: dict) -> str:
-    """将全部剧集概要格式化为 LLM 输入文本"""
+    """将全部剧集概要格式化为 LLM 输入文本 (兼容旧纯文本/新结构化)"""
     lines = []
     for ep in sorted(synopses.keys()):
-        text = synopses[ep]
+        text = to_text(synopses[ep])
         # 清理 markdown 格式
         text = re.sub(r'\*\*|#{1,4}\s*', '', text)
         lines.append(f"═══ 第{ep}集 ═══\n{text[:600]}")
@@ -128,6 +135,168 @@ def _build_char_summary() -> str:
     return '、'.join(f"{c}({cnt}场)" for c, cnt in items)
 
 
+def _infer_episodes_from_topic(project_dir: Path, topic: str, limit: int = 8) -> list[int]:
+    """深层 RAG 检索键：从选题文本反推相关剧集（无需用户指定）
+
+    策略：遍历 scene_map，统计每个场景的 characters/event/location 与选题里
+    出现的人名/关键词的重合度，按命中强度排序取 top-N 集。
+    —— 这是「身份查询」而非「语义相似」，零 LLM 调用。
+    """
+    names_hit = [n for n in KNOWN_CHARACTERS if n in topic]
+    # 关键词：非人名的实义片段（粗暴分词：按标点/空格切，保留 2+ 字）
+    raw_kws = re.split(r'[，。、：:；;\s]+', topic)
+    kws = [w for w in raw_kws if len(w) >= 2 and w not in names_hit]
+
+    scores = Counter()
+    sources = project_dir / "sources"
+    for ep_dir in sorted(sources.iterdir()):
+        if not ep_dir.is_dir() or not ep_dir.name.startswith("ep"):
+            continue
+        try:
+            ep = int(ep_dir.name[2:])
+        except ValueError:
+            continue
+        sm_file = ep_dir / "scene_map.json"
+        if not sm_file.exists():
+            continue
+        try:
+            scene_map = json.load(open(sm_file))
+        except Exception:
+            continue
+        for s in scene_map:
+            chars = set(s.get('characters', []))
+            text = (s.get('event', '') + ' ' + s.get('location', ''))
+            # 人名命中：强信号，每命中一个 +3
+            for n in names_hit:
+                if n in chars:
+                    scores[ep] += 3
+            # 关键词命中：弱信号，每个 +1
+            for kw in kws:
+                if kw in text:
+                    scores[ep] += 1
+
+    # 按得分排序，取 top-N
+    ranked = [ep for ep, _ in scores.most_common(limit)]
+    return sorted(ranked) if ranked else None
+
+
+def _emotion_signature(project_dir: Path, char: str, limit: int = 8) -> dict:
+    """计算某人物在每集的「情绪签名」：冲突场数 vs 缓和场数。
+
+    用于区分"纯冲突"集（如 EP35 冲突11/缓和0）和"冲突→缓和转折"集
+    （如 EP39 冲突6/缓和11）——后者才是"觉醒/守护"类弧线的关键拐点，
+    synopsis 概要层区分不了，必须下沉到 scene_map 的情绪维度。
+    零 LLM 调用。
+    """
+    CONFLICT = {'愤怒','激烈','紧张','压抑','冲突','对抗','尴尬','焦虑','严肃','担忧','无奈','悲伤'}
+    SOFT = {'感动','释然','温馨','轻松','平静','期待','坚定'}
+    sig = {}
+    sources = project_dir / "sources"
+    for ep_dir in sorted(sources.iterdir()):
+        if not ep_dir.is_dir() or not ep_dir.name.startswith("ep"):
+            continue
+        try:
+            ep = int(ep_dir.name[2:])
+        except ValueError:
+            continue
+        sm_file = ep_dir / "scene_map.json"
+        if not sm_file.exists():
+            continue
+        try:
+            scene_map = json.load(open(sm_file))
+        except Exception:
+            continue
+        c = s = 0
+        for sc in scene_map:
+            if char in sc.get('characters', []):
+                m = sc.get('mood', '')
+                if any(x in m for x in CONFLICT):
+                    c += 1
+                elif any(x in m for x in SOFT):
+                    s += 1
+        if c or s:
+            sig[ep] = (c, s, '转折' if (c > 0 and s > 0) else '单向')
+    return sig
+
+
+def _infer_episodes_from_topic_llm(project_dir: Path, topic: str, limit: int = 8) -> list[int]:
+    """深层 RAG 检索键（Agentic 版）：让 LLM 基于选题 + 各集梗概 + 情绪签名反推关键集。
+
+    为什么不用统计/BGE：叙事弧线（如"妈宝→守护者"）是语义概念，for 循环的
+    频率统计和 BGE 的概要相似度都抓不到转折点，只有 LLM 能理解"弧线节点"。
+    这是「检索本身也由 LLM 承担」的 Agentic RAG 形态。
+
+    优化点（v2）：
+    1. LLM 显式标注「弧线角色」（起点/转折/高潮/终点），避免漏掉头尾。
+    2. 注入 scene_map 的情绪签名（冲突/缓和/转折），区分"纯冲突集"(EP35)
+       与"冲突→缓和转折集"(EP39)——后者才是"觉醒/守护"类弧线的拐点。
+    """
+    # 提取主角名（KNOWN_CHARACTERS 中命中 topic 的第一个）
+    names_hit = [n for n in KNOWN_CHARACTERS if n in topic]
+    main_char = names_hit[0] if names_hit else None
+
+    # 每集取 synopsis 前 200 字作为梗概
+    lines = []
+    sources = project_dir / "sources"
+
+    # 情绪签名（若识别到主角）
+    sig = _emotion_signature(project_dir, main_char) if main_char else {}
+
+    for ep in range(1, 47):
+        syn_file = sources / f"ep{ep}" / "ep_synopsis.json"
+        if not syn_file.exists():
+            continue
+        syn = load_synopsis(project_dir, ep)
+        brief = to_text(syn).strip().replace("\n", " ")[:200]
+        # 拼情绪签名
+        emo = ""
+        if ep in sig:
+            c, s, t = sig[ep]
+            emo = f" [情绪:冲突{c}/缓和{s}/{t}]"
+        lines.append(f"EP{ep}: {brief}{emo}")
+    brief_text = "\n".join(lines)
+
+    system = (
+        "你是影视解说选题策划。用户给出一条人物线/主题线选题（通常是『从X到Y』格式），"
+        "你要从下面的 46 集剧情梗概中，找出最能支撑这条叙事弧线的关键剧集。\n"
+        "每集末尾的 [情绪:冲突X/缓和Y/转折或单向] 是该集主角场景的情绪签名：\n"
+        "- 『转折』= 冲突与缓和并存，通常是觉醒/和解/守护的拐点\n"
+        "- 『单向』= 纯冲突或纯缓和，通常是冲突升级或日常戏\n"
+        "★ 关键：你必须覆盖弧线的完整结构（起点/转折/高潮/终点），"
+        "尤其注意『转折』集——如『从冲突到守护』的拐点，情绪签名会从单向冲突转为转折。\n"
+        "只返回 JSON，格式：\n"
+        "{\"arc\": [{\"ep\": 1, \"role\": \"起点\"}, {\"ep\": 21, \"role\": \"转折\"}, ...]}"
+    )
+    user = (
+        f"选题：{topic}\n\n"
+        f"46 集梗概（含情绪签名）：\n{brief_text}\n\n"
+        f"请选出最多 {limit} 集，按叙事顺序（起点→转折→高潮→终点）排列，"
+        f"role 取值：起点/转折/高潮/终点/铺垫。"
+    )
+    res = call_deepseek_json(system, user, temperature=0.2, max_tokens=400,
+                             timeout=120, label="deep_rag_infer")
+    if not res.get("ok"):
+        return None
+    data = res.get("data") or {}
+    arc = data.get("arc") or data.get("episodes") or []
+    eps = []
+    if arc and isinstance(arc, list) and isinstance(arc[0], dict):
+        # 新版：带 role 的结构
+        for item in arc:
+            ep = item.get("ep") if isinstance(item, dict) else item
+            try:
+                eps.append(int(ep))
+            except (TypeError, ValueError):
+                continue
+    else:
+        # 兼容旧版：纯集号列表
+        try:
+            eps = [int(e) for e in arc if isinstance(e, (int, float))]
+        except Exception:
+            return None
+    return eps[:limit] if eps else None
+
+
 # ═══════════════════════════════════════════════════════════════
 # Agent 1: 故事师 — 通读全部剧集概要，提取故事地图
 # ═══════════════════════════════════════════════════════════════
@@ -138,8 +307,8 @@ def story_master_agent(project_dir: Path, drama_name: str,
 
     如果指定 focus_episodes，额外加载对应 scene_map 辅助分析。
     """
-    # 加载数据
-    synopses = _load_all_synopses(project_dir)
+    # 加载数据（浅层 RAG：指定集则只读这些集，不再全量 46 集）
+    synopses = _load_all_synopses(project_dir, focus_episodes)
     if not synopses:
         return {"ok": False, "error": f"未找到任何剧集概要数据 (sources/ep*/ep_synopsis.json)"}
 
@@ -362,8 +531,16 @@ def run_drama_pipeline(
         if emit_progress:
             emit_progress(step, msg, data)
 
+    # ── Phase 0: 深层 RAG 检索键（未指定集时，从选题反推相关集）──
+    if focus_episodes is None:
+        focus_episodes = _infer_episodes_from_topic_llm(project_dir, topic)
+        if focus_episodes:
+            progress("story", f"🔎 深层RAG(LLM): 从选题反推相关剧集 → {focus_episodes}")
+        else:
+            progress("story", "⚠️ 深层RAG: LLM 反推失败，回退全量概要")
+
     # ── Phase 1: 故事师 ──
-    progress("story", "📖 故事师: 通读全部剧情概要，提取故事地图...")
+    progress("story", "📖 故事师: 通读剧情概要，提取故事地图...")
     start = time.time()
     story_result = story_master_agent(project_dir, drama_name, focus_episodes)
 

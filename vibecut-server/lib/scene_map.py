@@ -19,6 +19,7 @@ import re
 import os
 
 from lib.llm import call_deepseek
+from lib.names import NAME_MAP, normalize_names
 from lib.vlm_cache import KNOWN_CHARACTERS
 
 # ── Prompt ──
@@ -39,6 +40,13 @@ SCENE_MAP_PROMPT = """你是《都挺好》的场记。根据 ASR 对话和剧�
 2. time_range 必须精确，间隔≤30s。相邻场景结束/开始时间之差不超过15s
 3. characters 至少有1人，不能是空数组
 4. 人物全名: 苏大强/苏明哲/苏明成/苏明玉/朱丽/吴非/小蔡/老聂
+   ★★ 人名归一化铁律（ASR 可能有同音字误识别）★★
+   输出 characters 时，必须把以下 ASR 误识别写法纠正为标准名，绝不能照抄：
+     朱莉/朱利 → 朱丽 | 明诚/明城/明昌 → 明成
+     宋明哲/宋明成/宋明玉 → 苏明哲/苏明成/苏明玉（"宋"是"苏"的误识）
+     宋大强 → 苏大强 | 小菜 → 小蔡 | 吴飞/吴菲 → 吴非
+     苏名成/苏名玉/苏名哲 → 苏明成/苏明玉/苏明哲
+   用剧情常识判断：提到"二哥""给明玉打架""照顾爸"等，人名一律用上述标准全名。
 5. 场景按对话话题转换点切分，每段60-120s。对话超过120s连续同话题的，在中间适当位置拆分
 6. 覆盖第一句到末句的完整时间线，不得遗漏任何对话段落
 7. 通过称呼词推断说话人（"明哲"→吴非在说话,"爸"→子女在说话）
@@ -47,10 +55,39 @@ SCENE_MAP_PROMPT = """你是《都挺好》的场记。根据 ASR 对话和剧�
 
 时间连续性检查: 相邻场景 time_range 不得断开超过30s。若 ASR 有对话必须生成对应场景。"""
 
-SCENE_MAP_SYNOPSIS_PROMPT = """你是电视剧《都挺好》的编剧助理。根据对话记录，概括这集的核心剧情，
-按时间顺序列出 3-5 个关键情节段落。人物用全名（苏大强/苏明哲/苏明成/苏明玉/朱丽/吴非/小蔡等）。
+SCENE_MAP_SYNOPSIS_PROMPT = """你是电视剧《都挺好》的编剧助理。根据本集 ASR 对话记录（带时间戳），生成这集的「宏观叙事索引」。
 
-额外要求：如果你能根据对话内容推断关键情节发生的具体时间范围（从ASR时间戳推），请用 [start_s, end_s] 标注。"""
+★ 职责边界：你只做整集宏观概括，不做逐场景细粒度切分（那是场记的工作）。
+  不要输出 location/characters 逐场景字段，只保留 key_events 级别的关键事件 + 时间锚。
+
+★ 人名归一化铁律：输出人物名时，必须把 ASR 同音字误识别纠正为标准名，绝不能照抄：
+  朱莉/朱利 → 朱丽 | 明诚/明城/明昌 → 明成
+  宋明哲/宋明成/宋明玉 → 苏明哲/苏明成/苏明玉（"宋"是"苏"的误识）
+  宋大强 → 苏大强 | 小菜 → 小蔡 | 吴飞/吴菲 → 吴非
+  苏名成/苏名玉/苏名哲 → 苏明成/苏明玉/苏明哲
+
+★ key_events 的 time_range 必须能映射到本集场景时间轴（从 ASR 时间戳推断，[start_s, end_s]，
+  秒为单位，误差尽量控制在 ±15s 内）。这是连接 synopsis 与 scene_map 的锚点，务必准确。
+
+输出严格 JSON（不要 markdown 代码块、不要任何多余文字）：
+{
+  "theme": "本集核心主题（一句话，≤30字）",
+  "plot_arc": "起承转合概括（≤100字）",
+  "character_arcs": [
+    {"character": "苏明成", "arc": "从...到...的转变", "relations_change": ["与苏明玉和解"]}
+  ],
+  "key_conflicts": ["父子冲突", "兄妹误会"],
+  "emotional_curve": ["紧张", "冲突", "和解", "温情"],
+  "key_events": [
+    {"event": "苏明成持刀阻婚", "time_range": [450, 570]}
+  ]
+}
+
+规则：
+- 人物只从这些标准全名中选：苏大强/苏明哲/苏明成/苏明玉/朱丽/吴非/小蔡/老聂（本集未出场的不写）
+- character_arcs 只写本集内发生实质转变的人物，无转变可留空数组
+- key_events 3-6 个，按时间顺序；每个 event ≤20字
+- emotional_curve 2-5 个情绪标签，反映本集情绪起伏"""
 
 
 class SceneMapAgent:
@@ -61,22 +98,90 @@ class SceneMapAgent:
 
     # ── 公开 API ──
 
-    def build_synopsis(self, asr_segments, ep: int) -> str:
-        """DeepSeek 读取 ASR 生成剧情概要"""
+    def build_synopsis(self, asr_segments, ep: int) -> dict:
+        """DeepSeek 读取 ASR 生成结构化宏观叙事索引 (ep_synopsis 新结构)
+
+        返回 dict（theme/plot_arc/character_arcs/key_conflicts/emotional_curve/key_events），
+        失败时返回 {}。写入侧由 cli 决定序列化。
+        """
         asr_text = ' '.join(seg['text'] for seg in asr_segments)[:6000]
+        # ASR 人名标准化 (消除同音字误识别对生成结果的污染)
+        asr_text = normalize_names(asr_text)
+
+        # 含时间戳的 ASR，供 key_events 推断 time_range
+        asr_timed = self._format_asr(asr_segments)
+
         result = call_deepseek(
             SCENE_MAP_SYNOPSIS_PROMPT,
-            f"第{ep}集对话记录:\n{asr_text}",
-            max_tokens=800, label="synopsis",
+            f"第{ep}集对话记录:\n{asr_text}\n\n带时间戳的 ASR (推断 key_events 时间锚):\n{asr_timed}",
+            max_tokens=1600, label="synopsis",
         )
-        if isinstance(result, dict) and result.get("ok"):
-            return result.get("content", "").strip()
-        return ""
+        if not isinstance(result, dict) or not result.get("ok"):
+            return {}
 
-    def build(self, asr_segments, synopsis: str) -> list:
-        """从 ASR + 概要生成 scene_map 数组"""
+        content = _strip_markdown(result.get("content", ""))
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if not json_match:
+            return {}
+        try:
+            data = json.loads(json_match.group(0))
+        except json.JSONDecodeError:
+            return {}
+        return self._normalize_synopsis(data)
+
+    @staticmethod
+    def _normalize_synopsis(data) -> dict:
+        """校验 + 补全结构化字段，并对人物名再做一次归一化兜底。"""
+        if not isinstance(data, dict):
+            return {}
+        out = {
+            "theme": str(data.get("theme", "")).strip(),
+            "plot_arc": str(data.get("plot_arc", "")).strip(),
+            "character_arcs": [],
+            "key_conflicts": [],
+            "emotional_curve": [],
+            "key_events": [],
+        }
+        for a in data.get("character_arcs") or []:
+            if not isinstance(a, dict):
+                continue
+            char = normalize_names(str(a.get("character", "")).strip())
+            if not char:
+                continue
+            arc = str(a.get("arc", "")).strip()
+            rc = [str(x).strip() for x in (a.get("relations_change") or [])
+                  if str(x).strip()]
+            out["character_arcs"].append({
+                "character": char, "arc": arc, "relations_change": rc,
+            })
+        for k in ("key_conflicts", "emotional_curve"):
+            raw = data.get(k) or []
+            vals = [normalize_names(str(x).strip()) for x in raw if str(x).strip()]
+            out[k] = vals
+        for e in data.get("key_events") or []:
+            if not isinstance(e, dict):
+                continue
+            event = normalize_names(str(e.get("event", "")).strip())
+            tr = e.get("time_range")
+            if (not event or not isinstance(tr, (list, tuple)) or len(tr) != 2):
+                continue
+            try:
+                start, end = int(tr[0]), int(tr[1])
+            except (TypeError, ValueError):
+                continue
+            if start >= end:
+                continue
+            out["key_events"].append({"event": event, "time_range": [start, end]})
+        return out
+
+    def build(self, asr_segments, synopsis) -> list:
+        """从 ASR + 概要生成 scene_map 数组
+
+        synopsis 可为 dict (新结构化) 或 str (旧纯文本)，统一转成纯文本注入 prompt。
+        """
         asr_text = self._format_asr(asr_segments)
-        user_prompt = f"剧情概要:\n{synopsis}\n\nASR (带时间戳):\n{asr_text}\n\n输出场景分段 JSON。"
+        synopsis_text = _synopsis_to_text(synopsis)
+        user_prompt = f"剧情概要:\n{synopsis_text}\n\nASR (带时间戳):\n{asr_text}\n\n输出场景分段 JSON。"
 
         print("  DeepSeek 生成 scene_map...")
         result = call_deepseek(SCENE_MAP_PROMPT, user_prompt,
@@ -200,6 +305,22 @@ class SceneMapAgent:
             if any(kw in text for kw in keywords):
                 return loc, chars
         return "未知", []
+
+
+def _strip_markdown(text: str) -> str:
+    """去掉 LLM 输出外层可能包裹的 markdown 代码块。"""
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    return text
+
+
+def _synopsis_to_text(synopsis) -> str:
+    """把 synopsis (dict 新结构 / str 旧纯文本) 转成纯文本，供 scene_map prompt 注入。"""
+    if isinstance(synopsis, dict):
+        from lib.synopsis import to_text
+        return to_text(synopsis)
+    return (synopsis or "").strip()
 
 
 def _build_fallback_rules() -> list:

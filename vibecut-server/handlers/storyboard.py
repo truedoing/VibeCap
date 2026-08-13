@@ -14,6 +14,7 @@ from pathlib import Path
 from config import PROJECT_DIR
 from lib.llm import call_moonshot, call_moonshot_json, call_deepseek_json
 from lib.vlm_cache import load as load_vlm_cache, get_char_counts
+from lib.synopsis import load_synopsis, to_text
 from lib.storyboard_match import match_shot_query
 from handlers.search import search, _asr_first_search
 from handlers.prompts.director import DIRECTOR_PROMPT
@@ -85,15 +86,11 @@ def _director_agent(narration: str, segment_context: dict = None, cover: str = "
         print(f"[director]   标的集: {focus_eps_list} (权重+5)")
         synopsis_text = ""
         for ep in focus_eps_list:
-            syn_file = PROJECT_DIR / "sources" / f"ep{ep}" / "ep_synopsis.json"
-            if syn_file.exists():
-                try:
-                    syn = json.load(open(syn_file)).get("synopsis", "")
-                    if syn:
-                        synopsis_text += f"\n★ EP{ep} 剧情概要: {syn}\n"
-                        print(f"[director]   📖 EP{ep} 概要 ({len(syn)}字)")
-                except Exception:
-                    pass
+            syn = load_synopsis(PROJECT_DIR, ep)
+            text = to_text(syn)
+            if text:
+                synopsis_text += f"\n★ EP{ep} 剧情概要: {text}\n"
+                print(f"[director]   📖 EP{ep} 概要 ({len(text)}字)")
 
     ctx_text = ""
     if cover:
