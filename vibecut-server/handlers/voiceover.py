@@ -175,7 +175,8 @@ def generate_voiceover(
         if not orig:
             continue
 
-        out_path = tts_dir / f"narr_{i:03d}.wav"
+        # 音频文件名用 seg_id（不是顺序 i），保证 timelineBuilder 用 sid 拼文件名时能找到
+        out_path = tts_dir / f"narr_{seg_id:03d}.wav"
 
         seg_voice = voice  # 全局默认，可被段覆盖
         seg_emotion = plan.get("emotion", "narrative")
@@ -225,13 +226,13 @@ def generate_voiceover(
             duration = round(result["duration"], 2)
 
             tts_results.append({
-                "index": i,
+                "index": seg_id,
                 "seg_id": seg_id,
                 "start": round(current_time, 2),
                 "end": round(current_time + duration, 2),
                 "narration": text,
                 "narration_text": text,
-                "audio_path": f"tts_segments/narr_{i:03d}.wav",
+                "audio_path": f"tts_segments/narr_{seg_id:03d}.wav",
                 "duration": duration,
                 "pause_after_ms": seg_pause,
                 "overlaps_speech": False,

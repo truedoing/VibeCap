@@ -666,6 +666,9 @@ const SegmentCard = memo(function SegmentCard({ seg, idx, isSelected, isEditing,
               <div style={{ marginBottom: 2 }}>{seg.narration_text || seg.highlight_text}</div>
               {seg.highlight_text && (
                 <div style={{ fontSize: F.xs, color: '#fbbf24', marginBottom: 2 }}>
+                  {(!seg.narration_text || !seg.narration_text.trim()) && (
+                    <span style={{ color: '#34d399', fontWeight: 700, marginRight: 4 }}>▶ 原声</span>
+                  )}
                   💬 {seg.highlight_text}
                   {seg.highlight_start != null && (
                     <span style={{ color: '#6b7280', marginLeft: 6 }}>
@@ -931,10 +934,10 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
             </div>
           )}
 
-          {/* 生成进度 */}
-          {generating && genLog.length > 0 && (
+          {/* 生成进度（完成后保留，不清掉） */}
+          {genLog.length > 0 && (
             <div style={{ marginBottom: 10, padding: 8, borderRadius: 5, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
-              <div style={{ fontSize: F.sm, fontWeight: 600, color: '#a78bfa', marginBottom: 5 }}>⚙️ {isDrama ? '编剧Agent 进度' : '生成进度'}</div>
+              <div style={{ fontSize: F.sm, fontWeight: 600, color: '#a78bfa', marginBottom: 5 }}>⚙️ {isDrama ? '编剧Agent 进度' : '生成进度'}{!generating && ' · 已完成'}</div>
               {genLog.map((entry, i) => {
                 const isNew = i === genLog.length - 1
                 const icon = entry.step === 'story' ? '📖' : entry.step === 'story_done' ? '✅' :

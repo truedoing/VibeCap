@@ -1062,6 +1062,20 @@ def run_drama_pipeline(
             seg['highlight_end'] = anchored['end']
             # 用 ASR 真实文本替换（规范化），这是实际要播放的原声台词
             seg['highlight_text'] = anchored['text']
+
+            # 原声段（narration_text 为空）：把 ASR 锚定结果写成该段的 source_start/end，
+            # 让分镜台 timelineBuilder 自动为它建一个"播原声"的 clip。
+            if not (seg.get('narration_text') or '').strip():
+                seg['episode_marker'] = {
+                    "episode": anchored['ep'],
+                    "approx_minute": anchored['start'] / 60.0,
+                    "raw": f"{anchored['ep']}~{anchored['start']//60:.0f}m{anchored['start']%60:.0f}s",
+                }
+                seg['source_start'] = float(anchored['start'])
+                seg['source_end'] = float(anchored['end'])
+                seg['video_episode'] = anchored['ep']
+                seg['mode'] = 'A'
+
             hl_anchored += 1
         else:
             # 虚构台词，清空（下游无法播放不存在的原剧片段）
