@@ -667,6 +667,11 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
     if isinstance(focus_eps, int):
         focus_eps = [focus_eps]
 
+    # 事件弧完整因果链集数（元数据：策划师产出，覆盖事件的前因后果）
+    arc_eps = chapter.get('arc_episodes', [])
+    if isinstance(arc_eps, int):
+        arc_eps = [arc_eps]
+
     scene_context_parts = []
     for ep in focus_eps:
         if ep in scene_maps:
@@ -680,10 +685,12 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
     scene_context = '\n\n'.join(scene_context_parts) if scene_context_parts else "(无场景数据)"
 
     # 剧情概要上下文（补因果链：让文案师理解"为什么"，而非脑补）
+    # 用「事件弧完整因果链 arc_eps」∪「焦点 focus_eps」的并集，确保前因不被漏掉。
     synopsis_context = ""
     if synopses:
         syn_parts = []
-        for ep in focus_eps:
+        eps_for_synopsis = sorted(set(arc_eps + focus_eps))
+        for ep in eps_for_synopsis:
             if ep in synopses:
                 syn_parts.append(f"第{ep}集概要: {to_text(synopses[ep])[:400]}")
         if syn_parts:

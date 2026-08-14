@@ -129,6 +129,7 @@ NARRATIVE_PLANNER_PROMPT = """你是影视解说领域的资深策划导演（�
       "narrative_function": "hook/context/action/emotion/turn/insight/closing",
       "narrative_goal": "本章要达成的叙事目标（≤30字），★ 第一章（hook）必须包含：视频封面文案（≤25字，作为整个视频的主题观点，如'苏明成炸弹视角，是怎么激活的？'）",
       "episodes_focus": [39, 41],
+      "arc_episodes": [18, 20, 21],
       "scene_anchors": [
         {{
           "ep": 41,
@@ -150,6 +151,7 @@ NARRATIVE_PLANNER_PROMPT = """你是影视解说领域的资深策划导演（�
 
 规则：
 - scene_anchors 中的 event 必须来自 story_map 或 scene_map，不得编造
+- ★ arc_episodes 是本章事件弧的「完整因果链集数」——包含事件的前因和后果（如"打人"的 arc 是 [18,20,21]，因为 EP18 埋矛盾、EP20 朱丽失业激化、EP21 打人爆发）。它不同于 episodes_focus（只聚焦本章重点讲的集），arc_episodes 要覆盖因果链的全集，不能只写焦点集。
 - narrative_function 每个值在整个叙事中最多重复2次（保持节奏变化）
 - 每章至少1个 scene_anchor（PRIMARY），至多2个（PRIMARY+SECONDARY）
 - director_technique 不是每章都要用——只在叙事结构自然需要时才用
