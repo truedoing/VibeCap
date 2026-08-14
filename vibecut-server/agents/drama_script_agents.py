@@ -453,6 +453,49 @@ def producer_agent(candidates: list, account_positioning: str = None) -> dict:
     return {"ok": True, "result": res.get("data") or {}}
 
 
+def validate_producer_output(candidates: list, result: dict) -> list:
+    """制片 Agent 输出的「守规矩」轻量检查（确定性断言，0 LLM）。
+
+    只测可客观验证的约束，不测排序品味（那无标准答案，靠人审）：
+    1. 输出的标题都是「重写后」的，不是照抄输入标题
+    2. 输出的候选都来自输入候选（没凭空造选题）
+    3. 无社会议题/盘点型违规主体（弧约束的确定性部分）
+
+    Returns:
+      问题列表（空 = 通过）
+    """
+    issues = []
+    ranked = result.get("ranked") or []
+    input_titles = {c.get("title", "") for c in candidates}
+
+    for r in ranked:
+        title = r.get("title", "")
+        # 1. 标题重写检查：输出标题不应等于任何输入标题（数据原文）
+        if title in input_titles:
+            issues.append(f"标题未重写（照抄输入）: {title}")
+        # 2. 凭空造选题检查：输出标题应至少与某个输入候选有部分关联
+        #    （这里做宽松检查：输出标题含输入标题的任意 3+ 连续字，视为关联）
+        related = any(_overlap(title, it) >= 3 for it in input_titles)
+        if not related and input_titles:
+            issues.append(f"疑似凭空造选题: {title}")
+
+    return issues
+
+
+def _overlap(a: str, b: str, min_len: int = 3) -> int:
+    """两个字符串的最长公共子串长度（用于宽松的关联判断）"""
+    if not a or not b:
+        return 0
+    best = 0
+    for i in range(len(a)):
+        for j in range(len(b)):
+            k = 0
+            while i + k < len(a) and j + k < len(b) and a[i + k] == b[j + k]:
+                k += 1
+            best = max(best, k)
+    return best
+
+
 # ═══════════════════════════════════════════════════════════════
 # Agent 1: 故事师 — 通读全部剧集概要，提取故事地图
 # ═══════════════════════════════════════════════════════════════

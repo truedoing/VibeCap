@@ -24,6 +24,7 @@ from agents.drama_script_agents import (
     _emotion_signature,
     _infer_episodes_from_topic,
     _extract_key_episodes_from_story_map,
+    validate_producer_output,
 )
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent / "都挺好"
@@ -184,3 +185,29 @@ def test_extract_key_episodes_fallback_to_all_when_no_name_hit():
     }
     eps = _extract_key_episodes_from_story_map(story_map, "家庭矛盾主题")
     assert set(eps) == {1, 21, 8}
+
+
+# ── validate_producer_output（制片 Agent 守规矩检查）────────────
+
+def test_producer_output_title_rewritten():
+    """标题照抄输入 → 应报「标题未重写」"""
+    candidates = [{"title": "苏明成：从试图挪用房款投资到与父兄正面冲突"}]
+    result = {"ranked": [{"title": "苏明成：从试图挪用房款投资到与父兄正面冲突"}]}
+    issues = validate_producer_output(candidates, result)
+    assert any("标题未重写" in i for i in issues)
+
+
+def test_producer_output_title_rewritten_passes_when_new():
+    """标题重写了 → 不报错"""
+    candidates = [{"title": "苏明成：从试图挪用房款投资到与父兄正面冲突"}]
+    result = {"ranked": [{"title": "苏明成：一拳把亲妹打进医院"}]}
+    issues = validate_producer_output(candidates, result)
+    assert not any("标题未重写" in i for i in issues)
+
+
+def test_producer_output_fabricated_topic():
+    """凭空造选题（与任何输入无关联）→ 报「疑似凭空造」"""
+    candidates = [{"title": "苏明成打妹妹"}]
+    result = {"ranked": [{"title": "一个完全无关的新题目"}]}
+    issues = validate_producer_output(candidates, result)
+    assert any("凭空造" in i for i in issues)
