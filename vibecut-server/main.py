@@ -27,7 +27,7 @@ app.add_middleware(
 )
 
 # ── 注册所有 Router ──
-from routers import search, task_crud, segments, media, ai, sse_script, sse_voiceover, pipeline, export, picks, static
+from routers import search, task_crud, segments, media, ai, sse_script, sse_voiceover, pipeline, export, picks, topics, static
 from routers.asr import router as asr_router
 
 app.include_router(search.router)
@@ -42,6 +42,7 @@ app.include_router(sse_voiceover.router)       # /voiceover SSE
 app.include_router(pipeline.router)            # /data
 app.include_router(export.router)              # /export
 app.include_router(picks.router)
+app.include_router(topics.router)              # /topics 选题推荐
 app.include_router(static.router)              # SPA fallback (must be last)
 
 

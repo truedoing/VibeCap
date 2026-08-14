@@ -262,7 +262,7 @@ const SourcePanel = memo(function SourcePanel({
 // ── 左侧（drama 模式）：选题 + 剧集多选 ──
 const DramaSourcePanel = memo(function DramaSourcePanel({
   projectName, topic, setTopic, targetDuration, setTargetDuration,
-  selectedEps, toggleEp, epQuickSelect, quickRanges,
+  selectedEps, setSelectedEps, toggleEp, epQuickSelect, quickRanges,
   segments, generating, generateDramaScript,
   onCollapse,
 }) {
@@ -270,6 +270,32 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
   const toggleAll = () => {
     if (allChecked) { const s = new Set(); setSelectedEps(s) }
     else { const s = new Set(); for (let i = 1; i <= 46; i++) s.add(i); setSelectedEps(s) }
+  }
+
+  // ── 选题推荐 ──
+  const [recTopics, setRecTopics] = useState([])
+  const [recLoading, setRecLoading] = useState(false)
+  const [recError, setRecError] = useState('')
+  const [recOpen, setRecOpen] = useState(false)
+
+  const loadRecommend = async () => {
+    setRecLoading(true); setRecError(''); setRecOpen(true)
+    try {
+      const resp = await fetch(`/topics/recommend?drama=${encodeURIComponent(projectName)}`)
+      const data = await resp.json()
+      if (data?.ok && data?.ranked?.length) setRecTopics(data.ranked)
+      else setRecError(data?.error || '暂无推荐')
+    } catch (e) {
+      setRecError('推荐请求失败: ' + e.message)
+    } finally {
+      setRecLoading(false)
+    }
+  }
+
+  const pickTopic = (t) => {
+    setTopic(t.title)
+    if (t.episodes?.length) setSelectedEps(new Set(t.episodes))
+    setRecOpen(false)
   }
 
   return (
@@ -287,7 +313,37 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
       </div>
 
       <div style={{ padding: '8px 10px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
-        <div style={{ fontSize: F.xs, color: '#9ca3af', marginBottom: 4, fontWeight: 600 }}>📝 选题描述</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>📝 选题描述</span>
+          <button onClick={loadRecommend}
+            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+              background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}>
+            {recLoading ? '推荐中…' : '✨ 选题推荐'}
+          </button>
+        </div>
+
+        {recOpen && (
+          <div style={{ marginBottom: 6, maxHeight: 240, overflowY: 'auto', borderRadius: 6,
+            border: '1px solid rgba(139,92,246,0.25)', background: 'rgba(0,0,0,0.2)' }}>
+            {recLoading && <div style={{ padding: 12, fontSize: F.xs, color: '#9ca3af' }}>⏳ 正在分析剧情弧，约需 1 分钟…</div>}
+            {recError && <div style={{ padding: 12, fontSize: F.xs, color: '#f87171' }}>⚠️ {recError}</div>}
+            {!recLoading && !recError && recTopics.map((t, i) => (
+              <button key={i} onClick={() => pickTopic(t)}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px',
+                  background: i === 0 ? 'rgba(139,92,246,0.12)' : 'transparent', border: 'none',
+                  borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', color: '#e5e7eb' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {t.recommend && <span style={{ fontSize: 10, color: '#4ade80' }}>✅</span>}
+                  <span style={{ fontSize: F.xs, fontWeight: 600 }}>{t.title}</span>
+                  <span style={{ fontSize: 10, color: '#9ca3af' }}>{t.score}分</span>
+                </div>
+                {t.reason && <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>{t.reason}</div>}
+                {t.episodes?.length > 0 && <div style={{ fontSize: 10, color: '#a78bfa', marginTop: 1 }}>集 {t.episodes.join(',')}</div>}
+              </button>
+            ))}
+          </div>
+        )}
+
         <textarea value={topic} onChange={e => setTopic(e.target.value)}
           placeholder="例如：苏明成人物线：从妈宝到守护者。围绕 EP1/21/35/39/41 的核心事件..."
           rows={3}

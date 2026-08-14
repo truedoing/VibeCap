@@ -113,53 +113,27 @@ def conflict_density(scenes, top=3):
 
 
 def main():
-    scenes = None
-    # 弧挖掘（主体）：只挖人物性格弧；事件弧由故事师产出（读全局概要，懂事件）
-    arcs = mine_arcs()
+    # 复用 handler 的完整推荐逻辑（弧挖掘 + 故事师 + 制片）
+    from lib.env import load_env
+    load_env()
+    from handlers.topics import recommend_topics, mine_arcs
 
+    # 先打印弧挖掘结果（诊断用）
+    arcs = mine_arcs(PROJECT_DIR, 46)
     print("=" * 70)
-    print("选题推荐 — 「剧情弧」挖掘（人物弧 + 事件弧）")
+    print("选题推荐 — 「剧情弧」挖掘")
     print("=" * 70)
     print(f"\n共识别 {len(arcs)} 个剧情弧候选：")
     for a in arcs:
         print(f"  [{a['arc_type']}] {a['title']}")
         print(f"        集 {a['episodes']} · {a['evidence']}")
 
-    # 构建候选给制片 Agent
-    candidates = []
-    for a in arcs:
-        candidates.append({
-            "title": a["title"],
-            "type": a["type"],
-            "episodes": a["episodes"],
-            "evidence": a["evidence"],
-        })
-
-    # 叙事向候选（故事师产出）
-    from agents.drama_script_agents import story_master_agent, producer_agent
-    from lib.env import load_env
-    load_env()
-    print("\n📖 故事师: 生成叙事向选题...")
-    story_res = story_master_agent(PROJECT_DIR, "都挺好", None)
-    if story_res.get("ok"):
-        for t in story_res["result"].get("topic_suggestions", []):
-            candidates.append({
-                "title": t.get("title"),
-                "type": t.get("type", "narrative"),
-                "episodes": t.get("episodes_covered", []),
-                "evidence": t.get("hook", t.get("angle", "")),
-            })
-
-    print("\n" + "=" * 70)
-    print(f"共 {len(candidates)} 个候选选题，制片 Agent 决策中...")
-    print("=" * 70)
-
-    prod_res = producer_agent(candidates)
-    if not prod_res.get("ok"):
-        print(f"❌ 制片 Agent 失败: {prod_res.get('error')}")
+    print("\n📖 故事师: 生成叙事向选题 + 制片 Agent 决策中...")
+    result = recommend_topics(PROJECT_DIR, "都挺好", 46)
+    if not result.get("ok"):
+        print(f"❌ 推荐失败: {result.get('error')}")
         return
 
-    result = prod_res["result"]
     print(f"\n🎬 首推选题：{result.get('top_pick', '')}")
     print(f"📌 策略：{result.get('strategy_note', '')}")
     print("\n【制片排序结果】")
