@@ -1044,7 +1044,11 @@ def run_drama_pipeline(
     # ── Phase 4: 后处理 (校验 + 补漏 + episode_marker) ──
     progress("verify", "🔍 校验 scene_query + 填充 episode_marker...")
 
-    # ── 原剧台词 ASR 锚定：把 highlight_text 锚定到真实 ASR，回填时间戳 ──
+    # ── 原剧台词 ASR 锚定：highlight_text 必须对应真实可播放的原剧片段 ──
+    # 台词不只是文字，是"要播放的原剧原声片段"。锚定成功 → 回填精确 ASR 时间戳；
+    # 锚定失败（虚构台词）→ 直接清空，不留虚构台词在脚本里（下游无法播放）。
+    hl_anchored = 0
+    hl_cleared = 0
     for seg in all_segments:
         hl = seg.get('highlight_text', '')
         if not hl:
@@ -1056,10 +1060,18 @@ def run_drama_pipeline(
             seg['highlight_ep'] = anchored['ep']
             seg['highlight_start'] = anchored['start']
             seg['highlight_end'] = anchored['end']
-            # 用 ASR 真实文本替换（规范化），保留原 highlight_text 作对比
-            seg['highlight_asr_text'] = anchored['text']
+            # 用 ASR 真实文本替换（规范化），这是实际要播放的原声台词
+            seg['highlight_text'] = anchored['text']
+            hl_anchored += 1
         else:
+            # 虚构台词，清空（下游无法播放不存在的原剧片段）
+            seg['highlight_text'] = ''
             seg['highlight_unverified'] = True
+            hl_cleared += 1
+    if hl_anchored or hl_cleared:
+        progress("verify",
+                 f"🎬 原剧台词锚定: {hl_anchored}条命中, {hl_cleared}条虚构已清空",
+                 {"anchored": hl_anchored, "cleared": hl_cleared})
 
     # 程序级验证：逐个 segment 检查 scene_query 是否匹配 scene_map
     verified = []
