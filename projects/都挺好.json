@@ -4,5 +4,12 @@
   "source_videos": "/Users/zgl/解说剪辑/都挺好原剧",
   "episodes": 46,
   "fps": 25,
-  "description": "电视剧《都挺好》AI影视解说"
+  "description": "电视剧《都挺好》AI影视解说",
+  "account": {
+    "positioning": "影视解说 · 人物线/情感/冲突向",
+    "core_audience": "解读消费者（非剧粉）",
+    "audience_want": "认知增量 —— 看到观众自己看不到的东西",
+    "topic_types": ["人物性格型", "事件策略型", "反差打脸型"],
+    "framework_ratio": "常规70% + 框架30%（MBTI/依恋理论/博弈论）"
+  }
 }

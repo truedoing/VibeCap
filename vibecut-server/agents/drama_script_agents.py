@@ -394,18 +394,42 @@ PRODUCER_PROMPT = """你是影视解说工作室的「制片人」。你的职�
 """
 
 
-def producer_agent(candidates: list, account_positioning: str = "影视解说 · 人物线/情感/冲突向") -> dict:
+def _load_account_profile() -> dict:
+    """加载账号画像配置（从项目 json 的 account 字段）。
+
+    账号级画像挂在项目配置里，跨生成复用。返回 dict，缺失时返回空。
+    """
+    try:
+        from config import project_config
+        return project_config.get("account", {}) or {}
+    except Exception:
+        return {}
+
+
+def producer_agent(candidates: list, account_positioning: str = None) -> dict:
     """制片 Agent（决策层）：消费候选选题，评判排序，输出推荐。
 
     Args:
       candidates: 候选选题列表，每项 {"title", "type", "episodes"/"evidence", "hook"/"angle"}
-      account_positioning: 账号定位（用于 fit 维度评判）
+      account_positioning: 账号定位（None 时从项目配置的 account 字段读取）
 
     Returns:
       {"ok": True, "result": {...}} | {"ok": False, "error": ...}
     """
     if not candidates:
         return {"ok": False, "error": "无候选选题"}
+
+    # 账号画像：优先入参，否则读配置
+    profile = _load_account_profile()
+    if account_positioning is None:
+        account_positioning = profile.get("positioning", "影视解说 · 人物线/情感/冲突向")
+
+    # 拼完整账号画像（定位 + 受众 + 价值主张）
+    account_desc = f"账号定位：{account_positioning}"
+    if profile.get("core_audience"):
+        account_desc += f"\n核心受众：{profile['core_audience']}"
+    if profile.get("audience_want"):
+        account_desc += f"\n受众要什么：{profile['audience_want']}"
 
     # 候选序列化为文本（限长，控制 token）
     cand_text = "\n".join(
@@ -416,7 +440,7 @@ def producer_agent(candidates: list, account_positioning: str = "影视解说 ·
     )
 
     user = (
-        f"账号定位：{account_positioning}\n\n"
+        f"{account_desc}\n\n"
         f"候选选题（共 {len(candidates)} 个）：\n{cand_text}\n\n"
         f"请评判、排序，给出首推选题和推荐理由。"
     )
@@ -564,8 +588,21 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
             f"（当前超了，请删减冗余表述、合并段落，保留核心信息，压缩到 {word_limit} 字以内）。"
         )
 
+    # 账号画像注入：文案师继承账号级画像（受众 + 价值主张）
+    profile = _load_account_profile()
+    audience_note = ""
+    if profile.get("core_audience"):
+        audience_note += f"〔账号受众〕{profile['core_audience']}。"
+    if profile.get("audience_want"):
+        audience_note += f"〔受众要什么〕{profile['audience_want']}。"
+    if profile.get("topic_types"):
+        audience_note += f"〔选题类型〕{'/'.join(profile['topic_types'])}。"
+    if audience_note:
+        audience_note = "★ ★ 账号画像（据此调整剥层方向）:\n  " + audience_note
+
     system = SCRIPT_WRITER_PROMPT.format(
         known_characters='、'.join(KNOWN_CHARACTERS),
+        audience_note=audience_note,
     )
 
     user = (
