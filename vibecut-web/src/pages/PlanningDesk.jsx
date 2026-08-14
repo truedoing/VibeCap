@@ -664,7 +664,22 @@ const SegmentCard = memo(function SegmentCard({ seg, idx, isSelected, isEditing,
                 </div>
               )}
               <div style={{ marginBottom: 2 }}>{seg.narration_text || seg.highlight_text}</div>
-              {seg.highlight_text && <div style={{ fontSize: F.xs, color: '#fbbf24', marginBottom: 2 }}>💬 {seg.highlight_text}</div>}
+              {seg.highlight_text && (
+                <div style={{ fontSize: F.xs, color: '#fbbf24', marginBottom: 2 }}>
+                  💬 {seg.highlight_text}
+                  {seg.highlight_start != null && (
+                    <span style={{ color: '#6b7280', marginLeft: 6 }}>
+                      ⏱ EP{seg.highlight_ep} {secToMin(seg.highlight_start)}-{secToMin(seg.highlight_end)}
+                    </span>
+                  )}
+                  {seg.highlight_unverified && (
+                    <span style={{ color: '#f87171', marginLeft: 6 }}>⚠️ 未找到出处</span>
+                  )}
+                  {seg.highlight_asr_text && seg.highlight_asr_text !== seg.highlight_text && (
+                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }}>ASR: {seg.highlight_asr_text}</div>
+                  )}
+                </div>
+              )}
               {sq?.episode && <div style={{ fontSize: F.xs, color: '#6b7280', marginTop: 3 }}>
                 📍 EP{sq.episode} · {sq.location} · {sq.event?.substring(0,30)} · {sq.mood}
                 {sq.intensity && ` · 强度${sq.intensity}/5`}

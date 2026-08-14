@@ -89,6 +89,73 @@ def _load_scene_maps(project_dir: Path, episodes: list[int]) -> dict:
     return scene_maps
 
 
+def _load_asr_text(project_dir: Path, episodes: list[int]) -> dict:
+    """加载指定剧集的 ASR 台词 → {ep: [{start, end, text}]}"""
+    asr_texts = {}
+    sources = project_dir / "sources"
+    for ep in episodes:
+        asr_file = sources / f"ep{ep}" / "asr_result.json"
+        if not asr_file.exists():
+            asr_file = sources / f"ep{ep:02d}" / "asr_result.json"
+        if asr_file.exists():
+            try:
+                asr_texts[ep] = json.load(open(asr_file))
+            except Exception:
+                asr_texts[ep] = []
+    return asr_texts
+
+
+# ASR 关键词锚点停用词（复用 dialogue.py 的思路）
+_ASR_STOPWORDS = {
+    '一个', '这个', '那个', '什么', '怎么', '就是', '还是', '可以', '已经',
+    '因为', '所以', '但是', '不过', '虽然', '如果', '只是', '还不', '不了',
+    '哪个', '哪儿', '不是', '我们', '我是', '他们', '你想', '想去',
+    '去跟', '跟他', '还不',
+}
+
+
+def _anchor_highlight(highlight_text: str, ep: int, asr_texts: dict) -> dict:
+    """把 highlight_text 锚定到指定集的 ASR，返回真实 {ep, start, end, text} 或 None。
+
+    滑窗关键词匹配（零 LLM），复用 dialogue.py 的思路。
+    """
+    if not highlight_text or not ep:
+        return None
+    asr_list = asr_texts.get(ep, [])
+    if not asr_list:
+        return None
+
+    # 清洗：去掉标点，取前 15 字做锚
+    import re as _re
+    anchor = _re.sub(r'[，。！？、\s""''「」『』【】《》（）]', '', highlight_text)[:15]
+    if len(anchor) < 2:
+        return None
+
+    # 生成 2-4 字滑窗关键词
+    kws = []
+    for n in [2, 3, 4]:
+        for i in range(len(anchor) - n + 1):
+            kw = anchor[i:i + n]
+            if kw not in _ASR_STOPWORDS:
+                kws.append(kw)
+    if not kws:
+        return None
+
+    # 在 ASR 里找最高分命中
+    best = None
+    best_score = 0
+    for a in asr_list:
+        text = a.get("text", "")
+        score = sum(text.count(k) * (3 if len(k) >= 3 else 2) for k in kws)
+        if score > best_score:
+            best_score = score
+            best = a
+
+    if best and best_score > 5:
+        return {"ep": ep, "start": best["start"], "end": best["end"], "text": best["text"][:200]}
+    return None
+
+
 def _load_vlm_descriptions(project_dir: Path, episodes: list[int]) -> dict:
     """加载 VLM 描述（可选，用于增强写作上下文）→ {ep: {scene_idx: vlm_data}}"""
     vlm = {}
@@ -581,7 +648,8 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
                         next_chapter_summary: str = "",
                         word_limit: int = None,
                         synopses: dict = None,
-                        topic_type: str = None) -> dict:
+                        topic_type: str = None,
+                        asr_texts: dict = None) -> dict:
     """输入: 单个章节方案 + scene_map 数据 → 输出: segments 数组
 
     Args:
@@ -592,6 +660,7 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
       word_limit: 整章 narration_text 总字数上限（用于超字数重写）
       synopses: {ep: synopsis_dict} 剧情概要（补因果链，防文案师脑补"为什么"）
       topic_type: 选题类型（人物性格型/事件策略型/反差打脸型），决定剥层方向
+      asr_texts: {ep: [{start,end,text}]} ASR 台词（供文案师选真实原剧台词）
     """
     # 收集本章涉及剧集的 scene_map
     focus_eps = chapter.get('episodes_focus', [])
@@ -619,6 +688,19 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
                 syn_parts.append(f"第{ep}集概要: {to_text(synopses[ep])[:400]}")
         if syn_parts:
             synopsis_context = "\n\n★★ 剧情概要（因果链，写『为什么』时只能据此推断，不得凭记忆脑补）:\n" + "\n".join(syn_parts)
+
+    # ASR 台词上下文（供文案师选真实原剧台词，避免编造 highlight_text）
+    asr_context = ""
+    if asr_texts:
+        asr_parts = []
+        for ep in focus_eps:
+            lines = asr_texts.get(ep, [])
+            if lines:
+                # 只取每集前 40 句，控制上下文长度
+                snippet = "；".join(f"{a['start']:.0f}s:{a['text']}" for a in lines[:40])
+                asr_parts.append(f"第{ep}集 ASR 台词: {snippet[:2000]}")
+        if asr_parts:
+            asr_context = "\n\n★★ 原剧台词（ASR 真实台词，highlight_text 只能从这里逐字选）:\n" + "\n".join(asr_parts)
 
     # 过渡上下文
     transition_context = ""
@@ -668,6 +750,7 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
         f"★★ 当前章节方案:\n{json.dumps(chapter, ensure_ascii=False, indent=2)}\n\n"
         f"★★ 场景数据 (scene_map):\n{scene_context}"
         f"{synopsis_context}"
+        f"{asr_context}"
         f"{type_note}"
         f"{transition_context}"
         f"{word_limit_note}\n\n"
@@ -851,6 +934,8 @@ def run_drama_pipeline(
     scene_maps = _load_scene_maps(project_dir, sorted(expanded_eps))
     # 剧情概要（因果链）：文案师写"为什么"时据此推断，防脑补
     synopses = _load_all_synopses(project_dir, sorted(expanded_eps))
+    # ASR 台词（供文案师选真实原剧台词 + Phase 4 锚定回填）
+    asr_texts = _load_asr_text(project_dir, sorted(expanded_eps))
 
     # ── Phase 3: 文案师 (逐章写作) ──
     progress("writing", f"✍️ 文案师: 逐章写作解说词 (共{len(chapters)}章)...")
@@ -874,6 +959,7 @@ def run_drama_pipeline(
             next_chapter_summary=next_summary,
             synopses=synopses,
             topic_type=topic_type,
+            asr_texts=asr_texts,
         )
 
         if not write_result.get('ok'):
@@ -904,6 +990,7 @@ def run_drama_pipeline(
                     word_limit=word_target,
                     synopses=synopses,
                     topic_type=topic_type,
+                    asr_texts=asr_texts,
                 )
                 if retry.get('ok') and retry['result'].get('segments'):
                     new_chars = sum(len(s.get('narration_text', ''))
@@ -956,6 +1043,23 @@ def run_drama_pipeline(
 
     # ── Phase 4: 后处理 (校验 + 补漏 + episode_marker) ──
     progress("verify", "🔍 校验 scene_query + 填充 episode_marker...")
+
+    # ── 原剧台词 ASR 锚定：把 highlight_text 锚定到真实 ASR，回填时间戳 ──
+    for seg in all_segments:
+        hl = seg.get('highlight_text', '')
+        if not hl:
+            continue
+        sq = seg.get('scene_query') or {}
+        ep = sq.get('episode') or (seg.get('episode_marker') or {}).get('episode') or seg.get('video_episode')
+        anchored = _anchor_highlight(hl, ep, asr_texts) if ep else None
+        if anchored:
+            seg['highlight_ep'] = anchored['ep']
+            seg['highlight_start'] = anchored['start']
+            seg['highlight_end'] = anchored['end']
+            # 用 ASR 真实文本替换（规范化），保留原 highlight_text 作对比
+            seg['highlight_asr_text'] = anchored['text']
+        else:
+            seg['highlight_unverified'] = True
 
     # 程序级验证：逐个 segment 检查 scene_query 是否匹配 scene_map
     verified = []

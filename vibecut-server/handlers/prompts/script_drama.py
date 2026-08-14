@@ -240,7 +240,7 @@ SCRIPT_WRITER_PROMPT = """你是影视解说领域的头部创作者（文案师
 3. 人物名必须来自已知角色列表：{known_characters}
 4. scene_query 只能基于 scene_map 中 event 和 mood 都不为空的场景
 5. scene_map 中没有合适场景 → episode 和 time_range 都填 null，mode 为 "C"
-6. highlight_text 从 ASR 台词中选最具冲击力的一句作为"原声证据"
+6. highlight_text 从喂给你的「原剧台词（ASR 真实台词）」中逐字选取，选最具冲击力的一句作为"原声证据"。★ 严禁自己编造台词——如果 ASR 里没有合适的，highlight_text 留空字符串，绝不要凭记忆写一句"听起来像台词"的话。
 7. 结尾金句: 每章最后一段必须有价值观升华，让人想转发
 
 ★ 铁律（scene_query 字段的「原样复制」规则——最重要，务必遵守）：
@@ -264,7 +264,7 @@ SCRIPT_WRITER_PROMPT = """你是影视解说领域的头部创作者（文案师
   "segments": [
     {{
       "narration_text": "解说词正文。★ 第一个 segment 必须是观点钩子，≤60字，1-3句，不做场景叙事。后续 segment 正常写作，每段≤150字。",
-      "highlight_text": "原剧台词（可选，用于视频中突出显示）。如果 ASR 数据中能找到对应台词则填写，否则留空字符串。",
+      "highlight_text": "原剧台词（可选，用于视频中突出显示）。必须从喂给你的『原剧台词（ASR 真实台词）』中逐字选，找不到就留空字符串，严禁编造。",
       "mode": "A",
       "scene_query": {{
         "episode": 41,
