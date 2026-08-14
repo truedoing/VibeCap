@@ -133,6 +133,9 @@ MIGRATIONS = [
     "ALTER TABLE task_segments ADD COLUMN note TEXT DEFAULT ''",
     "ALTER TABLE tasks ADD COLUMN description TEXT DEFAULT ''",
     "ALTER TABLE task_segments ADD COLUMN video_episode INTEGER",
+    "ALTER TABLE task_segments ADD COLUMN highlight_ep INTEGER",
+    "ALTER TABLE task_segments ADD COLUMN highlight_start REAL",
+    "ALTER TABLE task_segments ADD COLUMN highlight_end REAL",
 ]
 
 
@@ -485,8 +488,8 @@ class VibeCutDB:
                 "INSERT OR REPLACE INTO task_segments "
                 "(task_id, seg_id, highlight_text, narration_text, episode_marker_ep, "
                 "episode_marker_min, source_start, source_end, section_role, note, mode, "
-                "sentences_json, video_episode) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "sentences_json, video_episode, highlight_ep, highlight_start, highlight_end) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     task_id,
                     seg.get("seg_id", 0),
@@ -501,6 +504,9 @@ class VibeCutDB:
                     seg.get("mode", "A"),
                     seg.get("sentences_json"),
                     video_ep,
+                    seg.get("highlight_ep"),
+                    seg.get("highlight_start"),
+                    seg.get("highlight_end"),
                 ),
             )
         self.commit()
@@ -543,6 +549,11 @@ class VibeCutDB:
             # video_episode 列存在时补回（旧表迁移后可能为 None）
             if "video_episode" in r.keys():
                 seg["video_episode"] = r["video_episode"]
+            # highlight 锚定字段（原剧台词 ASR 时间戳）
+            if "highlight_ep" in r.keys():
+                seg["highlight_ep"] = r["highlight_ep"]
+                seg["highlight_start"] = r["highlight_start"]
+                seg["highlight_end"] = r["highlight_end"]
             result.append(seg)
         return result
 
