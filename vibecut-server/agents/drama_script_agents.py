@@ -579,7 +579,8 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
                         prev_chapter_summary: str = "",
                         next_chapter_summary: str = "",
                         word_limit: int = None,
-                        synopses: dict = None) -> dict:
+                        synopses: dict = None,
+                        topic_type: str = None) -> dict:
     """输入: 单个章节方案 + scene_map 数据 → 输出: segments 数组
 
     Args:
@@ -589,6 +590,7 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
       next_chapter_summary: 后一章摘要 (用于过渡)
       word_limit: 整章 narration_text 总字数上限（用于超字数重写）
       synopses: {ep: synopsis_dict} 剧情概要（补因果链，防文案师脑补"为什么"）
+      topic_type: 选题类型（人物性格型/事件策略型/反差打脸型），决定剥层方向
     """
     # 收集本章涉及剧集的 scene_map
     focus_eps = chapter.get('episodes_focus', [])
@@ -649,10 +651,23 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
         audience_note=audience_note,
     )
 
+    # 选题类型 → 剥层方向提示（元数据传递：制片选题的 type 传导到文案师）
+    type_note = ""
+    if topic_type:
+        type_guide = {
+            "人物性格型": "剥层聚焦「这个人的性格/心理动机」——他为什么是这种人",
+            "事件策略型": "剥层聚焦「这件事的博弈逻辑」——他/她怎么破的局、用了什么招",
+            "反差打脸型": "剥层聚焦「表象 vs 真相」——所有人都以为X，结果Y",
+        }
+        guide = type_guide.get(topic_type, "")
+        if guide:
+            type_note = f"\n\n★★ 选题类型：{topic_type}。{guide}。"
+
     user = (
         f"★★ 当前章节方案:\n{json.dumps(chapter, ensure_ascii=False, indent=2)}\n\n"
         f"★★ 场景数据 (scene_map):\n{scene_context}"
         f"{synopsis_context}"
+        f"{type_note}"
         f"{transition_context}"
         f"{word_limit_note}\n\n"
         f"请为本章撰写解说词。"
@@ -748,6 +763,7 @@ def run_drama_pipeline(
     drama_name: str = "都挺好",
     focus_episodes: list[int] = None,
     target_duration: int = 480,
+    topic_type: str = None,
     emit_progress=None,
 ) -> dict:
     """完整编剧流水线 — 四个 Agent 协作生成解说脚本
@@ -856,6 +872,7 @@ def run_drama_pipeline(
             prev_chapter_summary=prev_summary,
             next_chapter_summary=next_summary,
             synopses=synopses,
+            topic_type=topic_type,
         )
 
         if not write_result.get('ok'):
@@ -885,6 +902,7 @@ def run_drama_pipeline(
                     next_chapter_summary=next_summary,
                     word_limit=word_target,
                     synopses=synopses,
+                    topic_type=topic_type,
                 )
                 if retry.get('ok') and retry['result'].get('segments'):
                     new_chars = sum(len(s.get('narration_text', ''))

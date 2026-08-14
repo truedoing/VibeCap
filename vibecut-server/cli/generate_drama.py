@@ -27,6 +27,7 @@ load_env()
 def _parse_own_args():
     ap = argparse.ArgumentParser(description="编剧Agent 命令行生成解说脚本")
     ap.add_argument("--topic", required=True, help="选题（如 苏明成人物线:从妈宝到守护者）")
+    ap.add_argument("--topic-type", default=None, help="选题类型：人物性格型/事件策略型/反差打脸型")
     ap.add_argument("--target", type=int, default=240, help="目标时长(秒)")
     ap.add_argument("--episodes", default=None, help="指定集号，逗号分隔；不填则自动选集")
     ap.add_argument("--task", default=None, help="任务名")
@@ -59,7 +60,8 @@ def main():
 
     print(f"🎬 编剧Agent · 剧目 {project_name} · 选题 {args.topic}")
     print(f"   目标时长 {args.target}s · "
-          f"{'指定集 ' + str(focus_episodes) if focus_episodes else '自动选集(深层RAG)'}")
+          f"{'指定集 ' + str(focus_episodes) if focus_episodes else '自动选集(深层RAG)'}"
+          f"{' · 类型 ' + args.topic_type if args.topic_type else ''}")
 
     t0 = time.time()
     result = run_drama_pipeline(
@@ -67,6 +69,7 @@ def main():
         topic=args.topic,
         focus_episodes=focus_episodes,
         target_duration=args.target,
+        topic_type=args.topic_type,
         emit_progress=lambda step, msg, data=None: print(f"  [{step}] {msg}", flush=True),
     )
     elapsed = time.time() - t0
