@@ -1091,13 +1091,8 @@ def run_drama_pipeline(
         # 精确匹配 time_range
         matched = [s for s in sm_list if s['time_range'] == tr]
         if matched:
-            sm_entry = matched[0]
-            # 用 scene_map 的 event/mood 覆盖（确保一致）
-            sq['event'] = sm_entry.get('event', sq.get('event', ''))
-            sq['mood'] = sm_entry.get('mood', sq.get('mood', ''))
-            sq['location'] = sm_entry.get('location', sq.get('location', ''))
-            sq['characters'] = sm_entry.get('characters', sq.get('characters', []))
-            # mode 归一化：有有效锚定即 A（文案师可能误写 B 等非法值）
+            # time_range 有效 → 模式归一化 A。event/mood/characters 不再用 scene_map 覆盖，
+            # 它们是文案师的创作快照（可选），下游只用 episode+source_start/end。
             seg['mode'] = 'A'
             verified.append(seg)
         else:
@@ -1105,12 +1100,15 @@ def run_drama_pipeline(
             closest = min(sm_list, key=lambda s: abs(s['time_range'][0] - tr[0]))
             gap = abs(closest['time_range'][0] - tr[0])
             if gap <= 15:
-                # 修正 time_range
+                # 修正 time_range（保证 source_start/end 指向真实可截取的原剧区间）
                 sq['time_range'] = closest['time_range']
-                sq['event'] = closest.get('event', sq.get('event', ''))
-                sq['mood'] = closest.get('mood', sq.get('mood', ''))
-                sq['location'] = closest.get('location', sq.get('location', ''))
-                sq['characters'] = closest.get('characters', sq.get('characters', []))
+                seg['source_start'] = float(closest['time_range'][0])
+                seg['source_end'] = float(closest['time_range'][1])
+                seg['episode_marker'] = {
+                    "episode": ep,
+                    "approx_minute": closest['time_range'][0] / 60.0,
+                    "raw": f"{ep}~{closest['time_range'][0]//60:.0f}m{closest['time_range'][0]%60:.0f}s",
+                }
                 seg['mode'] = 'A'  # 归一化：有有效锚定即 A
                 fixed += 1
                 verified.append(seg)

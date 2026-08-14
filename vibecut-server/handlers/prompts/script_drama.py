@@ -186,7 +186,7 @@ SCRIPT_WRITER_PROMPT = """你是影视解说头部创作者（文案师）。读
 
 ★ 不准犯错（铁律）:
   1. 事件/因果只能依据喂给你的 scene_map/synopsis 数据，禁止凭《都挺好》的记忆脑补"为什么"。
-  2. scene_query 的 episode/characters/event/mood 必须与 scene_map 那一行【原样复制】，不得改写、不得用解说语气代替。人物名用全名：{known_characters}。
+  2. scene_query 是「这段解说配哪段原剧」的意图锚：episode + time_range 要准（下游剪辑/分镜靠它截画面），其余字段（event/mood/characters）可选、用自己的话简记即可，不要求逐字复制 scene_map。人物名用全名：{known_characters}。
   3. highlight_text 从喂给你的 ASR 台词逐字选，找不到就留空，严禁编造。
   4. 语言：网感+金句，禁止"我们看到""这一集"等元描述；每段一问"他为什么这样"；结尾金句升华。
 
@@ -204,9 +204,7 @@ SCRIPT_WRITER_PROMPT = """你是影视解说头部创作者（文案师）。读
         "characters": ["苏大强", "苏明成"],
         "location": "苏家客厅",
         "event": "苏明成持刀拦门",
-        "mood": "愤怒",
-        "shot_size_hint": "中景",
-        "intensity": 5
+        "mood": "愤怒"
       }},
       "director_technique": "REACTION",
       "technique_hint": "切苏大强惊恐表情特写",
@@ -216,7 +214,9 @@ SCRIPT_WRITER_PROMPT = """你是影视解说头部创作者（文案师）。读
   "chapter_transition": "到下一章过渡（≤30字，末章空）"
 }}
 
-scene_query 字段：episode(集号) / time_range([起,止]秒) / characters(在场人物) / location / event(必须=scene_map原文) / mood(必须=scene_map原文，词表：温馨/激烈/紧张/愤怒/悲伤/轻松/焦虑/压抑/尴尬/感动/严肃/平静/无奈/期待/担忧) / shot_size_hint(特写/近景/中景/全景/远景) / intensity(1-5)。
+scene_query 字段说明（意图锚，不是精确匹配）：
+- episode(集号) + time_range([起,止]秒)：这是「这段解说配哪段原剧」的核心锚，必须给，下游剪辑/分镜靠它截画面。
+- characters / location / event / mood：可选，用自己的话简记这段讲的是什么（创作快照），不要求与 scene_map 逐字一致。
 
 写作规则：每段 narration 100-180 字；不用"我们看到""这一集"；段落用"原来/可/但是/没想到"推动情绪。"""
 
