@@ -663,7 +663,7 @@ const SegmentCard = memo(function SegmentCard({ seg, idx, isSelected, isEditing,
                   🎣 开篇钩子 · 封面主题观点
                 </div>
               )}
-              <div style={{ marginBottom: 2 }}>{seg.narration_text || seg.highlight_text}</div>
+              <div style={{ marginBottom: 2 }}>{seg.narration_text}</div>
               {seg.highlight_text && (
                 <div style={{ fontSize: F.xs, color: '#fbbf24', marginBottom: 2 }}>
                   {(!seg.narration_text || !seg.narration_text.trim()) && (

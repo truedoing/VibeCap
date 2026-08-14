@@ -156,6 +156,52 @@ def _anchor_highlight(highlight_text: str, ep: int, asr_texts: dict) -> dict:
     return None
 
 
+def _pick_line_from_window(ep: int, time_range: list, asr_texts: dict) -> dict:
+    """从指定集的 ASR 时间窗内，挑一句最有冲击力的真实台词。
+
+    这是「先场景后台词」的程序实现：场景选对（episode + time_range），
+    台词就从 ASR 里自然取出来，杜绝文案师编造。
+    返回 {"ep", "start", "end", "text"} 或 None。
+    """
+    if not ep or not time_range or len(time_range) != 2:
+        return None
+    asr_list = asr_texts.get(ep, [])
+    if not asr_list:
+        return None
+
+    start, end = time_range
+    # 取时间窗内的 ASR 句
+    window = [a for a in asr_list if a["start"] >= start - 2 and a["end"] <= end + 2]
+    if not window:
+        # 时间窗内无台词，放宽到 ±5 秒
+        window = [a for a in asr_list if a["start"] >= start - 5 and a["start"] <= end + 5]
+    if not window:
+        return None
+
+    # 挑一句：字数适中（6-30字）、有情绪冲击（含感叹/反问/否定词的加分）
+    def _score(a):
+        t = a.get("text", "")
+        s = len(t)
+        # 长度：太短(<=3字)或无意义的不选，6-30字最佳
+        if s < 4:
+            return -100
+        score = 0
+        if 6 <= s <= 30:
+            score += 10
+        elif s > 30:
+            score -= 5  # 太长，可能是一段连续转写
+        # 情绪冲击词
+        for w in ["！", "？", "不", "别", "你", "我", "滚", "闭嘴", "报警", "打"]:
+            if w in t:
+                score += 2
+        return score
+
+    best = max(window, key=_score)
+    if best and _score(best) > 0:
+        return {"ep": ep, "start": best["start"], "end": best["end"], "text": best["text"][:200]}
+    return None
+
+
 def _load_vlm_descriptions(project_dir: Path, episodes: list[int]) -> dict:
     """加载 VLM 描述（可选，用于增强写作上下文）→ {ep: {scene_idx: vlm_data}}"""
     vlm = {}
@@ -1041,7 +1087,31 @@ def run_drama_pipeline(
          "est_duration": round(est_duration, 1)})
 
     # ── Phase 4: 后处理 (校验 + 补漏 + episode_marker) ──
-    progress("verify", "🔍 校验 scene_query + 填充 episode_marker...")
+    progress("verify", "🔍 校验 scene_query + 程序提取原声台词...")
+
+    # ── 原声台词程序化提取：从 scene_query 时间窗的 ASR 取真实台词 ──
+    # 先场景后台词：文案师只选场景（scene_query），台词由程序从 ASR 取，杜绝编造。
+    for seg in all_segments:
+        narr = (seg.get('narration_text') or '').strip()
+        hl = (seg.get('highlight_text') or '').strip()
+        # 只处理原声段（narration 空），且当前 highlight 为空或疑似编造（一律重新取）
+        if narr:
+            continue
+        sq = seg.get('scene_query') or {}
+        ep = sq.get('episode')
+        tr = sq.get('time_range')
+        if not ep or not tr:
+            continue
+        picked = _pick_line_from_window(ep, tr, asr_texts)
+        if picked:
+            seg['highlight_text'] = picked['text']
+            seg['highlight_ep'] = picked['ep']
+            seg['highlight_start'] = picked['start']
+            seg['highlight_end'] = picked['end']
+        elif hl:
+            # 时间窗内取不到真实台词，清空编造的
+            seg['highlight_text'] = ''
+            seg['highlight_unverified'] = True
 
     # 程序级验证：逐个 segment 检查 scene_query 是否匹配 scene_map
     verified = []

@@ -180,14 +180,14 @@ SCRIPT_WRITER_PROMPT = """你是影视解说头部创作者（文案师）。读
 
   段有两种，写 segments 时交替产出：
   · 【解说段】narration_text 非空，highlight_text 留空 ""。这是你的分析/剥层。
-  · 【原声段】narration_text 留空 ""，highlight_text 填名场面里的代表台词（从 ASR 逐字选）。这是"播一段原剧"，让观众进入情境。
+  · 【原声段】narration_text 留空 ""，highlight_text 也留空 ""。这是"播一段原剧名场面"，你只需用 scene_query 选对场景（episode + time_range），台词由程序从该场景的 ASR 自动提取，不用你写。
 
   示例节奏：钩子(解说) → 原声 → 解说 → 原声 → 解说…… 开头可用原声引爆，结尾纯解说收束。
 
 ★ 不准犯错（铁律）:
   1. 事件/因果只能依据喂给你的 scene_map/synopsis 数据，禁止凭《都挺好》的记忆脑补"为什么"。
   2. scene_query 是「这段解说配哪段原剧」的意图锚：episode + time_range 要准（下游剪辑/分镜靠它截画面），其余字段（event/mood/characters）可选、用自己的话简记即可，不要求逐字复制 scene_map。人物名用全名：{known_characters}。
-  3. highlight_text 从喂给你的 ASR 台词逐字选，找不到就留空，严禁编造。
+  3. ★ 原声段（narration 空的段）的 highlight_text 一律留空，由程序从 scene_query 场景的 ASR 里取真实台词。严禁你编造台词。
   4. 语言：网感+金句，禁止"我们看到""这一集"等元描述；每段一问"他为什么这样"；结尾金句升华。
 
 ★ 输出 JSON（严格格式）：
@@ -196,7 +196,7 @@ SCRIPT_WRITER_PROMPT = """你是影视解说头部创作者（文案师）。读
   "segments": [
     {{
       "narration_text": "解说词（第1段是观点钩子≤60字，后续每段≤150字）",
-      "highlight_text": "原声台词（可选，从ASR逐字选，找不到留空）",
+      "highlight_text": "原声段留空，由程序从 scene_query 场景的 ASR 自动提取",
       "mode": "A",
       "scene_query": {{
         "episode": 41,
