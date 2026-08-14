@@ -764,28 +764,21 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
 # Agent 4: 审核师 — 剧情准确性 + 情绪曲线 + 节奏审核
 # ═══════════════════════════════════════════════════════════════
 
-def reviewer_agent(segments: list, scene_maps: dict,
+def reviewer_agent(segments: list, scene_maps: dict = None,
                    target_duration: int = 480) -> dict:
-    """输入: 完整脚本 + scene_map 数据 → 输出: 审核报告 + 修正建议"""
-    # 构建 scene_map 参考文本 (用于事实核查)
-    scene_ref_parts = []
-    for ep, sm in sorted(scene_maps.items()):
-        scene_ref_parts.append(_format_scene_map_text(sm, ep))
-    scene_ref = '\n\n'.join(scene_ref_parts)
+    """输入: 完整脚本 → 输出: 逻辑审核报告 + 改写建议
 
-    # 构建脚本预览
+    只审「逻辑断层 / 过度拔高 / 指代不清」，不审事实（事实已由程序校验）。
+    """
+    # 构建脚本预览（按段号 + narration 全文，让审核师能看到前后逻辑）
     script_preview_lines = []
     total_chars = 0
     for i, seg in enumerate(segments):
         narr = seg.get('narration_text', '')
         total_chars += len(narr)
-        sq = seg.get('scene_query', {})
-        sq_summary = ""
-        if sq and sq.get('episode'):
-            sq_summary = f" [EP{sq['episode']} {sq.get('event', '?')[:20]}]"
-        script_preview_lines.append(
-            f"[S{i}] {narr[:60]}...{sq_summary}"
-        )
+        hl = seg.get('highlight_text', '')
+        hl_str = f" 〔原声:{hl[:30]}〕" if hl else ""
+        script_preview_lines.append(f"[S{i}] {narr}{hl_str}")
 
     est_duration = total_chars / 4  # 4字/秒
     script_preview = '\n'.join(script_preview_lines)
@@ -795,9 +788,8 @@ def reviewer_agent(segments: list, scene_maps: dict,
     user = (
         f"★★ 目标时长: {target_duration}秒\n"
         f"★★ 当前总字数: {total_chars}字, 预估配音时长: {est_duration:.0f}秒\n\n"
-        f"★★ 完整脚本 ({len(segments)}段):\n{script_preview}\n\n"
-        f"★★ 脚本详细数据:\n{json.dumps(segments, ensure_ascii=False, indent=2)[:3000]}\n\n"
-        f"★★ ★ 全量场景数据 (用于事实核查，请逐段对照):\n{scene_ref}"
+        f"★★ 完整脚本 ({len(segments)}段，请逐段检查前后逻辑):\n{script_preview}\n\n"
+        f"请找出逻辑断层、过度拔高、指代不清的段落，并给出改写。"
     )
 
     return _call_llm(system, user, temp=0.3, max_tokens=3000, label="reviewer")
@@ -1128,6 +1120,33 @@ def run_drama_pipeline(
         f"✅ 校验完成: {len(all_segments)}段, 修正{fixed}处, 0个LLM审核",
         {"verified": len(all_segments), "fixed": fixed})
 
+    # ── Phase 4.5: 逻辑审核师（Self-Reflection）──
+    # 文案师一次成稿会有"逻辑断层/过度拔高"（自回归生成无法自我监控）。
+    # 审核师事后整体审逻辑（不审事实，事实已由程序校验），有问题改写一次。
+    progress("review", "🔍 逻辑审核师: 整体审查逻辑断层与过度拔高...")
+    review_start = time.time()
+    review_result = reviewer_agent(all_segments, target_duration=target_duration)
+    review_elapsed = time.time() - review_start
+
+    review_verdict = "pass"
+    review_issues = []
+    fixed_by_review = 0
+    if review_result.get('ok'):
+        review_data = review_result['result']
+        review_verdict = review_data.get('verdict', 'pass')
+        review_issues = review_data.get('issues', [])
+        if review_verdict == 'revise':
+            all_segments, fixed_by_review = apply_fixes(all_segments, review_data)
+            # 改写后重排 seg_id（apply_fixes 不改变段数，但保险起见）
+            for i, seg in enumerate(all_segments):
+                seg['seg_id'] = i
+    else:
+        progress("review", f"⚠️ 审核师不可用: {review_result.get('error', '?')[:80]}")
+
+    progress("review_done",
+        f"✅ 逻辑审核: {review_verdict} · 改写{fixed_by_review}处 · 耗时{review_elapsed:.0f}s",
+        {"verdict": review_verdict, "issues": len(review_issues), "fixed": fixed_by_review})
+
     # ── 提取 cover（封面钩子 — 由文案师写） ──
     cover = ''
     # 文案师输出的 cover 字段
@@ -1157,9 +1176,9 @@ def run_drama_pipeline(
         "segments": all_segments,
         "total": len(all_segments),
         "total_chars": total_chars,
-        "review": {"verdict": "verified", "issues": [], "fixed": fixed},
-        "review_verdict": "verified",
-        "review_issues": [],
+        "review": {"verdict": review_verdict, "issues": review_issues, "fixed": fixed_by_review},
+        "review_verdict": review_verdict,
+        "review_issues": review_issues,
         "time_estimate": {
             "target": target_duration,
             "total_chars": total_chars,
