@@ -1044,50 +1044,28 @@ def run_drama_pipeline(
     # ── Phase 4: 后处理 (校验 + 补漏 + episode_marker) ──
     progress("verify", "🔍 校验 scene_query + 填充 episode_marker...")
 
-    # ── 原剧台词 ASR 锚定：highlight_text 必须对应真实可播放的原剧片段 ──
-    # highlight_text 是"名场面里的代表台词"，锚定到 ASR 拿它在这个场景里的精确位置（供字幕/展示）。
-    hl_anchored = 0
-    hl_cleared = 0
+    # ── 原声段：播放区间 = 文案师通过 scene_query 锁定的「名场面」区间 ──
+    # 名场面拉观众进入情境，长度由叙事决定（一大段也行，具体剪辑后期处理）。
+    # highlight_text 只是可选提示（帮剪辑师定位），不强求、不清空、不精确锚定。
     for seg in all_segments:
-        hl = seg.get('highlight_text', '')
-        if not hl:
-            continue
+        narr = (seg.get('narration_text') or '').strip()
+        hl = (seg.get('highlight_text') or '').strip()
+        if narr:
+            continue  # 解说段，跳过
+        # 原声段（无 narration）：播放区间 = scene_query.time_range
         sq = seg.get('scene_query') or {}
-        ep = sq.get('episode') or (seg.get('episode_marker') or {}).get('episode') or seg.get('video_episode')
-        anchored = _anchor_highlight(hl, ep, asr_texts) if ep else None
-        if anchored:
-            seg['highlight_ep'] = anchored['ep']
-            seg['highlight_start'] = anchored['start']
-            seg['highlight_end'] = anchored['end']
-            # 用 ASR 真实文本替换（规范化），这是实际要播放的原声台词
-            seg['highlight_text'] = anchored['text']
-
-            # 原声段（narration_text 为空）：播放区间 = 文案师通过 scene_query 选定的场景区间
-            # （名场面拉入情境，一句话到几十秒都由叙事决定，不是程序机械填一句话时间）。
-            # highlight_ep/start/end 仍保留，是"代表台词在场景里的精确位置"。
-            if not (seg.get('narration_text') or '').strip():
-                tr = sq.get('time_range')
-                if tr and isinstance(tr, list) and len(tr) == 2:
-                    seg['episode_marker'] = {
-                        "episode": sq.get('episode'),
-                        "approx_minute": tr[0] / 60.0,
-                        "raw": f"{sq.get('episode')}~{tr[0]//60:.0f}m{tr[0]%60:.0f}s",
-                    }
-                    seg['source_start'] = float(tr[0])
-                    seg['source_end'] = float(tr[1])
-                    seg['video_episode'] = sq.get('episode')
-                    seg['mode'] = 'A'
-
-            hl_anchored += 1
-        else:
-            # 虚构台词，清空（下游无法播放不存在的原剧片段）
-            seg['highlight_text'] = ''
-            seg['highlight_unverified'] = True
-            hl_cleared += 1
-    if hl_anchored or hl_cleared:
-        progress("verify",
-                 f"🎬 原剧台词锚定: {hl_anchored}条命中, {hl_cleared}条虚构已清空",
-                 {"anchored": hl_anchored, "cleared": hl_cleared})
+        tr = sq.get('time_range')
+        if tr and isinstance(tr, list) and len(tr) == 2:
+            ep = sq.get('episode')
+            seg['episode_marker'] = {
+                "episode": ep,
+                "approx_minute": tr[0] / 60.0,
+                "raw": f"{ep}~{tr[0]//60:.0f}m{tr[0]%60:.0f}s",
+            }
+            seg['source_start'] = float(tr[0])
+            seg['source_end'] = float(tr[1])
+            seg['video_episode'] = ep
+            seg['mode'] = 'A'
 
     # 程序级验证：逐个 segment 检查 scene_query 是否匹配 scene_map
     verified = []
