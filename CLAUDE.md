@@ -192,18 +192,21 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 
 **结果**: 46 集 VLM 全部完成，空响应 452→17，情绪矛盾 22→0。
 
-## 编剧Agent v1 — Drama脚本生成 (新)
+## 编剧Agent — Drama脚本生成
 
-**核心理念**: 三个独立Agent角色协作，将46集剧情结构化数据转化为影视解说脚本。人提供创意方向（选题+选集+时长），Agent负责执行。
+**核心理念**: 多个Agent角色协作，将46集剧情结构化数据转化为影视解说脚本。人提供创意方向（选题+选集+时长），Agent负责执行。
 
 ```
 选题+选集+时长 → 故事师(全剧概要→故事地图) → 策划师(故事地图→章节方案)
                                                         │
                                                         ▼
-                                              文案师(章节+scene_map→解说词+scene_query)
+                                              文案师(章节+scene_map→解说词+scene_query意图快照)
                                                         │
                                                         ▼
-                                              程序校验(scene_query↔scene_map 一致性)
+                                        程序校验(scene_query 锚定 + 从ASR提取原声台词)
+                                                        │
+                                                        ▼
+                                        逻辑审核师(Self-Reflection: 审逻辑断层/过度拔高)
                                                         │
                                                         ▼
                                               segments.json (带episode_marker+source_start/end)
@@ -211,24 +214,25 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 
 **核心Agent**:
 - **故事师** (`story_master_agent`) — 通读46集剧情概要 → 提取人物弧光/转折点/高光场景/选题建议
-- **策划师** (`narrative_planner_agent`) — 故事地图+选题→4-7章叙事方案(每章含场景锚点+导演手法+时长估算)
-- **文案师** (`script_writer_agent`) — 章节方案+scene_map→解说词+scene_query(含原剧台词highlight_text)
+- **策划师** (`narrative_planner_agent`) — 故事地图+选题→4-7章叙事方案(每章含场景锚点+arc_episodes因果链集数)
+- **文案师** (`script_writer_agent`) — 章节方案+scene_map→解说词+scene_query(意图快照，只锚episode+time_range)
+- **逻辑审核师** (`reviewer_agent`) — Self-Reflection: 事后审逻辑断层/过度拔高，改写一次
 
-**7层写作结构**:
-1. 核心视角 — 每章聚焦单一人物/主题
-2. 开场钩子 — ≤50字观点句，3秒抓住注意力
-3. 原剧台词 — highlight_text作为"原声证据"
-4. 解说节奏 — 钩子→背景→事件→高潮→升华
-5. 语言风格 — 网感+幽默+金句，禁止干巴复述
-6. 人物心理 — 分析动机，不只讲"发生了什么"
-7. 结尾金句 — 价值观升华，制造共鸣和转发欲
+**写作三层结构**（剥层为核心）:
+- 表层(~20%) → 剥层(~60%，回答"为什么"，认知增量) → 升华(~20%)
+- 框架化剥层：借心理学/博弈论，但内隐（不提MBTI术语）
+- 解说/原声交替：解说是主线(论证)，原声是武器(举证/引爆/钉人)
 
-**审核策略**: 程序校验替代LLM审核（scene_query与scene_map精确匹配，修正time_range偏移，0 LLM调用节省约70s）
+**关键机制**:
+- **原声台词程序化提取**: 文案师只选场景(scene_query)，highlight_text由程序从ASR时间窗提取，杜绝编造
+- **arc_episodes 元数据传递**: 策划师产出事件弧完整因果链集数，文案师据此补前因（防导火索归因错）
+- **审核策略**: 程序校验(事实/scene_query锚定) + 逻辑审核师(逻辑/表达)，各司其职
+- **scene_query 定位**: 创作意图快照（草图），不做画面匹配（那是分镜台的活）
 
 **关键模块**:
-- `drama_script_agents.py` — 三个Agent + 编排器 `run_drama_pipeline()`
+- `drama_script_agents.py` — 四个Agent + 编排器 `run_drama_pipeline()`
 - `handlers/script_drama.py` — SSE端点处理函数
-- `handlers/prompts/script_drama.py` — Prompt模板 (故事师/策划师/文案师)
+- `handlers/prompts/script_drama.py` — Prompt模板 (故事师/策划师/文案师/审核师)
 - `lib/scene_map.py` — 场记Agent (scene_map已优化至100% event/mood覆盖)
 
 **API**: `POST /script/generate_drama_script`

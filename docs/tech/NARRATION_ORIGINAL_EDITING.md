@@ -65,10 +65,19 @@
 | 独立可懂 | 选的片段不能让观众问"这谁啊？""为什么？" |
 | 名场面优先 | 同一论证点有多段素材时，优先选观众有记忆的场面 |
 | 服务于论证 | 不能因为"这段戏好"就放——必须服务于解说的逻辑 |
-| 标注要求 | 原声必须标注集数和时间码 |
+| **台词真实（严禁编造）** | highlight_text 必须来自 ASR 真实台词，程序从场景时间窗提取，文案师不填 |
+
+## 关键实现：原声台词程序化提取
+
+**先场景后台词**（用户核心方法论）：文案师只选场景（scene_query 的 episode + time_range），台词由程序从该场景时间窗的 ASR 里自动提取。
+
+- 为什么：文案师"为了有原声而编台词"（9 条里曾 5 条编造），prompt"严禁编造"无效，因为没从机制上强制。
+- 怎么做：Phase 4 里 `_pick_line_from_window(ep, time_range, asr_texts)` 从 ASR 时间窗挑最有冲击力的真实台词，填 highlight_text。
+- 效果：0 编造（6/6 全部真实），场景选对台词自然关联出来。
 
 ## 落地映射
 
-- 文案师 prompt：`handlers/prompts/script_drama.py` 的 SCRIPT_WRITER_PROMPT
-- 程序校验：`agents/drama_script_agents.py` Phase 4（占比/连续段数/总数，0 LLM）
+- 文案师 prompt：`handlers/prompts/script_drama.py` 的 SCRIPT_WRITER_PROMPT（原声段 highlight 留空）
+- 程序提取台词：`agents/drama_script_agents.py` Phase 4 的 `_pick_line_from_window`
+- 程序校验：`agents/drama_script_agents.py` Phase 4（scene_query 锚定，0 LLM）
 - 选题层互补：`STORY_ARC.md`

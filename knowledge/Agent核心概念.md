@@ -94,19 +94,28 @@ Agent 解决的问题：**把编排权从人类交给 LLM。**
 |-------|------|------|-------------|
 | L1 | Tool Use | LLM 能调用预定义的工具 | 当前 ChatPanel 的搜索 |
 | L2 | Planning | LLM 能制定多步计划 | run_pipeline 硬编码的计划 |
-| L3 | Reflection | LLM 能评估自己的输出并修正 | reviewer→retry 循环 |
+| L3 | Reflection | LLM 能评估自己的输出并修正 | **逻辑审核师（Self-Reflection，已实现）** |
 | L4 | Autonomy | LLM 自主决策下一步做什么 | 🔄 规划中的 Orchestrator |
 | L5 | Learning | 从历史经验中自我改进 | 📅 远期目标 |
 
 ## VibeCut 的 Agent 化路径
 
-当前 VibeCut 的 `script_agents.py` 处于 L2-L3 的混合状态：
+当前 VibeCut 的编剧Agent 已实现 **L3 (Self-Reflection)**：
 - ✅ L1 (Tool Use): ChatPanel 搜索是基础的 Tool Use
-- ✅ L2 (Planning): `run_pipeline()` 有固定的计划
-- ⚠️ L3 (Reflection): reviewer→retry 是初级的反思循环，但修复策略是硬编码的
+- ✅ L2 (Planning): `run_drama_pipeline()` 有固定的计划
+- ✅ L3 (Reflection): 逻辑审核师事后审"逻辑断层/过度拔高"，改写一次（Self-Refine）
 - ❌ L4 (Autonomy): Agent 不能自己决定"接下来做什么"
 
-升级到 LangGraph 后，`run_pipeline()` 中的硬编码编排逻辑会被 StateGraph + ConditionalEdge 替代，Agent 达到 L4。
+**Self-Reflection 落地**（编剧Agent）：
+```
+文案师（一次成稿，自回归生成无法自我监控 → 会有逻辑断层）
+  ↓
+逻辑审核师（事后整体审逻辑，不审事实——事实已有程序校验）
+  ↓
+apply_fixes（改写一次，不无限循环）
+```
+
+关键认知：**LLM 自回归生成"当局者迷"，无法自我监控**。解法不是让它一次写好，是加一个"事后清醒"的审核步骤——这是业界标准的 Self-Refine。
 
 ## 前置知识
 
