@@ -1045,8 +1045,7 @@ def run_drama_pipeline(
     progress("verify", "🔍 校验 scene_query + 填充 episode_marker...")
 
     # ── 原剧台词 ASR 锚定：highlight_text 必须对应真实可播放的原剧片段 ──
-    # 台词不只是文字，是"要播放的原剧原声片段"。锚定成功 → 回填精确 ASR 时间戳；
-    # 锚定失败（虚构台词）→ 直接清空，不留虚构台词在脚本里（下游无法播放）。
+    # highlight_text 是"名场面里的代表台词"，锚定到 ASR 拿它在这个场景里的精确位置（供字幕/展示）。
     hl_anchored = 0
     hl_cleared = 0
     for seg in all_segments:
@@ -1063,18 +1062,21 @@ def run_drama_pipeline(
             # 用 ASR 真实文本替换（规范化），这是实际要播放的原声台词
             seg['highlight_text'] = anchored['text']
 
-            # 原声段（narration_text 为空）：把 ASR 锚定结果写成该段的 source_start/end，
-            # 让分镜台 timelineBuilder 自动为它建一个"播原声"的 clip。
+            # 原声段（narration_text 为空）：播放区间 = 文案师通过 scene_query 选定的场景区间
+            # （名场面拉入情境，一句话到几十秒都由叙事决定，不是程序机械填一句话时间）。
+            # highlight_ep/start/end 仍保留，是"代表台词在场景里的精确位置"。
             if not (seg.get('narration_text') or '').strip():
-                seg['episode_marker'] = {
-                    "episode": anchored['ep'],
-                    "approx_minute": anchored['start'] / 60.0,
-                    "raw": f"{anchored['ep']}~{anchored['start']//60:.0f}m{anchored['start']%60:.0f}s",
-                }
-                seg['source_start'] = float(anchored['start'])
-                seg['source_end'] = float(anchored['end'])
-                seg['video_episode'] = anchored['ep']
-                seg['mode'] = 'A'
+                tr = sq.get('time_range')
+                if tr and isinstance(tr, list) and len(tr) == 2:
+                    seg['episode_marker'] = {
+                        "episode": sq.get('episode'),
+                        "approx_minute": tr[0] / 60.0,
+                        "raw": f"{sq.get('episode')}~{tr[0]//60:.0f}m{tr[0]%60:.0f}s",
+                    }
+                    seg['source_start'] = float(tr[0])
+                    seg['source_end'] = float(tr[1])
+                    seg['video_episode'] = sq.get('episode')
+                    seg['mode'] = 'A'
 
             hl_anchored += 1
         else:
