@@ -240,62 +240,147 @@ def _format_scene_map_text(scene_map: list, ep: int) -> str:
     return '\n'.join(lines)
 
 
-def _format_anchor_asr(scene_anchors: list, scene_maps: dict, asr_texts: dict) -> str:
-    """把 scene_anchors 指向的场景，按时间窗对齐到 ASR 原声台词。
+def _anchor_to_fact_cards(scene_anchors: list, scene_maps: dict, asr_texts: dict) -> list:
+    """把 scene_anchors 精确锚回 scene_map 原始条目，产出「锁定的事实卡片」。
 
-    文案师写"某人说了什么/做了什么"前，能直接看到该场景里真实的台词，
-    从源头杜绝"为论点硬编台词"（如编苏大强挑唆话）。
-    返回空串表示无可用对齐台词。
+    这是 LCAS 的 Core Anchor + Permanent Red Line 落地：
+    - 每张卡片 = {who, action(锁死 scene_map 原文), where, when{ep,time_range}, mood, dialogue}
+    - 匹配不上 → 丢弃该锚，绝不编造。
+
+    锚定策略（按可靠性从高到低）：
+    1. character_focus 人物匹配：anchor 指定的人物与 scene_map 场景人物有交集
+       （人物是稳定锚点，LLM 概括的 event 文本不可靠，所以以人物为主）
+    2. event 字符串重叠兜底：锚 event 与 scene_map event 有 3+ 字重叠
+    3. 两者都无 → 丢弃
+
+    文案师只拿这些卡片写作，看不到 scene_map 全文，物理上无法引入卡片外的事实。
     """
-    if not scene_anchors or not asr_texts:
-        return ""
+    if not scene_anchors:
+        return []
 
-    parts = []
+    cards = []
     for anchor in scene_anchors:
         ep = anchor.get('ep')
         ev = (anchor.get('event') or '').strip()
+        focus_chars = set(anchor.get('character_focus') or [])
         if not ep:
             continue
         sm_list = scene_maps.get(ep, [])
-        asr_list = asr_texts.get(ep, [])
-        if not sm_list or not asr_list:
+        if not sm_list:
             continue
 
-        # 找 scene_map 里 event 与 anchor.event 最匹配的场景（取 time_range）
-        tr = None
+        # 锚回 scene_map：优先「人物匹配」，其次「event 重叠」
         matched_sm = None
-        for sm in sm_list:
-            if ev and ev[:6] in (sm.get('event', '') or ''):
-                tr = sm['time_range']
-                matched_sm = sm
-                break
-        # 未精确命中，退而求其次：anchor.event 与 scene_map event 有 3+ 字重叠
-        if tr is None and ev:
+        # 第一优先级：character_focus 与场景人物有交集（选交集最多的）
+        if focus_chars:
+            best = None
+            best_overlap = 0
+            for sm in sm_list:
+                sm_chars = set(sm.get('characters', []))
+                overlap = len(focus_chars & sm_chars)
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best = sm
+            if best is not None and best_overlap > 0:
+                matched_sm = best
+        # 第二优先级：event 字符串重叠（≥3 字）
+        if matched_sm is None and ev:
             for sm in sm_list:
                 if _overlap(ev, sm.get('event', '')) >= 3:
-                    tr = sm['time_range']
                     matched_sm = sm
                     break
-        if tr is None:
-            continue
+        if matched_sm is None:
+            continue  # 锚不回 scene_map = 弃锚，不编造
 
-        start, end = tr
-        window = [a for a in asr_list if a['start'] >= start - 1 and a['end'] <= end + 1]
-        if not window:
-            continue
-        dialogue = ' '.join(a['text'] for a in window)
-        label = (matched_sm.get('event') or ev or '场景')[:30]
-        parts.append(
-            f"EP{ep} [{start:.0f}-{end:.0f}s] {label} — 原声台词: {dialogue[:600]}"
+        start, end = matched_sm['time_range']
+        # 关联 ASR 台词（供文案师写"谁说了什么"时查证 + 原声段提取）
+        dialogue = ''
+        if asr_texts:
+            asr_list = asr_texts.get(ep, [])
+            window = [a for a in asr_list if a['start'] >= start - 1 and a['end'] <= end + 1]
+            dialogue = ' '.join(a['text'] for a in window)[:600]
+
+        cards.append({
+            'card_id': len(cards),
+            'ep': ep,
+            'who': matched_sm.get('characters', []),
+            'action': matched_sm.get('event', ''),   # 锁死 scene_map 原文
+            'where': matched_sm.get('location', ''),
+            'time_range': [start, end],
+            'mood': matched_sm.get('mood', ''),
+            'dialogue': dialogue,
+            'anchor_event': ev,                       # 策划师的原始描述（可对照）
+        })
+
+    return cards
+
+
+def _format_fact_cards(cards: list) -> str:
+    """把事实卡片格式化为文案师的输入文本（LCAS 的 Core Anchor 注入）。"""
+    if not cards:
+        return "(无事实卡片)"
+    lines = ["以下是你唯一能写的事实依据（★ 锁死的真实剧情，卡片外的事实一律不能写）："]
+    for c in cards:
+        who = '、'.join(c['who']) or '?'
+        lines.append(
+            f"[卡片{c['card_id']}] EP{c['ep']} {c['where']} | 人物:{who} | "
+            f"事件:{c['action']} | 情绪:{c['mood']}"
         )
+        if c['dialogue']:
+            lines.append(f"   原声台词: {c['dialogue'][:200]}")
+    return "\n".join(lines)
 
-    if not parts:
-        return ""
-    return (
-        "\n\n★★ 本章关键场景的原声台词（ASR 逐字转写，供你写对场景、取真实原声参考）：\n"
-        + "\n".join(parts)
-        + "\n★ 用途：写『谁说了什么台词』这类硬事实时，从这里找对应；但心理动机/态度归纳（如『他长期挑拨』）不要求逐字对得上，围绕论点自由发挥即可。"
-    )
+
+# 强动作动词：当「人名 + 这些动词」出现在 narration 里，才可能是"编造的具体动作"
+# （区别于"提到人名"这种合理议论——比如"朱丽哭着求"是合理提及，"苏大强扇了明玉"才是幻觉）
+# ★ "打"字歧义太多（打电话/打来/打开/打扮/打麻将），单列成"打人"短语处理
+_ACTION_VERBS = {
+    '扇', '踢', '砍', '刺', '杀', '撞', '推', '掐', '揍', '踹',
+    '离婚', '报警', '起诉', '撤诉', '辞职', '开除', '停职', '投资', '挪用',
+    '转账', '偷', '骗', '赌', '跳楼', '自杀', '住院',
+    '求婚', '结婚', '领证', '怀孕', '流产', '出轨', '包养',
+    '还钱', '借钱', '捐肾', '换肾',
+}
+# "打人"的确切含义：打 后直接跟 人名/代词/"了"（"打她""打苏明玉""打了"）
+import re as _re
+_PUNCH_PATTERN = _re.compile(r'打(?:了|过)?(?:她|他|你|我|人|苏明玉|苏明成|苏大强|苏明哲|朱丽|吴非|众邦|舅舅|舅妈)')
+
+
+def _verify_narration(narration_text: str, cards: list) -> list:
+    """程序校验 narration 是否引入了卡片外的事实（LCAS 的 Load Integrity Audit 落地）。
+
+    ★ 判据（收窄后）：只抓「人名 + 强动作动词」构成的事实性陈述——
+    - 例：『苏大强扇了苏明玉』（人名+动作，卡片里没有这个动作 → 幻觉）
+    - 不抓：『朱丽哭着求』（合理提及人物，无强动作动词 → 放过）
+    纯提到人名不做判断，避免误伤解说里的正常议论。
+
+    Returns: 风险提示列表（空 = 通过）。
+    """
+    if not narration_text or not cards:
+        return []
+
+    # 卡片里已知的人名集合
+    known_names = set()
+    for c in cards:
+        known_names.update(c['who'])
+
+    # 提取 narration 里出现的人名（KNOWN_CHARACTERS + 配角白名单）
+    all_names = set(KNOWN_CHARACTERS) | {'柳青', '蒙总', '老蒙', '石天冬', '孙副总', '小蒙总', '蒙太', '朱丽母亲', '朱丽父亲', '舅舅', '舅妈', '苏母', '小咪'}
+    mentioned_names = [n for n in all_names if n in narration_text]
+
+    risks = []
+    for name in mentioned_names:
+        # 只查「人名 + 强动作动词」的事实陈述
+        for verb in _ACTION_VERBS:
+            if verb in narration_text:
+                if name not in known_names:
+                    risks.append(f"人物「{name}」不在本章事实卡片中，却出现动作「{verb}」（疑似幻觉）")
+                    break  # 一个人名只报一次
+        # "打人"单独处理（打 + 人称宾语）
+        if name not in known_names and _PUNCH_PATTERN.search(narration_text):
+            risks.append(f"人物「{name}」不在本章事实卡片中，却出现打人动作（疑似幻觉）")
+
+    return risks
 
 
 def _build_char_summary() -> str:
@@ -808,46 +893,35 @@ def narrative_planner_agent(story_map: dict, user_topic: str,
 # Agent 3: 文案师 — 逐章写作解说词 + scene_query
 # ═══════════════════════════════════════════════════════════════
 
-def script_writer_agent(chapter: dict, scene_maps: dict,
+def script_writer_agent(chapter: dict, fact_cards: list,
                         prev_chapter_summary: str = "",
                         next_chapter_summary: str = "",
                         synopses: dict = None,
                         topic_type: str = None,
-                        asr_texts: dict = None,
-                        thesis: dict = None) -> dict:
-    """输入: 单个章节方案 + scene_map 数据 → 输出: segments 数组
+                        thesis: dict = None,
+                        argued_note: str = "") -> dict:
+    """输入: 单个章节方案 + 锁定的事实卡片 → 输出: segments 数组
 
     Args:
       chapter: 章节方案 dict (从策划师输出)
-      scene_maps: {ep: [scene_dict, ...]} 覆盖章节涉及的剧集
+      fact_cards: 本章锚定的事实卡片列表（_anchor_to_fact_cards 产出），文案师唯一事实依据
       prev_chapter_summary: 前一章摘要 (用于过渡)
       next_chapter_summary: 后一章摘要 (用于过渡)
       synopses: {ep: synopsis_dict} 剧情概要（补因果链，防文案师脑补"为什么"）
       topic_type: 选题类型（人物性格型/事件策略型/反差打脸型），决定剥层方向
-      asr_texts: {ep: [{start,end,text}]} ASR 台词（供文案师选真实原剧台词）
       thesis: 选定论点 dict（核心锚，每段议论都必须指向它）
+      argued_note: 增量快照（前面章节已论证过的论点步骤，禁止重复论证）
     """
-    # 收集本章涉及剧集的 scene_map
+    # 事件弧完整因果链集数（元数据：策划师产出，覆盖事件的前因后果）
     focus_eps = chapter.get('episodes_focus', [])
     if isinstance(focus_eps, int):
         focus_eps = [focus_eps]
-
-    # 事件弧完整因果链集数（元数据：策划师产出，覆盖事件的前因后果）
     arc_eps = chapter.get('arc_episodes', [])
     if isinstance(arc_eps, int):
         arc_eps = [arc_eps]
 
-    scene_context_parts = []
-    for ep in focus_eps:
-        if ep in scene_maps:
-            scene_context_parts.append(_format_scene_map_text(scene_maps[ep], ep))
-
-    # 如果 scene_maps 没有聚焦剧集的数据，使用所有已加载的
-    if not scene_context_parts:
-        for ep, sm in sorted(scene_maps.items()):
-            scene_context_parts.append(_format_scene_map_text(sm, ep))
-
-    scene_context = '\n\n'.join(scene_context_parts) if scene_context_parts else "(无场景数据)"
+    # 事实卡片上下文（LCAS 的 Core Anchor：唯一事实依据，物理杜绝编造）
+    cards_context = _format_fact_cards(fact_cards)
 
     # 剧情概要上下文（补因果链：让文案师理解"为什么"，而非脑补）
     # 用「事件弧完整因果链 arc_eps」∪「焦点 focus_eps」的并集，确保前因不被漏掉。
@@ -861,18 +935,12 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
         if syn_parts:
             synopsis_context = "\n\n★★ 剧情概要（因果链，写『为什么』时只能据此推断，不得凭记忆脑补）:\n" + "\n".join(syn_parts)
 
-    # ASR 台词上下文（供文案师选真实原剧台词，避免编造 highlight_text）
-    # 按 scene_anchors 场景时间窗对齐原声，而非粗糙的"每集前 40 句"。
-    asr_context = _format_anchor_asr(chapter.get('scene_anchors', []), scene_maps, asr_texts)
-
     # 过渡上下文
     transition_context = ""
     if prev_chapter_summary:
         transition_context += f"\n前一章摘要 (用于过渡衔接): {prev_chapter_summary}"
     if next_chapter_summary:
         transition_context += f"\n后一章摘要 (用于过渡衔接): {next_chapter_summary}"
-
-    # 字数约束提示已移除：不再设整章字数硬上限，文案长度由剧情需要决定。
 
     # 账号画像注入：文案师继承账号级画像（受众 + 价值主张）
     profile = _load_account_profile()
@@ -906,11 +974,11 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
 
     user = (
         f"★★ 当前章节方案:\n{json.dumps(chapter, ensure_ascii=False, indent=2)}\n\n"
-        f"★★ 场景数据 (scene_map):\n{scene_context}"
+        f"★★ 事实卡片 (唯一事实依据):\n{cards_context}"
         f"{synopsis_context}"
-        f"{asr_context}"
         f"{type_note}"
         f"{transition_context}"
+        f"{argued_note}"
         f"\n\n"
         f"请为本章撰写解说词。"
     )
@@ -1150,6 +1218,7 @@ def run_drama_pipeline(
     progress("writing", f"✍️ 文案师: 逐章写作解说词 (共{len(chapters)}章)...")
     all_segments = []
     chapter_summaries = []
+    argued_roles = []  # 增量快照：已论证过的论点步骤（LCAS Dynamic Refreshing），防车轱辘话
 
     for i, chapter in enumerate(chapters):
         ch_title = chapter.get('title', f'第{i+1}章')
@@ -1159,14 +1228,30 @@ def run_drama_pipeline(
         prev_summary = chapter_summaries[-1] if chapter_summaries else ""
         next_summary = ""  # 后续章节的标题作为轻量上下文
 
+        # 增量快照：告诉文案师「前面章节已经论证过这些论点步骤，不要再重复，要推进」
+        argued_note = ""
+        if argued_roles:
+            argued_note = (
+                "\n★★ 增量快照（前面章节已论证过的论点步骤，★ 严禁重复论证，本章要推进新的一步）:\n"
+                + "\n".join(f"  - 第{idx+1}章已论证: {role}" for idx, role in enumerate(argued_roles))
+            )
+
+        # ── 事实卡片：把 scene_anchors 锚回 scene_map，产出锁定的唯一事实依据 ──
+        fact_cards = _anchor_to_fact_cards(
+            chapter.get('scene_anchors', []), scene_maps, asr_texts)
+        if not fact_cards:
+            progress("writing",
+                f"  ⚠️ 第{i+1}章 scene_anchors 全部锚定失败（event 与 scene_map 不匹配），跳过")
+            continue
+
         write_result = script_writer_agent(
-            chapter, scene_maps,
+            chapter, fact_cards,
             prev_chapter_summary=prev_summary,
             next_chapter_summary=next_summary,
             synopses=synopses,
             topic_type=topic_type,
-            asr_texts=asr_texts,
             thesis=thesis,
+            argued_note=argued_note,
         )
 
         if not write_result.get('ok'):
@@ -1177,6 +1262,15 @@ def run_drama_pipeline(
         if not chapter_segments:
             progress("writing", f"  ⚠️ 第{i+1}章未产出有效段落")
             continue
+
+        # ── 程序校验：narration 是否引入卡片外的事实（LCAS Load Integrity Audit）──
+        for seg in chapter_segments:
+            narr = (seg.get('narration_text') or '').strip()
+            if narr:
+                risks = _verify_narration(narr, fact_cards)
+                if risks:
+                    seg['hallucination_risk'] = risks
+                    seg['note'] = (seg.get('note', '') + f" | ⚠️幻觉风险: {'；'.join(risks)}").strip(' |')
 
         # 注入章节元数据
         for seg in chapter_segments:
@@ -1192,6 +1286,10 @@ def run_drama_pipeline(
 
         all_segments.extend(chapter_segments)
         chapter_summaries.append(f"[{ch_title}] {chapter.get('narrative_goal', '')[:60]}")
+        # 增量快照更新：记录本章论证的论点步骤
+        thesis_role = chapter.get('thesis_role') or chapter.get('narrative_goal', '')
+        if thesis_role:
+            argued_roles.append(thesis_role)
 
         progress("writing_chapter_done",
             f"  ✅ 第{i+1}章 {ch_title}: {len(chapter_segments)}段",

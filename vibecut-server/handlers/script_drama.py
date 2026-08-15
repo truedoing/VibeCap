@@ -149,6 +149,7 @@ def _save_drama_segments(result: dict, topic: str):
         "pipeline": "drama-agent-v1",
         "topic": topic,
         "cover": result.get("cover", ""),
+        "thesis": result.get("thesis"),
         "story": result.get("story_map", {}).get("character_arcs", [{}])[0].get("arc_summary", "")
             if result.get("story_map", {}).get("character_arcs") else "",
         "chapters": result.get("chapter_structure", {}).get("chapters", []),
