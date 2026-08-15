@@ -293,7 +293,7 @@ def _anchor_to_fact_cards(scene_anchors: list, scene_maps: dict, asr_texts: dict
             continue  # 锚不回 scene_map = 弃锚，不编造
 
         start, end = matched_sm['time_range']
-        # 关联 ASR 台词（供文案师写"谁说了什么"时查证 + 原声段提取）
+        # 关联 ASR 台词（供文案师写"谁说了什么"时查证 + 原声段逐字引用）
         dialogue = ''
         if asr_texts:
             asr_list = asr_texts.get(ep, [])
@@ -333,7 +333,8 @@ def _format_fact_cards(cards: list) -> str:
         if c.get('dialogue_hook'):
             lines.append(f"   原声钩子: {c['dialogue_hook']}")
         if c['dialogue']:
-            lines.append(f"   原声台词: {c['dialogue'][:200]}")
+            # 给完整关键台词（500 字），让文案师能从中【逐字选】关键句，而非程序盲挑
+            lines.append(f"   原声台词（逐字引用，从这里选关键句）: {c['dialogue'][:500]}")
     return "\n".join(lines)
 
 
@@ -952,14 +953,14 @@ def narrative_planner_agent(story_map: dict, user_topic: str,
     if thesis_note:
         thesis_note += "\n\n"
 
-    # 焦点集约束：主场景必须落在用户选集内，辅场景可 ±2 补因果链
+    # 焦点集约束：主场景必须落在用户选集内，辅场景可跨集补因果链（不喧宾夺主）
     focus_note = ""
     if focus_episodes:
         eps_str = '、'.join(str(e) for e in sorted(focus_episodes))
         focus_note = (
-            f"\n★ 焦点集（主场景硬约束）: 第{eps_str}集。"
+            f"\n★ 焦点集（主线硬约束）: 第{eps_str}集。"
             f"scene_anchors 里 purpose=PRIMARY 的场景，ep 必须 ∈ 这个焦点集；"
-            f"purpose=SECONDARY 的场景可扩展到焦点集 ±2 集，但只能是「因果链必要的前因/后果」，不能随便拉全剧的戏。"
+            f"purpose=SECONDARY 的场景可跨集补「因果链前因/后果」，但不能喧宾夺主（全章辅场景段落 ≤ 主线段落的一半）。"
         )
 
     user = (
@@ -1449,12 +1450,14 @@ def run_drama_pipeline(
     # ── Phase 4: 后处理 (校验 + 补漏 + episode_marker) ──
     progress("verify", "🔍 校验 scene_query + 程序提取原声台词...")
 
-    # ── 原声台词程序化提取：从 scene_query 时间窗的 ASR 取真实台词 ──
-    # 先场景后台词：文案师只选场景（scene_query），台词由程序从 ASR 取，杜绝编造。
+    # ── 原声台词处理：文案师逐字引用 ASR 关键句，程序校验真实性 ──
+    # 文案师填 highlight_text = 从场景 ASR 逐字复制的关键台词。
+    # 程序校验：highlight_text 能在该场景 ASR 原文里子串匹配 → 保留（精准引用）；
+    #   匹配不上（疑似编造）→ 清空，回退到 _pick_line_from_window 程序提取。
     for seg in all_segments:
         narr = (seg.get('narration_text') or '').strip()
         hl = (seg.get('highlight_text') or '').strip()
-        # 只处理原声段（narration 空），且当前 highlight 为空或疑似编造（一律重新取）
+        # 只处理原声段（narration 空）
         if narr:
             continue
         sq = seg.get('scene_query') or {}
@@ -1462,16 +1465,48 @@ def run_drama_pipeline(
         tr = sq.get('time_range')
         if not ep or not tr:
             continue
-        picked = _pick_line_from_window(ep, tr, asr_texts)
-        if picked:
-            seg['highlight_text'] = picked['text']
-            seg['highlight_ep'] = picked['ep']
-            seg['highlight_start'] = picked['start']
-            seg['highlight_end'] = picked['end']
-        elif hl:
-            # 时间窗内取不到真实台词，清空编造的
-            seg['highlight_text'] = ''
-            seg['highlight_unverified'] = True
+
+        # 该场景 ASR 原文（供校验引用真实性）
+        asr_list = asr_texts.get(ep, [])
+        window_text = ' '.join(
+            a.get('text', '') for a in asr_list
+            if a['start'] >= tr[0] - 1 and a['end'] <= tr[1] + 1
+        )
+
+        # 文案师填了 highlight_text：校验是否在 ASR 原文里
+        if hl:
+            # 归一化比对（去空白，容忍 ASR 无标点）
+            import re as _re
+            hl_norm = _re.sub(r'\s+', '', hl)
+            win_norm = _re.sub(r'\s+', '', window_text)
+            if hl_norm and hl_norm in win_norm:
+                # 精准引用真实台词，保留（补上锚定时间）
+                seg['highlight_text'] = hl
+                seg['highlight_ep'] = ep
+                # 找到该台词在 ASR 里的起止（粗定位）
+                for a in asr_list:
+                    if a.get('text', '').strip() and a['text'].strip() in hl:
+                        seg['highlight_start'] = a['start']
+                        seg['highlight_end'] = a['end']
+                        break
+            else:
+                # 疑似编造 → 清空，回退程序提取
+                seg['highlight_text'] = ''
+                seg['highlight_unverified'] = True
+                picked = _pick_line_from_window(ep, tr, asr_texts)
+                if picked:
+                    seg['highlight_text'] = picked['text']
+                    seg['highlight_ep'] = picked['ep']
+                    seg['highlight_start'] = picked['start']
+                    seg['highlight_end'] = picked['end']
+        else:
+            # 文案师没填 → 程序提取兜底
+            picked = _pick_line_from_window(ep, tr, asr_texts)
+            if picked:
+                seg['highlight_text'] = picked['text']
+                seg['highlight_ep'] = picked['ep']
+                seg['highlight_start'] = picked['start']
+                seg['highlight_end'] = picked['end']
 
     # 程序级验证：逐个 segment 检查 scene_query 是否匹配 scene_map
     verified = []
