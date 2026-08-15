@@ -1281,7 +1281,8 @@ def run_drama_pipeline(
     progress("writing", f"✍️ 文案师: 逐章写作解说词 (共{len(chapters)}章)...")
     all_segments = []
     chapter_summaries = []
-    argued_roles = []  # 增量快照：已论证过的论点步骤（LCAS Dynamic Refreshing），防车轱辘话
+    argued_roles = []   # 增量快照：已论证过的论点步骤（LCAS Dynamic Refreshing），防车轱辘话
+    used_events = []    # 增量快照：已用过的剧情动作/场景，防"同一动作跨章重述"
 
     for i, chapter in enumerate(chapters):
         ch_title = chapter.get('title', f'第{i+1}章')
@@ -1291,12 +1292,23 @@ def run_drama_pipeline(
         prev_summary = chapter_summaries[-1] if chapter_summaries else ""
         next_summary = ""  # 后续章节的标题作为轻量上下文
 
-        # 增量快照：告诉文案师「前面章节已经论证过这些论点步骤，不要再重复，要推进」
+        # 增量快照：告诉文案师「前面章节已论证过这些论点步骤 + 已讲过这些剧情，不要再重复，要推进」
         argued_note = ""
+        snapshot_parts = []
         if argued_roles:
+            snapshot_parts.append(
+                "已论证过的论点步骤（严禁重复论证）:\n" +
+                "\n".join(f"  - 第{idx+1}章: {role}" for idx, role in enumerate(argued_roles))
+            )
+        if used_events:
+            snapshot_parts.append(
+                "已讲过的具体剧情（严禁再重述，本章直接推进，不要回头复述）:\n" +
+                "\n".join(f"  - {ev}" for ev in used_events)
+            )
+        if snapshot_parts:
             argued_note = (
-                "\n★★ 增量快照（前面章节已论证过的论点步骤，★ 严禁重复论证，本章要推进新的一步）:\n"
-                + "\n".join(f"  - 第{idx+1}章已论证: {role}" for idx, role in enumerate(argued_roles))
+                "\n★★ 增量快照（前面章节已覆盖的内容，★ 严禁重复）:\n"
+                + "\n".join(snapshot_parts)
             )
 
         # ── 事实卡片：把 scene_anchors 锚回 scene_map，产出锁定的唯一事实依据 ──
@@ -1344,10 +1356,14 @@ def run_drama_pipeline(
 
         all_segments.extend(chapter_segments)
         chapter_summaries.append(f"[{ch_title}] {chapter.get('narrative_goal', '')[:60]}")
-        # 增量快照更新：记录本章论证的论点步骤
+        # 增量快照更新：记录本章论证的论点步骤 + 用过的剧情动作
         thesis_role = chapter.get('thesis_role') or chapter.get('narrative_goal', '')
         if thesis_role:
             argued_roles.append(thesis_role)
+        for card in fact_cards:
+            ev = f"EP{card['ep']} {card['action']}"
+            if ev not in used_events:
+                used_events.append(ev)
 
         progress("writing_chapter_done",
             f"  ✅ 第{i+1}章 {ch_title}: {len(chapter_segments)}段",
@@ -1480,7 +1496,8 @@ def run_drama_pipeline(
 
     # ── Phase 4.5: 逻辑审核师（Self-Reflection）──
     # 文案师一次成稿会有"逻辑断层/过度拔高"（自回归生成无法自我监控）。
-    # 审核师事后整体审（含逻辑、重复金句、常识议论、为论点硬编的事实），有问题改写一次。
+    # 审核师事后整体审（含逻辑、重复金句、硬事实幻觉），【只报问题不负责改写】，
+    # 问题清单交给前端展示，由人工决定改不改（避免 LLM 过度改写破坏成稿质量）。
     progress("review", "🔍 逻辑审核师: 整体审查逻辑/金句/事实编造...")
     review_start = time.time()
     review_result = reviewer_agent(all_segments, scene_maps=scene_maps,
@@ -1494,17 +1511,13 @@ def run_drama_pipeline(
         review_data = review_result['result']
         review_verdict = review_data.get('verdict', 'pass')
         review_issues = review_data.get('issues', [])
-        if review_verdict == 'revise':
-            all_segments, fixed_by_review = apply_fixes(all_segments, review_data)
-            # 改写后重排 seg_id（apply_fixes 不改变段数，但保险起见）
-            for i, seg in enumerate(all_segments):
-                seg['seg_id'] = i
+        # 只报不改：不 apply_fixes，issues 原样传给前端展示
     else:
         progress("review", f"⚠️ 审核师不可用: {review_result.get('error', '?')[:80]}")
 
     progress("review_done",
-        f"✅ 逻辑审核: {review_verdict} · 改写{fixed_by_review}处 · 耗时{review_elapsed:.0f}s",
-        {"verdict": review_verdict, "issues": len(review_issues), "fixed": fixed_by_review})
+        f"✅ 逻辑审核: {review_verdict} · 问题{len(review_issues)}处 · 耗时{review_elapsed:.0f}s",
+        {"verdict": review_verdict, "issues": len(review_issues)})
 
     # ── 提取 cover（封面钩子 — 由文案师写） ──
     cover = ''
