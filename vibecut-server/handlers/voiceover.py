@@ -565,7 +565,7 @@ def regenerate_segment(
     original_emotion = "narrative"
     original_speed = 1.0
     original_pause = 300
-    original_voice = voice or "default_zh"
+    original_voice = voice or "白桦"
 
     if meta_path.exists():
         try:

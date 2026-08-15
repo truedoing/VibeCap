@@ -14,7 +14,7 @@ async def api_voiceover_generate(request: Request):
 
     data = await request.json()
     task_name = data.get("task", args.task)
-    voice = data.get("voice", "default_zh")
+    voice = data.get("voice", "白桦")
     speed = float(data.get("speed", 1.0))
     pause_ms = int(data.get("pause_ms", 300))
     ref_audio_path = data.get("ref_audio_path", None)
@@ -64,7 +64,7 @@ async def api_preview_voice(request: Request):
 
     data = await request.json()
     task_name = data.get("task", args.task)
-    voice = data.get("voice", "default_zh")
+    voice = data.get("voice", "白桦")
     force = data.get("force", False)
     return preview_voice(task_name, voice, force=force)
 

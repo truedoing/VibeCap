@@ -33,12 +33,12 @@ const S = {
   divider: (w) => dividerStyle('v', w),
 }
 
-// ═══════ 预设音色 ═══════
+// ═══════ 预设音色 (MiMo mimo-v2.5-tts) ═══════
 const PRESET_VOICES = [
-  { id: 'default_zh',         label: '默认女声',   desc: '清晰自然，适合通用解说' },
-  { id: 'narrator_male',      label: '沉稳男声',   desc: '低沉有力，适合悬疑/正剧' },
-  { id: 'narrator_female',    label: '温柔女声',   desc: '温暖柔和，适合情感向' },
-  { id: 'storyteller_male',   label: '激昂男声',   desc: '饱满有力，适合高光时刻' },
+  { id: '冰糖', label: '冰糖', desc: '活泼少女音色' },
+  { id: '茉莉', label: '茉莉', desc: '知性女声' },
+  { id: '苏打', label: '苏打', desc: '阳光少年' },
+  { id: '白桦', label: '白桦', desc: '成熟男声' },
 ]
 
 // ═══════ 情绪图标 ═══════
@@ -498,7 +498,7 @@ export default function VoiceDesk() {
   // ── 状态 ──
   const [segments, setSegments] = useState([])
   const [ttsState, setTtsState] = useState({})    // {seg_id: {status, audioPath, duration, emotion, speed, pause_after_ms}}
-  const [voice, setVoice] = useState('default_zh')
+  const [voice, setVoice] = useState('白桦')
   const [speed, setSpeed] = useState(1.0)
   const [pauseMs, setPauseMs] = useState(300)
   const [refAudio, setRefAudio] = useState(null)
