@@ -72,6 +72,23 @@ class DramaScriptRequest(BaseModel):
     episodes: Optional[list[int]] = None
     target_duration: int = 480
     drama: Optional[str] = None
+    thesis: Optional[dict] = None
+
+
+@router.post("/generate_thesis")
+async def api_generate_thesis(body: DramaScriptRequest):
+    """论点阶段（普通 JSON，非 SSE）— 产出候选论点 + 装置，供人拍板。
+
+    返回 {"ok": true, "candidates": [{thesis, device, why_not_common, ...}], "story_map": {...}}
+    """
+    from handlers.script_drama import generate_thesis
+
+    topic = body.topic.strip()
+    if not topic:
+        return JSONResponse({"ok": False, "error": "请提供选题描述 (topic)"}, status_code=400)
+
+    drama_name = body.drama or project_name
+    return JSONResponse(generate_thesis(topic, drama_name))
 
 
 @router.post("/generate_drama_script")
@@ -93,7 +110,8 @@ async def api_generate_drama_script(body: DramaScriptRequest):
         generate_drama_script(
             topic=topic, emit_progress=emit_progress, emit_complete=emit_complete,
             emit_error=emit_error, drama_name=drama_name,
-            focus_episodes=body.episodes, target_duration=body.target_duration)
+            focus_episodes=body.episodes, target_duration=body.target_duration,
+            thesis=body.thesis)
 
     return StreamingResponse(sse_stream(_run, topic), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})

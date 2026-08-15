@@ -25,6 +25,7 @@ from lib.synopsis import load_synopsis, to_text
 # ── Prompt 模板 ──
 from handlers.prompts.script_drama import (
     STORY_MASTER_PROMPT,
+    THESIS_AGENT_PROMPT,
     NARRATIVE_PLANNER_PROMPT,
     SCRIPT_WRITER_PROMPT,
     REVIEWER_PROMPT,
@@ -237,6 +238,64 @@ def _format_scene_map_text(scene_map: list, ep: int) -> str:
             f"👤{chars} | 事件:{sm.get('event', '?')} | 情绪:{sm.get('mood', '?')}"
         )
     return '\n'.join(lines)
+
+
+def _format_anchor_asr(scene_anchors: list, scene_maps: dict, asr_texts: dict) -> str:
+    """把 scene_anchors 指向的场景，按时间窗对齐到 ASR 原声台词。
+
+    文案师写"某人说了什么/做了什么"前，能直接看到该场景里真实的台词，
+    从源头杜绝"为论点硬编台词"（如编苏大强挑唆话）。
+    返回空串表示无可用对齐台词。
+    """
+    if not scene_anchors or not asr_texts:
+        return ""
+
+    parts = []
+    for anchor in scene_anchors:
+        ep = anchor.get('ep')
+        ev = (anchor.get('event') or '').strip()
+        if not ep:
+            continue
+        sm_list = scene_maps.get(ep, [])
+        asr_list = asr_texts.get(ep, [])
+        if not sm_list or not asr_list:
+            continue
+
+        # 找 scene_map 里 event 与 anchor.event 最匹配的场景（取 time_range）
+        tr = None
+        matched_sm = None
+        for sm in sm_list:
+            if ev and ev[:6] in (sm.get('event', '') or ''):
+                tr = sm['time_range']
+                matched_sm = sm
+                break
+        # 未精确命中，退而求其次：anchor.event 与 scene_map event 有 3+ 字重叠
+        if tr is None and ev:
+            for sm in sm_list:
+                if _overlap(ev, sm.get('event', '')) >= 3:
+                    tr = sm['time_range']
+                    matched_sm = sm
+                    break
+        if tr is None:
+            continue
+
+        start, end = tr
+        window = [a for a in asr_list if a['start'] >= start - 1 and a['end'] <= end + 1]
+        if not window:
+            continue
+        dialogue = ' '.join(a['text'] for a in window)
+        label = (matched_sm.get('event') or ev or '场景')[:30]
+        parts.append(
+            f"EP{ep} [{start:.0f}-{end:.0f}s] {label} — 原声台词: {dialogue[:600]}"
+        )
+
+    if not parts:
+        return ""
+    return (
+        "\n\n★★ 本章关键场景的原声台词（ASR 逐字转写，供你写对场景、取真实原声参考）：\n"
+        + "\n".join(parts)
+        + "\n★ 用途：写『谁说了什么台词』这类硬事实时，从这里找对应；但心理动机/态度归纳（如『他长期挑拨』）不要求逐字对得上，围绕论点自由发挥即可。"
+    )
 
 
 def _build_char_summary() -> str:
@@ -658,11 +717,65 @@ def story_master_agent(project_dir: Path, drama_name: str,
 
 
 # ═══════════════════════════════════════════════════════════════
-# Agent 2: 策划师 — 设计叙事结构和章节规划
+# Agent 2: 论点师 — 从故事地图提炼反常识论点 + 叙事装置（候选，人拍板）
+# ═══════════════════════════════════════════════════════════════
+
+def thesis_agent(story_map: dict, topic: str) -> dict:
+    """输入: story_map + 用户选题 → 输出: 3~5 个候选论点+装置
+
+    复用故事师已产出的 story_map，不重复读 46 集概要。
+    产出候选供「人拍板」，每个候选带 why_not_common 说明认知增量。
+    """
+    # 压缩 story_map 到 LLM 可读的精华（highlight_scenes + turning_points + character_arcs 概要）
+    highlights = story_map.get('highlight_scenes', [])
+    turnings = story_map.get('turning_points', [])
+    arcs = story_map.get('character_arcs', [])
+
+    hl_text = "\n".join(
+        f"- EP{h.get('ep')} {h.get('event','')} (情绪:{h.get('mood','')}, 叙事价值:{h.get('narrative_value','')})"
+        for h in highlights[:15]
+    )
+    tp_text = "\n".join(
+        f"- EP{t.get('ep')} {t.get('event','')} (影响:{t.get('impact','')})"
+        for t in turnings[:10]
+    )
+    arc_text = "\n".join(
+        f"- {a.get('name','')}: {a.get('arc_summary','')} (关键集:{a.get('key_episodes',[])})"
+        for a in arcs[:6]
+    )
+
+    user = (
+        f"★★ 用户选题: {topic}\n\n"
+        f"★★ 故事地图 — 人物弧光:\n{arc_text}\n\n"
+        f"★★ 关键转折点:\n{tp_text}\n\n"
+        f"★★ 高光场景:\n{hl_text}\n\n"
+        f"请为这个选题提炼 3~5 个反常识论点候选（每个带叙事装置 + 认知增量说明）。"
+    )
+
+    return _call_llm(THESIS_AGENT_PROMPT, user, temp=0.6, max_tokens=2500, label="thesis_agent")
+
+
+def _format_thesis_note(thesis: dict) -> str:
+    """把选定论点格式化为注入文案师/策划师/审核师的锚点文本。"""
+    if not thesis:
+        return ""
+    thesis_text = thesis.get('thesis', '')
+    device = thesis.get('device', '')
+    why = thesis.get('why_not_common', '')
+    lines = [f"★★ 你的核心论点（唯一的锚）: {thesis_text}"]
+    if device:
+        lines.append(f"   叙事装置: {device}")
+    if why:
+        lines.append(f"   认知增量（观众想不到的点）: {why}")
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Agent 3: 策划师 — 围绕论点设计事件链骨架
 # ═══════════════════════════════════════════════════════════════
 
 def narrative_planner_agent(story_map: dict, user_topic: str,
-                            target_duration: int = 480) -> dict:
+                            target_duration: int = 480, thesis: dict = None) -> dict:
     """输入: story_map + 用户选题 → 输出: chapter_structure"""
     # 提取角色列表
     char_arcs = story_map.get('character_arcs', [])
@@ -673,13 +786,19 @@ def narrative_planner_agent(story_map: dict, user_topic: str,
 
     system = NARRATIVE_PLANNER_PROMPT
 
+    # 论点锚：策划师设计的每个章节必须指向它
+    thesis_note = _format_thesis_note(thesis)
+    if thesis_note:
+        thesis_note += "\n\n"
+
     user = (
         f"故事地图:\n{json.dumps(story_map, ensure_ascii=False, indent=2)[:8000]}\n\n"
+        f"{thesis_note}"
         f"★★ 用户选题: {user_topic}\n"
         f"★★ 目标时长: {target_duration}秒 (约{target_duration//60}分钟)\n"
         f"★★ 建议章节数: {suggested_chapters}章\n"
         f"★★ 主要角色: {', '.join(main_char_names)}\n\n"
-        f"请设计叙事方案。"
+        f"请设计叙事方案（事件链，围绕论点）。"
     )
 
     return _call_llm(system, user, temp=0.5, max_tokens=3000, label="narrative_planner")
@@ -692,10 +811,10 @@ def narrative_planner_agent(story_map: dict, user_topic: str,
 def script_writer_agent(chapter: dict, scene_maps: dict,
                         prev_chapter_summary: str = "",
                         next_chapter_summary: str = "",
-                        word_limit: int = None,
                         synopses: dict = None,
                         topic_type: str = None,
-                        asr_texts: dict = None) -> dict:
+                        asr_texts: dict = None,
+                        thesis: dict = None) -> dict:
     """输入: 单个章节方案 + scene_map 数据 → 输出: segments 数组
 
     Args:
@@ -703,10 +822,10 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
       scene_maps: {ep: [scene_dict, ...]} 覆盖章节涉及的剧集
       prev_chapter_summary: 前一章摘要 (用于过渡)
       next_chapter_summary: 后一章摘要 (用于过渡)
-      word_limit: 整章 narration_text 总字数上限（用于超字数重写）
       synopses: {ep: synopsis_dict} 剧情概要（补因果链，防文案师脑补"为什么"）
       topic_type: 选题类型（人物性格型/事件策略型/反差打脸型），决定剥层方向
       asr_texts: {ep: [{start,end,text}]} ASR 台词（供文案师选真实原剧台词）
+      thesis: 选定论点 dict（核心锚，每段议论都必须指向它）
     """
     # 收集本章涉及剧集的 scene_map
     focus_eps = chapter.get('episodes_focus', [])
@@ -743,17 +862,8 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
             synopsis_context = "\n\n★★ 剧情概要（因果链，写『为什么』时只能据此推断，不得凭记忆脑补）:\n" + "\n".join(syn_parts)
 
     # ASR 台词上下文（供文案师选真实原剧台词，避免编造 highlight_text）
-    asr_context = ""
-    if asr_texts:
-        asr_parts = []
-        for ep in focus_eps:
-            lines = asr_texts.get(ep, [])
-            if lines:
-                # 只取每集前 40 句，控制上下文长度
-                snippet = "；".join(f"{a['start']:.0f}s:{a['text']}" for a in lines[:40])
-                asr_parts.append(f"第{ep}集 ASR 台词: {snippet[:2000]}")
-        if asr_parts:
-            asr_context = "\n\n★★ 原剧台词（ASR 真实台词，highlight_text 只能从这里逐字选）:\n" + "\n".join(asr_parts)
+    # 按 scene_anchors 场景时间窗对齐原声，而非粗糙的"每集前 40 句"。
+    asr_context = _format_anchor_asr(chapter.get('scene_anchors', []), scene_maps, asr_texts)
 
     # 过渡上下文
     transition_context = ""
@@ -762,13 +872,7 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
     if next_chapter_summary:
         transition_context += f"\n后一章摘要 (用于过渡衔接): {next_chapter_summary}"
 
-    # 字数约束提示（超字数重写时注入）
-    word_limit_note = ""
-    if word_limit:
-        word_limit_note = (
-            f"\n★★ 字数硬约束：本章所有 narration_text 的总字数必须 ≤ {word_limit} 字"
-            f"（当前超了，请删减冗余表述、合并段落，保留核心信息，压缩到 {word_limit} 字以内）。"
-        )
+    # 字数约束提示已移除：不再设整章字数硬上限，文案长度由剧情需要决定。
 
     # 账号画像注入：文案师继承账号级画像（受众 + 价值主张）
     profile = _load_account_profile()
@@ -785,6 +889,7 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
     system = SCRIPT_WRITER_PROMPT.format(
         known_characters='、'.join(KNOWN_CHARACTERS),
         audience_note=audience_note,
+        thesis_note=_format_thesis_note(thesis),
     )
 
     # 选题类型 → 剥层方向提示（元数据传递：制片选题的 type 传导到文案师）
@@ -806,7 +911,7 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
         f"{asr_context}"
         f"{type_note}"
         f"{transition_context}"
-        f"{word_limit_note}\n\n"
+        f"\n\n"
         f"请为本章撰写解说词。"
     )
 
@@ -818,10 +923,12 @@ def script_writer_agent(chapter: dict, scene_maps: dict,
 # ═══════════════════════════════════════════════════════════════
 
 def reviewer_agent(segments: list, scene_maps: dict = None,
-                   target_duration: int = 480) -> dict:
+                   target_duration: int = 480, thesis: dict = None) -> dict:
     """输入: 完整脚本 → 输出: 逻辑审核报告 + 改写建议
 
-    只审「逻辑断层 / 过度拔高 / 指代不清」，不审事实（事实已由程序校验）。
+    审「逻辑断层 / 过度拔高 / 指代不清 / 重复金句 / 常识议论 / 为论点硬编的事实」。
+    注入论点，让审核师能判断"这段议论是否贴论点、是否废话"。
+    注入 scene_map 事实清单，让审核师能查证"narration 里的具体事实是否真在剧里"。
     """
     # 构建脚本预览（按段号 + narration 全文，让审核师能看到前后逻辑）
     script_preview_lines = []
@@ -836,16 +943,56 @@ def reviewer_agent(segments: list, scene_maps: dict = None,
     est_duration = total_chars / 4  # 4字/秒
     script_preview = '\n'.join(script_preview_lines)
 
+    # 事实清单：把 scene_map 的 event 拼成"剧中真实发生的事"列表，供审核师查证 narration 是否编造
+    fact_context = ""
+    if scene_maps:
+        facts = []
+        for ep, sm in sorted(scene_maps.items()):
+            for s in sm:
+                facts.append(f"EP{ep}·{s.get('time_range',['?','?'])[0]}s: {s.get('event','')}")
+        if facts:
+            fact_context = (
+                "\n\n★★ 剧中真实事件清单（这是「唯一事实依据」，narration 里出现但这里查不到的具体动作/身份，就是编造）:\n"
+                + "\n".join(facts)
+            )
+
     system = REVIEWER_PROMPT
+
+    thesis_note = _format_thesis_note(thesis)
+    if thesis_note:
+        thesis_note = f"{thesis_note}\n\n"
 
     user = (
         f"★★ 目标时长: {target_duration}秒\n"
-        f"★★ 当前总字数: {total_chars}字, 预估配音时长: {est_duration:.0f}秒\n\n"
-        f"★★ 完整脚本 ({len(segments)}段，请逐段检查前后逻辑):\n{script_preview}\n\n"
-        f"请找出逻辑断层、过度拔高、指代不清的段落，并给出改写。"
+        f"★★ 当前总字数: {total_chars}字, 预估配音时长: {est_duration:.0f}秒\n"
+        f"{thesis_note}"
+        f"★★ 完整脚本 ({len(segments)}段，请逐段检查前后逻辑):\n{script_preview}\n"
+        f"{fact_context}\n\n"
+        f"请找出逻辑断层、过度拔高、指代不清、重复金句、常识议论、为论点硬编事实的段落，并给出改写。"
     )
 
-    return _call_llm(system, user, temp=0.3, max_tokens=3000, label="reviewer")
+    return _call_llm(system, user, temp=0.3, max_tokens=4000, label="reviewer")
+
+
+# 审核师/文案师偶发把「删除此段」「S4衔接S2」这类操作批注写进 narration_text，
+# 污染成片文案。这里是防御性过滤：判成操作指令则跳过该 fix，保留原文（避免播出批注）。
+_JUNK_OP_PATTERN = re.compile(
+    r'删除|合并|衔接|此段|这段|本段|下段|上段|保留原|S\d|第\S*段'
+)
+
+
+def _is_junk_narration(text: str) -> bool:
+    """判断 narration_text 是否为「操作批注」而非成文解说词。"""
+    if not text:
+        return False
+    t = text.strip()
+    # 短文本 + 含操作词 = 批注（正常解说词不会短到只有一句删除指令）
+    if len(t) < 30 and _JUNK_OP_PATTERN.search(t):
+        return True
+    # 全角/半角括号开头且含操作词，也判脏
+    if t[:1] in '（(' and _JUNK_OP_PATTERN.search(t):
+        return True
+    return False
 
 
 def apply_fixes(segments: list, review_result: dict) -> tuple:
@@ -853,6 +1000,7 @@ def apply_fixes(segments: list, review_result: dict) -> tuple:
 
     优先使用审核师在 fixed_segments 中提供的修正版本。
     对于没有提供修正版本的 issue，如果 severity=high 则标记 note。
+    修正版本若被判定为「操作批注」（如"删除此段"），则跳过，保留原文。
     """
     fixes = review_result.get('fixed_segments', [])
     if not fixes:
@@ -870,12 +1018,17 @@ def apply_fixes(segments: list, review_result: dict) -> tuple:
         if i in fix_map:
             f = fix_map[i]
             seg = dict(seg)
-            if f.get('narration_text'):
-                seg['narration_text'] = f['narration_text']
-            if f.get('scene_query'):
-                seg['scene_query'] = f['scene_query']
-            seg['note'] = (seg.get('note', '') + f" | 审核修正: {f.get('fix_reason', '')}").strip(' |')
-            applied += 1
+            new_narr = f.get('narration_text', '')
+            # 防御：修正内容是"删除此段"这类批注 → 跳过，保留原文
+            if new_narr and _is_junk_narration(new_narr):
+                seg['note'] = (seg.get('note', '') + " | 审核建议删除(已跳过)").strip(' |')
+            else:
+                if new_narr:
+                    seg['narration_text'] = new_narr
+                if f.get('scene_query'):
+                    seg['scene_query'] = f['scene_query']
+                seg['note'] = (seg.get('note', '') + f" | 审核修正: {f.get('fix_reason', '')}").strip(' |')
+                applied += 1
         fixed.append(seg)
 
     return fixed, applied
@@ -893,9 +1046,11 @@ def run_drama_pipeline(
     focus_episodes: list[int] = None,
     target_duration: int = 480,
     topic_type: str = None,
+    thesis: dict = None,
+    story_map: dict = None,
     emit_progress=None,
 ) -> dict:
-    """完整编剧流水线 — 四个 Agent 协作生成解说脚本
+    """完整编剧流水线 — 五 Agent 协作生成解说脚本
 
     Args:
       project_dir: 项目数据目录
@@ -903,6 +1058,9 @@ def run_drama_pipeline(
       drama_name: 剧名
       focus_episodes: 关注的剧集范围 (可选，不指定则分析全部)
       target_duration: 目标时长 (秒)
+      topic_type: 选题类型（人物性格型/事件策略型/反差打脸型）
+      thesis: 选定论点 dict（人拍板的结果，含 thesis/device/why_not_common）
+      story_map: 已产出的故事地图（两段式：论点阶段已跑过故事师，此处复用避免重跑）
       emit_progress: 进度回调 fn(step, msg, data=None)
 
     Returns:
@@ -916,23 +1074,29 @@ def run_drama_pipeline(
     # 优化（2026-08-13）：不再用独立的 _infer_episodes_from_topic_llm 反推，
     # 而是让故事师读全 46 集概要，从它的 character_arcs[].key_episodes 提取关键集。
     # 理由：故事师懂全局弧线，比逐集字段匹配反推精确（后者漏掉 EP45 弧线终点）。
-    if focus_episodes is None:
-        progress("story", "📖 故事师: 通读全部剧情概要（其人物弧光 key_episodes 即选集）...")
+    if story_map is not None:
+        # 两段式：论点阶段已跑过故事师，复用传入的 story_map，不重跑
+        progress("story_done",
+            f"✅ 故事地图: 复用（两段式，{len(story_map.get('character_arcs', []))}个人物弧光）",
+            {"story_map": story_map})
     else:
-        progress("story", f"📖 故事师: 通读剧情概要（指定集 {focus_episodes}）...")
-    start = time.time()
-    story_result = story_master_agent(project_dir, drama_name, focus_episodes)
+        if focus_episodes is None:
+            progress("story", "📖 故事师: 通读全部剧情概要（其人物弧光 key_episodes 即选集）...")
+        else:
+            progress("story", f"📖 故事师: 通读剧情概要（指定集 {focus_episodes}）...")
+        start = time.time()
+        story_result = story_master_agent(project_dir, drama_name, focus_episodes)
 
-    if not story_result.get('ok'):
-        return {"ok": False, "error": f"故事师失败: {story_result.get('error', '?')}"}
+        if not story_result.get('ok'):
+            return {"ok": False, "error": f"故事师失败: {story_result.get('error', '?')}"}
 
-    story_map = story_result['result']
-    elapsed = time.time() - start
-    char_count = len(story_map.get('character_arcs', []))
-    topic_count = len(story_map.get('topic_suggestions', []))
-    progress("story_done",
-        f"✅ 故事地图: {char_count}个人物弧光 · {len(story_map.get('turning_points', []))}个转折点 · {topic_count}个选题 · {elapsed:.0f}s",
-        {"story_map": story_map})
+        story_map = story_result['result']
+        elapsed = time.time() - start
+        char_count = len(story_map.get('character_arcs', []))
+        topic_count = len(story_map.get('topic_suggestions', []))
+        progress("story_done",
+            f"✅ 故事地图: {char_count}个人物弧光 · {len(story_map.get('turning_points', []))}个转折点 · {topic_count}个选题 · {elapsed:.0f}s",
+            {"story_map": story_map})
 
     # 深层 RAG 选集：未指定集时，从故事师的弧光 key_episodes 提取（复用其全局理解）
     if focus_episodes is None:
@@ -943,9 +1107,9 @@ def run_drama_pipeline(
             progress("story", "⚠️ 深层RAG: 未提取到关键集，回退全量 scene_map")
 
     # ── Phase 2: 策划师 ──
-    progress("planning", "📐 策划师: 设计叙事结构和章节规划...")
+    progress("planning", "📐 策划师: 围绕论点设计事件链骨架...")
     start = time.time()
-    plan_result = narrative_planner_agent(story_map, topic, target_duration)
+    plan_result = narrative_planner_agent(story_map, topic, target_duration, thesis=thesis)
 
     if not plan_result.get('ok'):
         return {"ok": False, "error": f"策划师失败: {plan_result.get('error', '?')}"}
@@ -995,9 +1159,6 @@ def run_drama_pipeline(
         prev_summary = chapter_summaries[-1] if chapter_summaries else ""
         next_summary = ""  # 后续章节的标题作为轻量上下文
 
-        # 策划师的整章字数目标（word_count_target），用于超字数重写
-        word_target = chapter.get('word_count_target')
-
         write_result = script_writer_agent(
             chapter, scene_maps,
             prev_chapter_summary=prev_summary,
@@ -1005,6 +1166,7 @@ def run_drama_pipeline(
             synopses=synopses,
             topic_type=topic_type,
             asr_texts=asr_texts,
+            thesis=thesis,
         )
 
         if not write_result.get('ok'):
@@ -1015,41 +1177,6 @@ def run_drama_pipeline(
         if not chapter_segments:
             progress("writing", f"  ⚠️ 第{i+1}章未产出有效段落")
             continue
-
-        # ── 超字数重写循环：整章 narration 总字数超过 word_count_target 时重写 ──
-        # ⚠️ 实验性功能（2026-08-13）：当前只做"超字数→压缩"单向重写，
-        # 实测会「压过头」（如 697→131 字，总时长跌到目标 56%）。
-        # 已知缺陷：重写提示"压缩到 N 字以内"被 LLM 理解成"能删就删"，丢失信息量。
-        # 待改进：改为双向（低于目标 80% 也重写）+ 目标区间提示 + 最多 2 次。
-        if word_target:
-            chapter_chars = sum(len(s.get('narration_text', '')) for s in chapter_segments)
-            # 容差 20%（约 4 字/秒的估算误差 + 标点），超 20% 才重写
-            over_limit = chapter_chars > word_target * 1.2
-            if over_limit:
-                progress("writing",
-                    f"  ⚠️ 第{i+1}章超字数 {chapter_chars}/{word_target}，重写一次...")
-                retry = script_writer_agent(
-                    chapter, scene_maps,
-                    prev_chapter_summary=prev_summary,
-                    next_chapter_summary=next_summary,
-                    word_limit=word_target,
-                    synopses=synopses,
-                    topic_type=topic_type,
-                    asr_texts=asr_texts,
-                )
-                if retry.get('ok') and retry['result'].get('segments'):
-                    new_chars = sum(len(s.get('narration_text', ''))
-                                    for s in retry['result']['segments'])
-                    # 重写后更接近目标才采用，否则保留原稿（重写可能更糟）
-                    if new_chars <= chapter_chars:
-                        chapter_segments = retry['result']['segments']
-                        progress("writing",
-                            f"  ✅ 重写后 {new_chars}/{word_target} 字")
-                    else:
-                        progress("writing",
-                            f"  ⚠️ 重写未收敛({new_chars}字)，保留原稿")
-                else:
-                    progress("writing", f"  ⚠️ 重写失败，保留原稿")
 
         # 注入章节元数据
         for seg in chapter_segments:
@@ -1197,10 +1324,11 @@ def run_drama_pipeline(
 
     # ── Phase 4.5: 逻辑审核师（Self-Reflection）──
     # 文案师一次成稿会有"逻辑断层/过度拔高"（自回归生成无法自我监控）。
-    # 审核师事后整体审逻辑（不审事实，事实已由程序校验），有问题改写一次。
-    progress("review", "🔍 逻辑审核师: 整体审查逻辑断层与过度拔高...")
+    # 审核师事后整体审（含逻辑、重复金句、常识议论、为论点硬编的事实），有问题改写一次。
+    progress("review", "🔍 逻辑审核师: 整体审查逻辑/金句/事实编造...")
     review_start = time.time()
-    review_result = reviewer_agent(all_segments, target_duration=target_duration)
+    review_result = reviewer_agent(all_segments, scene_maps=scene_maps,
+                                   target_duration=target_duration, thesis=thesis)
     review_elapsed = time.time() - review_start
 
     review_verdict = "pass"
@@ -1248,6 +1376,7 @@ def run_drama_pipeline(
         "cover": cover,
         "story_map": story_map,
         "chapter_structure": chapter_structure,
+        "thesis": thesis,
         "segments": all_segments,
         "total": len(all_segments),
         "total_chars": total_chars,

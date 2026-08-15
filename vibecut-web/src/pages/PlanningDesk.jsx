@@ -264,6 +264,8 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
   projectName, topic, setTopic, targetDuration, setTargetDuration,
   selectedEps, setSelectedEps, toggleEp, epQuickSelect, quickRanges,
   segments, generating, generateDramaScript,
+  thesis, setThesis, thesisCandidates, setThesisCandidates,
+  thesisLoading, thesisError, generateThesis,
   onCollapse,
 }) {
   const allChecked = selectedEps.size === 46
@@ -393,6 +395,54 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
             </button>
           ))}
         </div>
+      </div>
+
+      {/* ── 论点拍板（两段式第一步）── */}
+      <div style={{ padding: '8px 10px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>💡 核心论点</span>
+          <button onClick={generateThesis}
+            disabled={thesisLoading || !topic.trim()}
+            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: (thesisLoading || !topic.trim()) ? 'not-allowed' : 'pointer',
+              background: 'rgba(34,197,94,0.15)', color: '#86efac', border: '1px solid rgba(34,197,94,0.3)' }}>
+            {thesisLoading ? '提炼中…' : '✨ 生成论点'}
+          </button>
+        </div>
+
+        {thesisError && <div style={{ padding: 4, fontSize: F.xs, color: '#f87171' }}>⚠️ {thesisError}</div>}
+
+        {thesisCandidates.length > 0 && (
+          <div style={{ marginBottom: 6, maxHeight: 220, overflowY: 'auto', borderRadius: 6,
+            border: '1px solid rgba(34,197,94,0.25)', background: 'rgba(0,0,0,0.2)' }}>
+            {thesisCandidates.map((c, i) => {
+              const picked = thesis && thesis.thesis === c.thesis
+              return (
+                <button key={i} onClick={() => setThesis(c)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px',
+                    background: picked ? 'rgba(34,197,94,0.15)' : 'transparent', border: 'none',
+                    borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', color: '#e5e7eb' }}>
+                  <div style={{ fontSize: F.xs, fontWeight: 600 }}>
+                    {picked && <span style={{ color: '#4ade80' }}>✅ </span>}{c.thesis}
+                  </div>
+                  {c.device && <div style={{ fontSize: 10, color: '#a78bfa', marginTop: 1 }}>装置：{c.device}</div>}
+                  {c.why_not_common && <div style={{ fontSize: 10, color: '#6b7280', marginTop: 1 }}>{c.why_not_common}</div>}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {/* 已选论点回显 + 自定义入口 */}
+        {thesis && (
+          <div style={{ fontSize: F.xs, color: '#86efac', marginBottom: 4 }}>
+            已选论点：{thesis.thesis}{thesis.device ? `（装置：${thesis.device}）` : ''}
+          </div>
+        )}
+        {!thesis && !thesisLoading && (
+          <div style={{ fontSize: 10, color: '#6b7280' }}>
+            未选论点时，后端自动提炼；推荐先「生成论点」拍板，文案会锚定它来写。
+          </div>
+        )}
       </div>
 
       <div style={{ padding: '10px', flexShrink: 0 }}>
@@ -1033,6 +1083,11 @@ export default function PlanningDesk() {
   })
   const [targetDuration, setTargetDuration] = useState(300)
   const [chapterStructure, setChapterStructure] = useState(null)
+  // ── 论点拍板（两段式）──
+  const [thesis, setThesis] = useState(null)          // 人拍板选定的论点 dict
+  const [thesisCandidates, setThesisCandidates] = useState([])  // 论点师产出的候选
+  const [thesisLoading, setThesisLoading] = useState(false)
+  const [thesisError, setThesisError] = useState('')
   const quickRanges = useMemo(() => [
     ['苏母线 1-5', [1,2,3,4,5]],
     ['投资被骗 10-15', [10,11,12,13,14,15]],
@@ -1242,6 +1297,28 @@ export default function PlanningDesk() {
   const removeOutlineItem = useCallback((idx) => { setOutline(prev => prev.filter((_, i) => i !== idx)) }, [])
   const toggleGroup = useCallback((gi) => setCollapsedGroups(prev => ({ ...prev, [gi]: !prev[gi] })), [])
 
+  // ── 论点拍板：调论点师产出候选 ──
+  const generateThesis = useCallback(async () => {
+    if (!topic.trim()) return
+    setThesisLoading(true); setThesisError(''); setThesisCandidates([])
+    try {
+      const resp = await fetch('/script/generate_thesis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: topic.trim() }),
+      })
+      const data = await resp.json()
+      if (data?.ok && data?.candidates?.length) {
+        setThesisCandidates(data.candidates)
+      } else {
+        setThesisError(data?.error || '论点生成失败')
+      }
+    } catch (e) {
+      setThesisError('论点请求失败: ' + e.message)
+    } finally {
+      setThesisLoading(false)
+    }
+  }, [topic])
+
   // ── AI 编剧 (drama SSE) ──
   const generateDramaScript = useCallback(async () => {
     if (!topic.trim() || selectedEps.size === 0) return
@@ -1251,7 +1328,7 @@ export default function PlanningDesk() {
     try {
       const resp = await fetch('/script/generate_drama_script', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: topic.trim(), episodes: eps, target_duration: targetDuration }),
+        body: JSON.stringify({ topic: topic.trim(), episodes: eps, target_duration: targetDuration, thesis }),
       })
       const reader = resp.body.getReader(); const decoder = new TextDecoder()
       let buf = ''; let currentEvent = ''
@@ -1290,7 +1367,7 @@ export default function PlanningDesk() {
       }
     } catch (e) { setError('网络错误: ' + e.message) }
     finally { setGenerating(false) }
-  }, [topic, selectedEps, targetDuration])
+  }, [topic, selectedEps, targetDuration, thesis])
 
   // ── 快捷键 ──
   useEffect(() => {
@@ -1310,7 +1387,7 @@ export default function PlanningDesk() {
         <>
           <div style={{ width: leftPanelW, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: S.border, overflow: 'hidden' }}>
             {isDrama ? (
-              <DramaSourcePanel {...{ projectName, topic, setTopic, targetDuration, setTargetDuration, selectedEps, setSelectedEps, toggleEp, epQuickSelect, quickRanges, segments, generating, generateDramaScript, onCollapse: () => setLeftCollapsed(true) }} />
+              <DramaSourcePanel {...{ projectName, topic, setTopic, targetDuration, setTargetDuration, selectedEps, setSelectedEps, toggleEp, epQuickSelect, quickRanges, segments, generating, generateDramaScript, thesis, setThesis, thesisCandidates, setThesisCandidates, thesisLoading, thesisError, generateThesis, onCollapse: () => setLeftCollapsed(true) }} />
             ) : (
               <SourcePanel {...{ transcript, asrLoaded, asrGroups, asrStats, classifiedSegs, filterMode, setFilterMode, collapsedGroups, setCollapsedGroups, toggleGroup, searchInputRef, searchQuery, setSearchQuery, searchMode, setSearchMode, doSearch, searching, searchResults, setSearchResults, matchSet, isMatch, hl, segments, selectedIdx, addSegmentFromLine, onCollapse: () => setLeftCollapsed(true) }} />
             )}

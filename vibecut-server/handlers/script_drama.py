@@ -17,6 +17,68 @@ DB_PATH = BASE_DIR / "vibecut.db"
 db = VibeCutDB(str(DB_PATH))
 
 
+# ── 论点阶段缓存（两段式：避免 generate_thesis → generate_drama_script 重跑故事师）──
+def _thesis_cache_path() -> Path:
+    """论点阶段的故事地图缓存文件（按 task 隔离）"""
+    tasks_dir = PROJECT_DIR / "tasks"
+    task_dir = tasks_dir / (args.task or "default")
+    return task_dir / "thesis_cache.json"
+
+
+def _save_thesis_cache(topic: str, story_map: dict, candidates: list):
+    """落盘故事地图 + 候选论点，供下一步 generate_drama_script 复用。"""
+    cache_path = _thesis_cache_path()
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    json.dump({"topic": topic, "story_map": story_map, "candidates": candidates},
+              open(cache_path, "w"), ensure_ascii=False, indent=2)
+
+
+def _load_thesis_cache(topic: str) -> dict:
+    """读回缓存的故事地图（校验 topic 一致，防止串台）。"""
+    cache_path = _thesis_cache_path()
+    if not cache_path.exists():
+        return {}
+    try:
+        data = json.load(open(cache_path))
+    except Exception:
+        return {}
+    if data.get("topic") != topic:
+        return {}
+    return data
+
+
+def generate_thesis(topic: str, drama_name: str = None) -> dict:
+    """论点阶段（非 SSE，普通 JSON）：跑故事师 → 论点师，产出候选论点 + 缓存故事地图。
+
+    返回 {"ok": True, "topic": ..., "candidates": [...], "story_map": {...}}
+    """
+    from agents.drama_script_agents import story_master_agent, thesis_agent
+
+    drama = drama_name or project_name
+
+    # 复用缓存：同一 topic 已跑过故事师则直接返回
+    cached = _load_thesis_cache(topic)
+    if cached:
+        return {"ok": True, "topic": topic, "candidates": cached.get("candidates", []),
+                "story_map": cached.get("story_map", {}), "cached": True}
+
+    story_res = story_master_agent(PROJECT_DIR, drama, None)
+    if not story_res.get("ok"):
+        return {"ok": False, "error": f"故事师失败: {story_res.get('error', '?')}"}
+
+    story_map = story_res["result"]
+    thesis_res = thesis_agent(story_map, topic)
+    if not thesis_res.get("ok"):
+        return {"ok": False, "error": f"论点师失败: {thesis_res.get('error', '?')}"}
+
+    candidates = thesis_res["result"].get("candidates", [])
+    if not candidates:
+        return {"ok": False, "error": "论点师未产出候选论点"}
+
+    _save_thesis_cache(topic, story_map, candidates)
+    return {"ok": True, "topic": topic, "candidates": candidates, "story_map": story_map}
+
+
 def generate_drama_script(
     topic: str,
     emit_progress,
@@ -26,11 +88,12 @@ def generate_drama_script(
     drama_name: str = None,
     focus_episodes: list = None,
     target_duration: int = 480,
+    thesis: dict = None,
 ):
     """编剧 Agent SSE 主流程
 
     对标 generate_story_first() ——
-      1. 加载/准备数据
+      1. 加载/准备数据（含复用论点阶段缓存的故事地图）
       2. 调用 Agent 编排器
       3. 保存结果
       4. 发送 complete/error 事件
@@ -40,6 +103,14 @@ def generate_drama_script(
     drama = drama_name or project_name
     emit_progress("init", f"🎬 编剧Agent启动 · 剧目: {drama} · 选题: {topic[:40]}")
 
+    # 两段式：若传了 thesis，优先复用论点阶段缓存的故事地图（避免重跑故事师）
+    story_map = None
+    if thesis:
+        cached = _load_thesis_cache(topic)
+        if cached:
+            story_map = cached.get("story_map")
+            emit_progress("init", "📚 复用论点阶段的故事地图缓存，跳过故事师")
+
     # 调用 Agent 编排器
     result = run_drama_pipeline(
         project_dir=PROJECT_DIR,
@@ -47,6 +118,8 @@ def generate_drama_script(
         drama_name=drama,
         focus_episodes=focus_episodes,
         target_duration=target_duration,
+        thesis=thesis,
+        story_map=story_map,
         emit_progress=lambda step, msg, data=None:
             emit_progress(step, msg, data),
     )
