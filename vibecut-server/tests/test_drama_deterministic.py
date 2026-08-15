@@ -189,18 +189,10 @@ def test_extract_key_episodes_fallback_to_all_when_no_name_hit():
 
 # ── validate_producer_output（制片 Agent 守规矩检查）────────────
 
-def test_producer_output_title_rewritten():
-    """标题照抄输入 → 应报「标题未重写」"""
+def test_producer_output_title_keep_or_simplify_ok():
+    """标题保留/简化（不重写钩子）→ 不报错（职责边界调整后，照抄输入标题是允许的）"""
     candidates = [{"title": "苏明成：从试图挪用房款投资到与父兄正面冲突"}]
     result = {"ranked": [{"title": "苏明成：从试图挪用房款投资到与父兄正面冲突"}]}
-    issues = validate_producer_output(candidates, result)
-    assert any("标题未重写" in i for i in issues)
-
-
-def test_producer_output_title_rewritten_passes_when_new():
-    """标题重写了 → 不报错"""
-    candidates = [{"title": "苏明成：从试图挪用房款投资到与父兄正面冲突"}]
-    result = {"ranked": [{"title": "苏明成：一拳把亲妹打进医院"}]}
     issues = validate_producer_output(candidates, result)
     assert not any("标题未重写" in i for i in issues)
 

@@ -280,10 +280,10 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
   const [recError, setRecError] = useState('')
   const [recOpen, setRecOpen] = useState(false)
 
-  const loadRecommend = async () => {
+  const loadRecommend = async (force = false) => {
     setRecLoading(true); setRecError(''); setRecOpen(true)
     try {
-      const resp = await fetch(`/topics/recommend?drama=${encodeURIComponent(projectName)}`)
+      const resp = await fetch(`/topics/recommend?drama=${encodeURIComponent(projectName)}${force ? '&force=true' : ''}`)
       const data = await resp.json()
       if (data?.ok && data?.ranked?.length) setRecTopics(data.ranked)
       else setRecError(data?.error || '暂无推荐')
@@ -317,11 +317,21 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
       <div style={{ padding: '8px 10px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
           <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>📝 选题描述</span>
-          <button onClick={loadRecommend}
-            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
-              background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}>
-            {recLoading ? '推荐中…' : '✨ 选题推荐'}
-          </button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button onClick={() => loadRecommend(true)}
+              disabled={recLoading}
+              title="绕过缓存，重新分析剧情弧生成选题"
+              style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: recLoading ? 'not-allowed' : 'pointer',
+                background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.25)' }}>
+              {recLoading ? '生成中…' : '🔄 重新推荐'}
+            </button>
+            <button onClick={() => loadRecommend(false)}
+              disabled={recLoading}
+              style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: recLoading ? 'not-allowed' : 'pointer',
+                background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}>
+              {recLoading ? '推荐中…' : '✨ 选题推荐'}
+            </button>
+          </div>
         </div>
 
         {recOpen && (
