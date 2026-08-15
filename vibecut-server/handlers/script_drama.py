@@ -52,7 +52,10 @@ def generate_thesis(topic: str, drama_name: str = None) -> dict:
 
     返回 {"ok": True, "topic": ..., "candidates": [...], "story_map": {...}}
     """
-    from agents.drama_script_agents import story_master_agent, thesis_agent
+    from agents.drama_script_agents import (
+        story_master_agent, thesis_agent,
+        _extract_key_episodes_from_story_map, _load_scene_maps,
+    )
 
     drama = drama_name or project_name
 
@@ -67,7 +70,12 @@ def generate_thesis(topic: str, drama_name: str = None) -> dict:
         return {"ok": False, "error": f"故事师失败: {story_res.get('error', '?')}"}
 
     story_map = story_res["result"]
-    thesis_res = thesis_agent(story_map, topic)
+
+    # 从故事师弧光提取聚焦剧集，加载其 scene_map，让论点师锚定具体事件
+    focus_eps = _extract_key_episodes_from_story_map(story_map, topic) or []
+    scene_maps = _load_scene_maps(PROJECT_DIR, focus_eps) if focus_eps else None
+
+    thesis_res = thesis_agent(story_map, topic, scene_maps=scene_maps, focus_eps=focus_eps)
     if not thesis_res.get("ok"):
         return {"ok": False, "error": f"论点师失败: {thesis_res.get('error', '?')}"}
 

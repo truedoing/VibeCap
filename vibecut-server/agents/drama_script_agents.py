@@ -331,15 +331,20 @@ def _format_fact_cards(cards: list) -> str:
     return "\n".join(lines)
 
 
-# 强动作动词：当「人名 + 这些动词」出现在 narration 里，才可能是"编造的具体动作"
-# （区别于"提到人名"这种合理议论——比如"朱丽哭着求"是合理提及，"苏大强扇了明玉"才是幻觉）
-# ★ "打"字歧义太多（打电话/打来/打开/打扮/打麻将），单列成"打人"短语处理
+# ─────────────────────────────────────────────────────────────
+# 【已停用】_verify_narration 事后校验（Load Integrity Audit 的粗粒度版）
+# 停用原因：事实卡片分离（_anchor_to_fact_cards）已从源头杜绝硬事实幻觉，
+#   这个「人名+动词」的事后校验频繁误报（"扇耳光"比喻、"推开门"日常动作、
+#   主语错配等），边际价值为负。保留代码备查，不再被 pipeline 调用。
+# ─────────────────────────────────────────────────────────────
+# 强动作动词：当「人名 + 这些动词」出现在 narration 里，才可能是"编造的具体动作"。
+# 只收「谁主动对谁施加」的强动作；不收：
+#   - 被动状态/结果（停职/辞职/开除/住院）→ 主语难判，且多为剧情结果转述，不算幻觉
+#   - 日常歧义动词（推/撞/拉）→ "推开门""撞见"不是事实性动作
 _ACTION_VERBS = {
-    '扇', '踢', '砍', '刺', '杀', '撞', '推', '掐', '揍', '踹',
-    '离婚', '报警', '起诉', '撤诉', '辞职', '开除', '停职', '投资', '挪用',
-    '转账', '偷', '骗', '赌', '跳楼', '自杀', '住院',
-    '求婚', '结婚', '领证', '怀孕', '流产', '出轨', '包养',
-    '还钱', '借钱', '捐肾', '换肾',
+    '扇', '踢', '砍', '刺', '杀', '掐', '揍', '踹',
+    '离婚', '报警', '起诉', '撤诉', '挪用',
+    '偷', '骗', '赌', '跳楼', '自杀', '出轨', '包养',
 }
 # "打人"的确切含义：打 后直接跟 人名/代词/"了"（"打她""打苏明玉""打了"）
 import re as _re
@@ -805,11 +810,15 @@ def story_master_agent(project_dir: Path, drama_name: str,
 # Agent 2: 论点师 — 从故事地图提炼反常识论点 + 叙事装置（候选，人拍板）
 # ═══════════════════════════════════════════════════════════════
 
-def thesis_agent(story_map: dict, topic: str) -> dict:
-    """输入: story_map + 用户选题 → 输出: 3~5 个候选论点+装置
+def thesis_agent(story_map: dict, topic: str, scene_maps: dict = None, focus_eps: list = None) -> dict:
+    """输入: story_map + 用户选题 +（可选）聚焦集 scene_map → 输出: 3~5 个候选论点+装置
 
     复用故事师已产出的 story_map，不重复读 46 集概要。
     产出候选供「人拍板」，每个候选带 why_not_common 说明认知增量。
+
+    scene_maps: {ep: [scene_dict,...]} 选题聚焦剧集的场景细节。
+      论点必须锚定这些集里的事件，而不是全剧主题（防论点漂移到"原生家庭"这种大词）。
+    focus_eps: 聚焦剧集号列表，用于 prompt 提示。
     """
     # 压缩 story_map 到 LLM 可读的精华（highlight_scenes + turning_points + character_arcs 概要）
     highlights = story_map.get('highlight_scenes', [])
@@ -829,11 +838,29 @@ def thesis_agent(story_map: dict, topic: str) -> dict:
         for a in arcs[:6]
     )
 
+    # 聚焦集 scene_map 细节：论点必须锚定这些事件
+    scene_context = ""
+    if scene_maps:
+        scene_parts = []
+        for ep in sorted(scene_maps.keys()):
+            scene_parts.append(_format_scene_map_text(scene_maps[ep], ep))
+        if scene_parts:
+            scene_context = (
+                "\n\n★★ 选题聚焦剧集的场景细节（论点必须锚定这些具体事件，不能漂到全剧主题）:\n"
+                + '\n\n'.join(scene_parts)[:6000]
+            )
+
+    focus_note = ""
+    if focus_eps:
+        focus_note = f"\n★ 选题聚焦剧集: 第{'、'.join(str(e) for e in focus_eps)}集。论点必须解释这些集里的具体事件（如『打人』），不能是贯穿全剧的大词（如『原生家庭』『权力结构』）。"
+
     user = (
         f"★★ 用户选题: {topic}\n\n"
         f"★★ 故事地图 — 人物弧光:\n{arc_text}\n\n"
         f"★★ 关键转折点:\n{tp_text}\n\n"
-        f"★★ 高光场景:\n{hl_text}\n\n"
+        f"★★ 高光场景:\n{hl_text}\n"
+        f"{scene_context}"
+        f"{focus_note}\n\n"
         f"请为这个选题提炼 3~5 个反常识论点候选（每个带叙事装置 + 认知增量说明）。"
     )
 
@@ -1063,12 +1090,19 @@ def _is_junk_narration(text: str) -> bool:
     return False
 
 
+def _norm_text(text: str) -> str:
+    """归一化文本用于重复检测：去标点/空白，只留汉字。"""
+    import re as _re
+    return _re.sub(r'[^一-鿿]', '', text or '')
+
+
 def apply_fixes(segments: list, review_result: dict) -> tuple:
     """应用审核修正 → (fixed_segments, fix_count)
 
     优先使用审核师在 fixed_segments 中提供的修正版本。
-    对于没有提供修正版本的 issue，如果 severity=high 则标记 note。
-    修正版本若被判定为「操作批注」（如"删除此段"），则跳过，保留原文。
+    防御（不靠 LLM 自觉）：
+    1. 修正内容是"删除此段"这类批注 → 跳过，保留原文。
+    2. 改写后的文本与脚本其他段落重复（归一化后相同/高度相似）→ 跳过，防止审核师改出重复段。
     """
     fixes = review_result.get('fixed_segments', [])
     if not fixes:
@@ -1087,16 +1121,45 @@ def apply_fixes(segments: list, review_result: dict) -> tuple:
             f = fix_map[i]
             seg = dict(seg)
             new_narr = f.get('narration_text', '')
-            # 防御：修正内容是"删除此段"这类批注 → 跳过，保留原文
+            # 防御1：操作批注 → 跳过
             if new_narr and _is_junk_narration(new_narr):
                 seg['note'] = (seg.get('note', '') + " | 审核建议删除(已跳过)").strip(' |')
             else:
+                # 防御2：改写后与【已产出段落】重复 → 跳过
+                is_dup = False
                 if new_narr:
-                    seg['narration_text'] = new_narr
-                if f.get('scene_query'):
-                    seg['scene_query'] = f['scene_query']
-                seg['note'] = (seg.get('note', '') + f" | 审核修正: {f.get('fix_reason', '')}").strip(' |')
-                applied += 1
+                    new_norm = _norm_text(new_narr)
+                    # 用"已生成的 fixed 列表 + 当前 seg 之外的原始段落"比对
+                    # （fixed 里已含前面段落的改写结果，能抓到"前一段刚改成同样文本"）
+                    for other in fixed:
+                        other_narr = (other.get('narration_text') or '').strip()
+                        if other_narr:
+                            other_norm = _norm_text(other_narr)
+                            if new_norm == other_norm or (
+                                len(new_norm) >= 30 and (new_norm in other_norm or other_norm in new_norm)
+                            ):
+                                is_dup = True
+                                break
+                    if not is_dup:
+                        # 还要比对 i 之后的原始段落（它们还没进 fixed）
+                        for j in range(i + 1, len(segments)):
+                            other_narr = (segments[j].get('narration_text') or '').strip()
+                            if other_narr:
+                                other_norm = _norm_text(other_narr)
+                                if new_norm == other_norm or (
+                                    len(new_norm) >= 30 and (new_norm in other_norm or other_norm in new_norm)
+                                ):
+                                    is_dup = True
+                                    break
+                if is_dup:
+                    seg['note'] = (seg.get('note', '') + " | 审核改写重复(已跳过)").strip(' |')
+                else:
+                    if new_narr:
+                        seg['narration_text'] = new_narr
+                    if f.get('scene_query'):
+                        seg['scene_query'] = f['scene_query']
+                    seg['note'] = (seg.get('note', '') + f" | 审核修正: {f.get('fix_reason', '')}").strip(' |')
+                    applied += 1
         fixed.append(seg)
 
     return fixed, applied
@@ -1263,14 +1326,9 @@ def run_drama_pipeline(
             progress("writing", f"  ⚠️ 第{i+1}章未产出有效段落")
             continue
 
-        # ── 程序校验：narration 是否引入卡片外的事实（LCAS Load Integrity Audit）──
-        for seg in chapter_segments:
-            narr = (seg.get('narration_text') or '').strip()
-            if narr:
-                risks = _verify_narration(narr, fact_cards)
-                if risks:
-                    seg['hallucination_risk'] = risks
-                    seg['note'] = (seg.get('note', '') + f" | ⚠️幻觉风险: {'；'.join(risks)}").strip(' |')
+        # 注：_verify_narration 事后校验已停用——事实卡片分离已从源头杜绝硬事实幻觉，
+        # 该「人名+动词」校验频繁误报（如"扇耳光"比喻、"推开门"），边际价值为负。
+        # 硬事实防线 = _anchor_to_fact_cards 的卡片隔离，而非事后粗粒度校验。
 
         # 注入章节元数据
         for seg in chapter_segments:

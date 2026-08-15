@@ -353,6 +353,53 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
             border: `1px solid ${topic ? '#a78bfa' : '#232938'}`, borderRadius: 4, outline: 'none', resize: 'vertical',
             lineHeight: 1.5, marginBottom: 6 }} />
 
+        {/* ── 论点拍板（两段式第一步）── */}
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>💡 核心论点</span>
+            <button onClick={generateThesis}
+              disabled={thesisLoading || !topic.trim()}
+              style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: (thesisLoading || !topic.trim()) ? 'not-allowed' : 'pointer',
+                background: 'rgba(34,197,94,0.15)', color: '#86efac', border: '1px solid rgba(34,197,94,0.3)' }}>
+              {thesisLoading ? '提炼中…' : '✨ 生成论点'}
+            </button>
+          </div>
+
+          {thesisError && <div style={{ padding: 4, fontSize: F.xs, color: '#f87171' }}>⚠️ {thesisError}</div>}
+
+          {thesisCandidates.length > 0 && (
+            <div style={{ marginBottom: 6, maxHeight: 180, overflowY: 'auto', borderRadius: 6,
+              border: '1px solid rgba(34,197,94,0.25)', background: 'rgba(0,0,0,0.2)' }}>
+              {thesisCandidates.map((c, i) => {
+                const picked = thesis && thesis.thesis === c.thesis
+                return (
+                  <button key={i} onClick={() => setThesis(c)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px',
+                      background: picked ? 'rgba(34,197,94,0.15)' : 'transparent', border: 'none',
+                      borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', color: '#e5e7eb' }}>
+                    <div style={{ fontSize: F.xs, fontWeight: 600 }}>
+                      {picked && <span style={{ color: '#4ade80' }}>✅ </span>}{c.thesis}
+                    </div>
+                    {c.device && <div style={{ fontSize: 10, color: '#a78bfa', marginTop: 1 }}>装置：{c.device}</div>}
+                    {c.why_not_common && <div style={{ fontSize: 10, color: '#6b7280', marginTop: 1 }}>{c.why_not_common}</div>}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {thesis && (
+            <div style={{ fontSize: F.xs, color: '#86efac' }}>
+              已选论点：{thesis.thesis}{thesis.device ? `（装置：${thesis.device}）` : ''}
+            </div>
+          )}
+          {!thesis && !thesisLoading && (
+            <div style={{ fontSize: 10, color: '#6b7280' }}>
+              未选论点时，后端自动提炼；推荐先「生成论点」拍板，文案会锚定它来写。
+            </div>
+          )}
+        </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>⏱ 目标时长</span>
           <input type="range" min="60" max="900" step="30" value={targetDuration}
@@ -397,54 +444,6 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
         </div>
       </div>
 
-      {/* ── 论点拍板（两段式第一步）── */}
-      <div style={{ padding: '8px 10px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>💡 核心论点</span>
-          <button onClick={generateThesis}
-            disabled={thesisLoading || !topic.trim()}
-            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: (thesisLoading || !topic.trim()) ? 'not-allowed' : 'pointer',
-              background: 'rgba(34,197,94,0.15)', color: '#86efac', border: '1px solid rgba(34,197,94,0.3)' }}>
-            {thesisLoading ? '提炼中…' : '✨ 生成论点'}
-          </button>
-        </div>
-
-        {thesisError && <div style={{ padding: 4, fontSize: F.xs, color: '#f87171' }}>⚠️ {thesisError}</div>}
-
-        {thesisCandidates.length > 0 && (
-          <div style={{ marginBottom: 6, maxHeight: 220, overflowY: 'auto', borderRadius: 6,
-            border: '1px solid rgba(34,197,94,0.25)', background: 'rgba(0,0,0,0.2)' }}>
-            {thesisCandidates.map((c, i) => {
-              const picked = thesis && thesis.thesis === c.thesis
-              return (
-                <button key={i} onClick={() => setThesis(c)}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px',
-                    background: picked ? 'rgba(34,197,94,0.15)' : 'transparent', border: 'none',
-                    borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', color: '#e5e7eb' }}>
-                  <div style={{ fontSize: F.xs, fontWeight: 600 }}>
-                    {picked && <span style={{ color: '#4ade80' }}>✅ </span>}{c.thesis}
-                  </div>
-                  {c.device && <div style={{ fontSize: 10, color: '#a78bfa', marginTop: 1 }}>装置：{c.device}</div>}
-                  {c.why_not_common && <div style={{ fontSize: 10, color: '#6b7280', marginTop: 1 }}>{c.why_not_common}</div>}
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        {/* 已选论点回显 + 自定义入口 */}
-        {thesis && (
-          <div style={{ fontSize: F.xs, color: '#86efac', marginBottom: 4 }}>
-            已选论点：{thesis.thesis}{thesis.device ? `（装置：${thesis.device}）` : ''}
-          </div>
-        )}
-        {!thesis && !thesisLoading && (
-          <div style={{ fontSize: 10, color: '#6b7280' }}>
-            未选论点时，后端自动提炼；推荐先「生成论点」拍板，文案会锚定它来写。
-          </div>
-        )}
-      </div>
-
       <div style={{ padding: '10px', flexShrink: 0 }}>
         <button onClick={generateDramaScript}
           disabled={generating || !topic.trim() || selectedEps.size === 0}
@@ -468,7 +467,7 @@ const ScriptPanel = memo(function ScriptPanel({
   selectedIdx, setSelectedIdx, editingIdx, setEditingIdx,
   moveSegment, removeSegment, updateSegment,
   generating, genMsg, exportJSON,
-  isDrama, chapterStructure,
+  isDrama, chapterStructure, clearAll,
 }) {
   const [scriptTab, setScriptTab] = useState('coarse')  // 'coarse' | 'refine'
   const hasRefine = useMemo(() => segments.some(s => s.sub_clips?.length > 0), [segments])
@@ -516,7 +515,7 @@ const ScriptPanel = memo(function ScriptPanel({
           )}
         </div>
         <div style={{ ...S.flexRow, gap: 4 }}>
-          <button onClick={() => { setSegments([]); setGenResult(null); setTopic(''); setOutline([]) }}
+          <button onClick={clearAll}
             style={{ ...S.headerBtn(false), color: '#f87171', background: 'rgba(239,68,68,0.08)' }}>✕ 清除</button>
           <button onClick={exportJSON} disabled={segments.length === 0}
             style={{ ...S.headerBtn(false), background: segments.length ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.05)',
@@ -1218,6 +1217,19 @@ export default function PlanningDesk() {
     URL.revokeObjectURL(a.href)
   }, [segments, isDrama])
 
+  // ── 清除：脚本 + AI助手输出 + 论点，全部复位；【保留选题】避免重新生成费时 ──
+  const clearAll = useCallback(() => {
+    setSegments([])
+    setGenResult(null)
+    setGenLog([])
+    setGenMsg('')
+    setChapterStructure(null)
+    setThesis(null)
+    setThesisCandidates([])
+    setThesisError('')
+    setOutline([])
+  }, [])
+
   // ── AI 生成 (SSE 流式 — 口播用) ──
   const [genMsg, setGenMsg] = useState('')
   const [genLog, setGenLog] = useState([])
@@ -1396,7 +1408,7 @@ export default function PlanningDesk() {
         </>
       )}
       <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON, isDrama, chapterStructure }} />
+        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON, isDrama, chapterStructure, clearAll }} />
       </div>
       <Divider onDrag={dragX(() => rightW, setRightW, 360)} />
       <div style={{ width: rightW, flexShrink: 0, display: rightW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: S.border, overflow: 'hidden' }}>
