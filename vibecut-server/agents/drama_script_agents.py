@@ -935,7 +935,8 @@ def _format_thesis_note(thesis: dict) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 def narrative_planner_agent(story_map: dict, user_topic: str,
-                            target_duration: int = 480, thesis: dict = None) -> dict:
+                            target_duration: int = 480, thesis: dict = None,
+                            focus_episodes: list = None) -> dict:
     """输入: story_map + 用户选题 → 输出: chapter_structure"""
     # 提取角色列表
     char_arcs = story_map.get('character_arcs', [])
@@ -951,13 +952,24 @@ def narrative_planner_agent(story_map: dict, user_topic: str,
     if thesis_note:
         thesis_note += "\n\n"
 
+    # 焦点集约束：主场景必须落在用户选集内，辅场景可 ±2 补因果链
+    focus_note = ""
+    if focus_episodes:
+        eps_str = '、'.join(str(e) for e in sorted(focus_episodes))
+        focus_note = (
+            f"\n★ 焦点集（主场景硬约束）: 第{eps_str}集。"
+            f"scene_anchors 里 purpose=PRIMARY 的场景，ep 必须 ∈ 这个焦点集；"
+            f"purpose=SECONDARY 的场景可扩展到焦点集 ±2 集，但只能是「因果链必要的前因/后果」，不能随便拉全剧的戏。"
+        )
+
     user = (
         f"故事地图:\n{json.dumps(story_map, ensure_ascii=False, indent=2)[:8000]}\n\n"
         f"{thesis_note}"
         f"★★ 用户选题: {user_topic}\n"
         f"★★ 目标时长: {target_duration}秒 (约{target_duration//60}分钟)\n"
         f"★★ 建议章节数: {suggested_chapters}章\n"
-        f"★★ 主要角色: {', '.join(main_char_names)}\n\n"
+        f"★★ 主要角色: {', '.join(main_char_names)}\n"
+        f"{focus_note}\n\n"
         f"请设计叙事方案（事件链，围绕论点）。"
     )
 
@@ -1288,7 +1300,8 @@ def run_drama_pipeline(
     # ── Phase 2: 策划师 ──
     progress("planning", "📐 策划师: 围绕论点设计事件链骨架...")
     start = time.time()
-    plan_result = narrative_planner_agent(story_map, topic, target_duration, thesis=thesis)
+    plan_result = narrative_planner_agent(story_map, topic, target_duration,
+                                          thesis=thesis, focus_episodes=focus_episodes)
 
     if not plan_result.get('ok'):
         return {"ok": False, "error": f"策划师失败: {plan_result.get('error', '?')}"}
