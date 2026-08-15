@@ -310,6 +310,8 @@ def _anchor_to_fact_cards(scene_anchors: list, scene_maps: dict, asr_texts: dict
             'mood': matched_sm.get('mood', ''),
             'dialogue': dialogue,
             'anchor_event': ev,                       # 策划师的原始描述（可对照）
+            'use_original_dialogue': anchor.get('use_original_dialogue', False),
+            'dialogue_hook': anchor.get('dialogue_hook', ''),
         })
 
     return cards
@@ -322,10 +324,14 @@ def _format_fact_cards(cards: list) -> str:
     lines = ["以下是你唯一能写的事实依据（★ 锁死的真实剧情，卡片外的事实一律不能写）："]
     for c in cards:
         who = '、'.join(c['who']) or '?'
+        # 名场面卡片标记：提示文案师这里要留「原声段」，让角色亲口说
+        mark = ' 🎬 名场面·播原声' if c.get('use_original_dialogue') else ''
         lines.append(
-            f"[卡片{c['card_id']}] EP{c['ep']} {c['where']} | 人物:{who} | "
+            f"[卡片{c['card_id']}]{mark} EP{c['ep']} {c['where']} | 人物:{who} | "
             f"事件:{c['action']} | 情绪:{c['mood']}"
         )
+        if c.get('dialogue_hook'):
+            lines.append(f"   原声钩子: {c['dialogue_hook']}")
         if c['dialogue']:
             lines.append(f"   原声台词: {c['dialogue'][:200]}")
     return "\n".join(lines)
@@ -864,7 +870,50 @@ def thesis_agent(story_map: dict, topic: str, scene_maps: dict = None, focus_eps
         f"请为这个选题提炼 3~5 个反常识论点候选（每个带叙事装置 + 认知增量说明）。"
     )
 
-    return _call_llm(THESIS_AGENT_PROMPT, user, temp=0.6, max_tokens=2500, label="thesis_agent")
+    res = _call_llm(THESIS_AGENT_PROMPT, user, temp=0.6, max_tokens=2500, label="thesis_agent")
+    if res.get("ok"):
+        # 程序校验 supporting_events 是否真实：过滤掉"为论点脑补的剧情"的候选
+        res["result"] = _filter_fabricated_candidates(res["result"], story_map, scene_maps)
+    return res
+
+
+def _filter_fabricated_candidates(result: dict, story_map: dict, scene_maps: dict = None) -> dict:
+    """校验论点候选的 supporting_events 是否能在 story_map/scene_map 查到原文。
+
+    LLM 会为了"反常识"脑补剧情细节（如"奔账本而去"），程序把这种候选过滤掉。
+    只保留 supporting_events 里事件能在真实数据里找到依据的候选。
+    """
+    candidates = result.get("candidates", [])
+    if not candidates:
+        return result
+
+    # 收集所有真实事件文本（story_map 的 highlight_scenes/turning_points + scene_map 的 event）
+    real_events = set()
+    for h in story_map.get("highlight_scenes", []):
+        real_events.add((h.get("event") or "").strip())
+    for t in story_map.get("turning_points", []):
+        real_events.add((t.get("event") or "").strip())
+    if scene_maps:
+        for ep, sm in scene_maps.items():
+            for s in sm:
+                real_events.add((s.get("event") or "").strip())
+
+    kept = []
+    for c in candidates:
+        evs = c.get("supporting_events", [])
+        if not evs:
+            # 无支撑事件 → 无戏可唱，过滤
+            continue
+        # 至少一个支撑事件能在真实数据里找到（重叠≥6字，比 3 字严格，防止"动手"这类短词误判）
+        has_real = any(
+            any(_overlap((e.get("event") or ""), real) >= 6 for real in real_events)
+            for e in evs
+        )
+        if has_real:
+            kept.append(c)
+
+    result["candidates"] = kept
+    return result
 
 
 def _format_thesis_note(thesis: dict) -> str:
