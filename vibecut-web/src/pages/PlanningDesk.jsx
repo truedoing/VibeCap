@@ -9,6 +9,7 @@ import { useProject } from '../context/ProjectContext'
 import { colors, space, font as baseFont, radius } from '../styles/theme'
 import { flexRow, panelHeader, panelRoot, title, subtitle, label, mono, btn, input, select, textarea, card, divider as dividerStyle, importanceColor as impColor } from '../styles/mixins'
 import DramaSourcePanel from '../components/PlanPanel'
+import VoicePanel from '../components/VoicePanel'
 
 const FPS = 25
 
@@ -566,213 +567,6 @@ function RefineResultCard({ refineResult, segments }) {
   )
 }
 
-const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, setTopic, genLog, generating, generateScript, topic,
-  refining, refineResult, handleRefine, isDrama }) {
-  const [tab, setTab] = useState('ai')
-  const [selTheme, setSelTheme] = useState(null)
-
-  const stats = useMemo(() => [
-    { label: isDrama ? '字数' : '总句', val: isDrama ? genResult?.total_chars || segments.reduce((s, seg) => s + (seg.narration_text?.length || 0), 0) : (asrStats.content || 0) },
-    { label: '脚本', val: segments.length },
-    { label: isDrama ? '预估' : '金句', val: isDrama ? (genResult?.time_estimate?.estimated_sec ? `${genResult.time_estimate.estimated_sec}s` : '?') : segments.filter(s => s.highlight_text?.length < 15 && s.highlight_text?.includes('学')).length },
-  ], [asrStats, segments, genResult, isDrama])
-
-  return (
-    <>
-      <div style={{ display: 'flex', borderBottom: S.borderSubtle, flexShrink: 0 }}>
-        {['ai', 'preview'].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            style={{ flex: 1, padding: '5px', fontSize: F.sm, fontWeight: 500, border: 'none', cursor: 'pointer',
-              background: tab === t ? S.bgPanel : 'transparent', color: tab === t ? '#e5e7eb' : '#6b7280',
-              borderBottom: tab === t ? `2px solid ${t === 'ai' ? '#a78bfa' : '#22c55e'}` : '2px solid transparent' }}>
-            {t === 'ai' ? 'AI 助手' : '预览'}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'ai' ? (
-        <div style={{ flex: 1, overflow: 'auto', padding: 8, fontSize: 10 }}>
-          {/* ── 生成 + 精切 按钮组 ── */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-            {!isDrama && (
-              <button onClick={generateScript} disabled={generating || !topic?.trim()}
-                style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
-                  cursor: (generating || !topic?.trim()) ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
-                  background: (!generating && topic?.trim()) ? 'linear-gradient(135deg, rgba(139,92,246,0.3), rgba(34,197,94,0.2))' : 'rgba(255,255,255,0.04)',
-                  color: (!generating && topic?.trim()) ? '#e5e7eb' : '#6b7280' }}>
-                {generating ? '⏳ 生成中...' : '🧠 AI 生成脚本'}
-              </button>
-            )}
-            {isDrama && genResult && (
-              <div style={{ fontSize: F.xs, color: '#6b7280', padding: '5px 0', flex: 1, textAlign: 'center' }}>
-                文案由外部生成，本台仅用于编辑与导出
-              </div>
-            )}
-
-            {segments.length > 0 && !isDrama && (
-              <button onClick={handleRefine} disabled={refining}
-                style={{ flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
-                  cursor: refining ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
-                  background: refining ? 'rgba(255,255,255,0.04)' : 'linear-gradient(135deg, rgba(16,185,129,0.25), rgba(5,150,105,0.15))',
-                  color: refining ? '#6b7280' : '#6ee7b7' }}>
-                {refining ? '⏳ 精切中...' : '✂️ 精切'}
-              </button>
-            )}
-          </div>
-
-          {/* 精切结果摘要 */}
-          {refineResult && (
-            <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)' }}>
-              <div style={{ fontWeight: 600, color: '#6ee7b7', fontSize: 10 }}>✅ 精切完成</div>
-              <div style={{ display: 'flex', gap: 6, fontSize: 9, color: '#9ca3af', marginTop: 1 }}>
-                <span style={{ color: '#6ee7b7', fontWeight: 600 }}>{refineResult.keep} 保留</span>
-                <span style={{ color: '#f87171', fontWeight: 600 }}>{refineResult.cut} 删除</span>
-                <span style={{ color: '#6b7280' }}>在「解说脚本 → 精切」查看</span>
-              </div>
-            </div>
-          )}
-
-          {/* 统计 */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-            {stats.map((st, i) => (
-              <span key={i} style={{ padding: '2px 6px', borderRadius: 4, background: 'rgba(255,255,255,0.04)', color: '#d1d5db', fontSize: 9 }}>
-                {st.label} <b style={{ color: '#e5e7eb' }}>{st.val}</b>
-              </span>
-            ))}
-          </div>
-
-          {/* 生成结果 — drama 模式 */}
-          {isDrama && genResult && (
-            <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
-              <div style={{ fontWeight: 600, color: '#4ade80', marginBottom: 3 }}>
-                ✅ {genResult.pipeline} · {segments.length} 段
-              </div>
-              {genResult.time_estimate && (
-                <div style={{ display: 'flex', gap: 6, marginBottom: 3, fontSize: 9 }}>
-                  <span style={{ color: '#fbbf24' }}>📝 {genResult.total_chars} 字</span>
-                  <span style={{ color: genResult.time_estimate.status === 'ok' ? '#4ade80' : '#f87171', fontWeight: 600 }}>
-                    🎯 {genResult.time_estimate.estimated_sec}s ({genResult.time_estimate.estimated_min})
-                  </span>
-                  <span style={{ color: '#9ca3af' }}>审核: {genResult.review_verdict}</span>
-                </div>
-              )}
-              {genResult.review_issues?.length > 0 && (
-                <div style={{ marginTop: 4, padding: 4, borderRadius: 3, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
-                  <div style={{ fontSize: F.xs, fontWeight: 600, color: '#fbbf24', marginBottom: 2 }}>⚠️ 审核发现 {genResult.review_issues.length} 个问题</div>
-                  {genResult.review_issues.slice(0, 5).map((iss, i) => (
-                    <div key={i} style={{ fontSize: F.xs, color: '#d1d5db', padding: '1px 0' }}>
-                      [{iss.severity}] {iss.detail}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 生成结果 — interview 模式 */}
-          {!isDrama && genResult && (
-            <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
-              <div style={{ fontWeight: 600, color: '#4ade80', marginBottom: 3 }}>
-                ✅ 生成完成 · {genResult.sections?.length || 0} 段
-                {genResult.richCount && <> · 丰富版{genResult.richCount}句→压缩至{genResult.finalCount || genResult.segments?.length || 0}句</>}
-              </div>
-              {genResult.time_estimate && (
-                <div style={{ display: 'flex', gap: 6, marginBottom: 3, fontSize: 9 }}>
-                  <span style={{ color: '#9ca3af' }}>⏱ {genResult.time_estimate.budget}s</span>
-                  <span style={{ color: '#fbbf24' }}>📦 {genResult.time_estimate.source_total}s</span>
-                  <span style={{ color: genResult.time_estimate.status === 'ok' ? '#4ade80' : '#f87171', fontWeight: 600 }}>
-                    🎯 {genResult.time_estimate.estimated_final}s
-                    {genResult.time_estimate.status !== 'ok' && (genResult.time_estimate.status === 'over' ? ' ⚠️长' : ' ⚠️短')}
-                  </span>
-                </div>
-              )}
-              {genResult.review_issues?.length > 0 && (
-                <div style={{ marginTop: 4, padding: 4, borderRadius: 3, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
-                  <div style={{ fontSize: F.xs, fontWeight: 600, color: '#fbbf24', marginBottom: 2 }}>⚠️ 审核发现 {genResult.review_issues.length} 个问题</div>
-                  {genResult.review_issues.slice(0, 5).map((iss, i) => (
-                    <div key={i} style={{ fontSize: F.xs, color: '#d1d5db', padding: '1px 0' }}>
-                      [{iss.severity}] {iss.detail}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {genResult.aiCount > 0 && <div style={{ fontSize: F.xs, color: '#a78bfa' }}>🤖 {genResult.aiCount} 句AI补写</div>}
-              {genResult.notes && <div style={{ fontSize: F.xs, color: '#9ca3af', marginTop: 3 }}>{genResult.notes}</div>}
-            </div>
-          )}
-
-          {/* 内容报告 — 仅 drama 模式展示 */}
-          {!isDrama && report && (
-            <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: S.purpleBg, border: '1px solid rgba(139,92,246,0.12)' }}>
-              <div style={{ fontSize: F.sm, fontWeight: 600, color: '#a78bfa', marginBottom: 4 }}>📋 内容分析</div>
-              <div style={{ fontSize: F.xs, color: '#d1d5db', lineHeight: 1.5, marginBottom: 8 }}>{report.summary}</div>
-              <div style={{ fontSize: F.sm, fontWeight: 600, color: '#9ca3af', marginBottom: 4 }}>可选主题</div>
-              {report.themes?.map((t, i) => (
-                <div key={i} onClick={() => { setTopic(`主题：${t.name}。切入角度：${t.angle}。标题建议：${t.hook_suggestion || ''}`); setSelTheme(i) }}
-                  style={{ padding: '4px 6px', marginBottom: 3, borderRadius: 4, cursor: 'pointer',
-                    background: selTheme === i ? 'rgba(34,197,94,0.08)' : (selTheme == null && i === report.recommended?.theme_index ? 'rgba(34,197,94,0.05)' : 'rgba(255,255,255,0.02)'),
-                    border: selTheme === i ? '1px solid rgba(34,197,94,0.3)' : (selTheme == null && i === report.recommended?.theme_index ? '1px solid rgba(34,197,94,0.15)' : '1px solid transparent') }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {(selTheme === i || (selTheme == null && i === report.recommended?.theme_index)) && <span style={{ fontSize: F.sm, color: '#4ade80' }}>⭐</span>}
-                    <span style={{ fontWeight: 600, color: '#e5e7eb', fontSize: 12 }}>{t.name}</span>
-                    <span style={{ fontSize: F.xs, color: '#fbbf24' }}>{'★'.repeat(t.strength)}</span>
-                  </div>
-                  <div style={{ fontSize: F.xs, color: '#9ca3af', marginTop: 2 }}>{t.angle}</div>
-                  <div style={{ fontSize: F.xs, color: '#60a5fa', marginTop: 1 }}>Hook: "{t.hook_suggestion}"</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* 生成进度（完成后保留，不清掉） */}
-          {genLog.length > 0 && (
-            <div style={{ marginBottom: 10, padding: 8, borderRadius: 5, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
-              <div style={{ fontSize: F.sm, fontWeight: 600, color: '#a78bfa', marginBottom: 5 }}>⚙️ {isDrama ? '编剧Agent 进度' : '生成进度'}{!generating && ' · 已完成'}</div>
-              {genLog.map((entry, i) => {
-                const isNew = i === genLog.length - 1
-                const icon = entry.step === 'story' ? '📖' : entry.step === 'story_done' ? '✅' :
-                             entry.step === 'planning' ? '📐' : entry.step === 'planning_done' ? '✅' :
-                             entry.step === 'writing' ? '✍️' : entry.step === 'writing_chapter_done' ? '📝' :
-                             entry.step === 'writing_done' ? '✅' :
-                             entry.step === 'review' ? '🔍' : entry.step === 'review_done' ? '📊' :
-                             entry.step === 'review_issue' ? (entry.msg?.includes('🔴') ? '🔴' : '🟡') :
-                             entry.step === 'init' ? '🎬' : entry.step === 'done' ? '🎉' :
-                             entry.step === 'planning' ? '📐' : entry.step === 'planning_done' ? '✅' :
-                             entry.step === 'editing' ? '✂️' : entry.step === 'editing_done' ? '✅' : '·'
-                return (
-                  <div key={i} style={{ fontSize: F.xs, color: isNew ? '#e5e7eb' : '#6b7280', padding: '1px 0',
-                    opacity: isNew ? 1 : 0.6, lineHeight: 1.5 }}>
-                    {icon} {entry.msg}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
-          {segments.length > 0 ? (
-            segments.map((seg, i) => (
-              <div key={i} style={{ padding: '4px 6px', marginBottom: 3, borderRadius: 3, background: 'rgba(255,255,255,0.02)', fontSize: 9 }}>
-                <div style={{ color: '#e5e7eb', fontWeight: 600 }}>S{i} {seg.topic && `· ${seg.topic}`}</div>
-                <div style={{ color: '#9ca3af', lineHeight: 1.3 }}>{seg.highlight_text?.substring(0, 50)}</div>
-                <div style={{ color: '#6b7280', fontFamily: 'monospace', marginTop: 1 }}>{tc(seg.source_start)}-{tc(seg.source_end)}</div>
-              </div>
-            ))
-          ) : (
-            <div style={{ textAlign: 'center', color: '#6b7280', fontSize: F.xs, marginTop: 40 }}>添加段落后显示预览</div>
-          )}
-          {segments.length > 0 && (
-            <div style={{ fontSize: F.xs, color: '#4b5563', textAlign: 'center', marginTop: 6 }}>
-              总长约 {tc(segments.reduce((s, seg) => s + ((seg.source_end || 0) - (seg.source_start || 0)), 0))}
-            </div>
-          )}
-        </div>
-      )}
-    </>
-  )
-})
-
 // ═══════════════════ 主组件 ═══════════════════
 export default function PlanningDesk() {
   const { seriesId, taskId } = useParams()
@@ -840,7 +634,6 @@ export default function PlanningDesk() {
   const [leftW, setLeftW] = useState(510)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightW, setRightW] = useState(450)
-  const [rightTab, setRightTab] = useState('ai')
 
   // ── 拖拽 ──
   const dragX = useCallback((get, set, min) => (e) => {
@@ -1106,7 +899,6 @@ export default function PlanningDesk() {
     window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k)
   }, [exportJSON])
 
-  const rightW_final = rightTab === 'ai' ? rightW : 0
   const leftPanelW = leftCollapsed ? 0 : leftW
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
@@ -1131,7 +923,7 @@ export default function PlanningDesk() {
       </div>
       <Divider onDrag={dragX(() => rightW, setRightW, 360)} />
       <div style={{ width: rightW, flexShrink: 0, display: rightW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: S.border, overflow: 'hidden' }}>
-        <AIPanel report={report} genResult={genResult} segments={segments} asrStats={asrStats} setTopic={setTopic} genLog={genLog} generating={generating} generateScript={isDrama ? generateDramaScript : generateScript} topic={topic} refining={refining} refineResult={refineResult} handleRefine={handleRefine} isDrama={isDrama} />
+        <VoicePanel taskId={taskId} segments={segments} />
       </div>
     </div>
   )

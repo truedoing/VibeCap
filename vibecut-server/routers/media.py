@@ -78,6 +78,17 @@ def api_serve_export_clip(file_path: str, task: str = Query(None)):
     return FileResponse(path, media_type=mime, headers={"Accept-Ranges": "bytes"})
 
 
+@router.get("/tts_segments/{file_path:path}")
+def api_serve_tts(file_path: str, task: str = Query(None)):
+    """配音音频文件 (work_dir/tts_segments/narr_*.wav)"""
+    task_name = task or args.task
+    from handlers.media import serve_task_file
+    path, mime = serve_task_file(task_name, f"/tts_segments/{file_path}")
+    if not path:
+        raise HTTPException(404)
+    return FileResponse(path, media_type=mime, headers={"Accept-Ranges": "bytes"})
+
+
 @router.get("/posters/{file_path:path}")
 def api_serve_poster(file_path: str):
     from handlers.media import serve_poster

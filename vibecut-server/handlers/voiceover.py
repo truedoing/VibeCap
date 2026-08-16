@@ -103,7 +103,6 @@ def generate_voiceover(
       4. 保存 narration.json + tts_meta.json
     """
     from tts_engine import generate_speech, PRESET_VOICES
-    from lib.llm import call_deepseek_json
 
     task_dir = resolve_work_dir(task_name).parent
     seg_file = task_dir / "segments.json"
@@ -144,19 +143,11 @@ def generate_voiceover(
         f"🎙️ 配音师就绪 · {len(narr_segments)}段解说词 · 音色: {PRESET_VOICES.get(voice, {}).get('label', voice)}",
         {"total": len(narr_segments), "skip": skip_count, "voice": voice, "speed": speed})
 
-    # ── Phase 1: 配音师 Agent ──
-    emit_progress("director", "🎬 配音师分析脚本 → 设计配音方案...")
-
-    voice_plan = _run_voice_director(narr_segments, call_deepseek_json, emit_progress)
-
-    if not voice_plan:
-        # Fallback: 无 LLM 时的默认方案
-        emit_progress("director", "⚠️ 配音师不可用，使用默认方案 (规则驱动)")
-        voice_plan = _default_voice_plan(narr_segments, speed, pause_ms)
-    else:
-        emit_progress("director_done",
-            f"✅ 配音方案就绪: {len(voice_plan)}段 · 风格: {voice_plan[0].get('_overall_style', '')}",
-            {"plan_segments": len(voice_plan)})
+    # ── Phase 1: 配音方案（规则驱动，无 LLM 配音师） ──
+    voice_plan = _default_voice_plan(narr_segments, speed, pause_ms)
+    emit_progress("director_done",
+        f"✅ 配音方案就绪: {len(voice_plan)}段 · 默认节奏",
+        {"plan_segments": len(voice_plan)})
 
     # ── Phase 2: 逐段 TTS 生成 ──
     tts_dir = resolve_tts_dir(task_name)
@@ -268,87 +259,14 @@ def generate_voiceover(
         "total_duration": round(total_duration, 1),
         "voice": voice,
         "tts_dir": str(tts_dir),
-        "tts_meta_path": str(task_dir / "tts_meta.json"),
-        "narration_path": str(task_dir / "narration.json"),
+        "tts_meta_path": str(task_dir / "work_dir" / "tts_meta.json"),
+        "narration_path": str(task_dir / "work_dir" / "narration.json"),
     })
 
 
 # ═══════════════════════════════════════════════════════════════
-# 配音师 Agent
+# 配音方案（规则驱动，无 LLM 配音师）
 # ═══════════════════════════════════════════════════════════════
-
-def _run_voice_director(narr_segments: list, call_llm_json, emit_progress) -> list | None:
-    """配音师 Agent: 理解脚本叙事结构，为每段设计配音方案
-
-    Args:
-        narr_segments: [{"seg_id", "narration_text", "section_role", "chapter_title"}, ...]
-        call_llm_json: DeepSeek JSON 调用函数
-
-    Returns:
-        voice_plan list 或 None (LLM 不可用时 fallback 到规则)
-    """
-    from handlers.prompts.voiceover import VOICE_DIRECTOR_PROMPT
-
-    # 精简每条 segment，控制 token
-    script_preview = []
-    for s in narr_segments:
-        script_preview.append({
-            "seg_id": s["seg_id"],
-            "narration_text": s["narration_text"],
-            "section_role": s.get("section_role", "context"),
-        })
-
-    target_duration = 240  # 默认4分钟
-    total_chars = sum(len(s["narration_text"]) for s in narr_segments)
-    est_duration = total_chars / 3.5  # 中文 TTS ~3.5字/秒
-
-    user_content = (
-        f"★ 解说脚本 ({len(narr_segments)}段, 共{total_chars}字, 预估{est_duration:.0f}秒):\n"
-        f"{json.dumps(script_preview, ensure_ascii=False, indent=2)}\n\n"
-        f"★ 目标时长: {target_duration}秒\n"
-        f"请为每段设计配音方案。"
-    )
-
-    try:
-        result = call_llm_json(
-            VOICE_DIRECTOR_PROMPT,
-            user_content,
-            temperature=0.4,
-            max_tokens=2000,
-            timeout=60,
-            retries=2,
-            label="voice_director",
-        )
-    except Exception as e:
-        emit_progress("director", f"⚠️ 配音师调用失败: {str(e)[:80]}")
-        return None
-
-    if not result.get("ok"):
-        emit_progress("director", f"⚠️ 配音师返回异常: {result.get('error', '?')[:80]}")
-        return None
-
-    data = result.get("data", {})
-    if isinstance(data, list):
-        data = {"plan": data}
-
-    plan = data.get("plan", [])
-    overall_style = data.get("overall_style", "")
-
-    # 合并 narration_text 到 plan (LLM 不返回文本，只有参数)
-    enriched = []
-    for p in plan:
-        seg_id = p.get("seg_id", len(enriched))
-        orig = next((s for s in narr_segments if s.get("seg_id") == seg_id), None)
-        if orig is None:
-            orig = narr_segments[seg_id] if seg_id < len(narr_segments) else None
-        if orig:
-            p["narration_text"] = orig.get("narration_text", "")
-            p["chapter_title"] = orig.get("chapter_title", "")
-        p["_overall_style"] = overall_style
-        enriched.append(p)
-
-    return enriched if enriched else None
-
 
 def _default_voice_plan(narr_segments: list, global_speed: float, global_pause: int) -> list:
     """规则驱动的默认配音方案 (配音师 Agent 不可用时的 fallback)
@@ -395,7 +313,13 @@ def _default_voice_plan(narr_segments: list, global_speed: float, global_pause: 
 
 def _save_results(task_dir: Path, tts_results: list, voice: str,
                   speed: float, pause_ms: int, emit_progress):
-    """保存 narration.json + tts_meta.json + 反写 segments.json"""
+    """保存 narration.json + tts_meta.json + 反写 segments.json
+
+    narration.json / tts_meta.json 写入 work_dir/（与 api_narration、import_voiceover_audio 读取路径一致）；
+    segments.json 反写在 task 根目录。
+    """
+    work_dir = task_dir / "work_dir"
+    work_dir.mkdir(parents=True, exist_ok=True)
 
     # ── narration.json (分镜台时间线消费) ──
     narration = []
@@ -411,7 +335,7 @@ def _save_results(task_dir: Path, tts_results: list, voice: str,
             "emotion": r.get("emotion", ""),
         })
 
-    narr_path = task_dir / "narration.json"
+    narr_path = work_dir / "narration.json"
     json.dump(narration, open(narr_path, "w"), ensure_ascii=False, indent=2)
     emit_progress("saved", f"📝 narration.json → {narr_path}")
 
@@ -425,7 +349,7 @@ def _save_results(task_dir: Path, tts_results: list, voice: str,
         "narration": str(narr_path),
     }
 
-    meta_path = task_dir / "tts_meta.json"
+    meta_path = work_dir / "tts_meta.json"
     json.dump(tts_meta, open(meta_path, "w"), ensure_ascii=False, indent=2)
     emit_progress("saved", f"📝 tts_meta.json → {meta_path}")
 
@@ -460,8 +384,11 @@ def _update_single_segment_result(task_dir: Path, seg_id, result: dict):
     注意: 只更新该段的字段，后续段的 start/end 不做级联偏移。
     单段 duration 差异通常 <5s，允许用户重新批量生成获得精确时间线。
     """
+    work_dir = task_dir / "work_dir"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
     # ── 1. narration.json ──
-    narr_path = task_dir / "narration.json"
+    narr_path = work_dir / "narration.json"
     if narr_path.exists():
         narration = json.load(open(narr_path))
         for entry in narration:
@@ -476,7 +403,7 @@ def _update_single_segment_result(task_dir: Path, seg_id, result: dict):
         json.dump(narration, open(narr_path, "w"), ensure_ascii=False, indent=2)
 
     # ── 2. tts_meta.json ──
-    meta_path = task_dir / "tts_meta.json"
+    meta_path = work_dir / "tts_meta.json"
     if meta_path.exists():
         meta = json.load(open(meta_path))
         for seg in meta.get("segments", []):
@@ -561,7 +488,7 @@ def regenerate_segment(
         return
 
     # ── 2. 加载已有 tts_meta.json 获取原参数 ──
-    meta_path = task_dir / "tts_meta.json"
+    meta_path = resolve_work_dir(task_name) / "tts_meta.json"
     original_emotion = "narrative"
     original_speed = 1.0
     original_pause = 300
@@ -612,7 +539,7 @@ def regenerate_segment(
     # ── 6. TTS 生成 ──
     tts_dir = resolve_tts_dir(task_name)
     tts_dir.mkdir(parents=True, exist_ok=True)
-    out_path = tts_dir / f"narr_{target_index:03d}.wav"
+    out_path = tts_dir / f"narr_{seg_id:03d}.wav"
 
     emit_progress("segment_start",
         f"🔄 重生成 S{seg_id} | {final_emotion} | {narr_text[:30]}...",
@@ -643,7 +570,7 @@ def regenerate_segment(
         "start": round(prev_end, 2),
         "end": new_end,
         "narration": narr_text,
-        "audio_path": f"tts_segments/narr_{target_index:03d}.wav",
+        "audio_path": f"tts_segments/narr_{seg_id:03d}.wav",
         "duration": duration,
         "pause_after_ms": final_pause,
         "emotion": final_emotion,
