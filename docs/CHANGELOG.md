@@ -1,5 +1,53 @@
 # VibeCut 变更日志
 
+## v1.4.0 (2026-08-16) — 编剧台 V2: 单 LLM + 方法论 (MAJOR)
+
+### 范式重构
+
+**背景**: 多 Agent 架构（故事师/论点师/策划师/文案师/审核师）经过十余轮优化已达瓶颈——环节多、割裂、难调，反复在论点/金句/原声/聚焦上打地鼠。用户以「公开方法论 + 公网 LLM 直出」的脚本为证，指出公网 LLM 对老流行剧的知识比我们自建 ASR 更可靠（实测「图你不洗澡」等名场面台词在我们 ASR 中被同音字误识别，SRT 字幕则一字不差）。
+
+**核心转变**: 放弃多 Agent 协作，改为「单 LLM + 方法论」一次产出。
+
+```
+旧（多 Agent 串行）:
+  故事师 → 论点师 → 策划师 → 文案师 → 审核师 → 程序校验
+
+新（单 LLM 直出）:
+  选题 → DeepSeek(SCRIPT_V2_PROMPT) → 完整脚本(论点+装置+起承转合+名场面) → 落盘
+```
+
+**SCRIPT_V2_PROMPT 方法论**（把多轮对齐的创作标准浓缩成一份规范）:
+1. 一句话反常识论点（认知增量，自测"观众会不会发出'原来还能这么看'"）
+2. 叙事装置（比喻/框架，点睛不轰炸）
+3. 起承转合的故事结构（起→承→转→合，不是论证结构）
+4. 名场面穿插（type: narration/dialogue + function: 锚定/举证/引爆/爆点）
+5. 金句不复读（≤2次）、升华回论点不鸡汤
+6. 剥层（表层→剥层→升华，复述为骨议论为肉）
+
+### 新增
+
+- `SCRIPT_V2_PROMPT` — 单 LLM 方法论 prompt（handlers/prompts/script_drama.py）
+- `generate_drama_script_v2()` — 单 LLM 生成函数（handlers/script_drama.py）
+- `POST /script/generate_drama_script_v2` — V2 SSE 端点（routers/sse_script.py）
+
+### 修改
+
+- 前端生成按钮切到 v2，去掉选集依赖和"生成论点"两步式
+
+### 保留
+
+- 旧多 Agent 代码（story_master_agent / narrative_planner_agent / thesis_agent 等）保留，可回退对比
+
+### 验证
+
+单 LLM 直出《保姆三句话，骗走一套房》，论点"苏大强不是被骗，是太饿了"（认知增量）、装置"饥饿陷阱"贯穿、起承转合完整、名场面 function 清晰，质量明显优于多 Agent 版本。
+
+### 后续
+
+- SRT 字幕数据接入（46 集标准 SRT，台词精确 + 毫秒时间戳，用于台词锚定 + source_start 精确秒数）
+
+---
+
 ## v1.2.0 (2026-08-12) — 编剧Agent: Drama脚本生成 (MINOR)
 
 ### 新增

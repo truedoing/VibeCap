@@ -192,7 +192,34 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 
 **结果**: 46 集 VLM 全部完成，空响应 452→17，情绪矛盾 22→0。
 
-## 编剧Agent — Drama脚本生成
+## 编剧台 — Drama脚本生成
+
+### V2（当前）：单 LLM + 方法论
+
+**范式**: 放弃多 Agent 协作，改为「单 LLM + 方法论」一次产出。多 Agent 经过十余轮优化已达瓶颈（环节多、割裂、难调），单 LLM 直出质量反而更好（公网 LLM 对老流行剧的知识比自建 ASR 更可靠）。
+
+```
+选题 → DeepSeek(SCRIPT_V2_PROMPT) → 完整脚本(论点+装置+起承转合+名场面function) → 落盘 segments.json
+```
+
+**SCRIPT_V2_PROMPT 方法论**（浓缩的创作规范）:
+1. 反常识论点（认知增量）+ 叙事装置（点睛不轰炸）
+2. 起承转合的故事结构（不是论证结构）
+3. 名场面穿插（type: narration/dialogue + function: 锚定/举证/引爆/爆点）
+4. 金句不复读（≤2次）、升华回论点不鸡汤
+5. 剥层（表层→剥层→升华，复述为骨议论为肉）
+
+**关键模块**:
+- `handlers/prompts/script_drama.py` → `SCRIPT_V2_PROMPT`（单 LLM 方法论）
+- `handlers/script_drama.py` → `generate_drama_script_v2()`（单 LLM 生成函数）
+- `routers/sse_script.py` → `POST /script/generate_drama_script_v2`
+
+**API**: `POST /script/generate_drama_script_v2`
+```json
+{"topic": "苏大强与保姆小蔡：保姆三句话，骗走一套房", "target_duration": 300}
+```
+
+### V1（已保留，可回退对比）：多 Agent 协作
 
 **核心理念**: 多个Agent角色协作，将46集剧情结构化数据转化为影视解说脚本。人提供创意方向（选题+选集+时长），Agent负责执行。
 
@@ -212,37 +239,23 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
                                               segments.json (带episode_marker+source_start/end)
 ```
 
-**核心Agent**:
+**核心Agent**（`agents/drama_script_agents.py`）:
 - **故事师** (`story_master_agent`) — 通读46集剧情概要 → 提取人物弧光/转折点/高光场景/选题建议
-- **策划师** (`narrative_planner_agent`) — 故事地图+选题→4-7章叙事方案(每章含场景锚点+arc_episodes因果链集数)
-- **文案师** (`script_writer_agent`) — 章节方案+scene_map→解说词+scene_query(意图快照，只锚episode+time_range)
-- **逻辑审核师** (`reviewer_agent`) — Self-Reflection: 事后审逻辑断层/过度拔高，改写一次
+- **论点师** (`thesis_agent`) — 故事地图→反常识论点+装置候选（人拍板）
+- **策划师** (`narrative_planner_agent`) — 故事地图+选题→章节方案（含scene_anchors+arc_episodes）
+- **文案师** (`script_writer_agent`) — 章节+事实卡片→解说词+scene_query
+- **逻辑审核师** (`reviewer_agent`) — Self-Reflection: 事后审逻辑/金句/幻觉
 
-**写作三层结构**（剥层为核心）:
-- 表层(~20%) → 剥层(~60%，回答"为什么"，认知增量) → 升华(~20%)
-- 框架化剥层：借心理学/博弈论，但内隐（不提MBTI术语）
-- 解说/原声交替：解说是主线(论证)，原声是武器(举证/引爆/钉人)
+**关键机制**（多 Agent 阶段的沉淀，方法论沿用到 V2）:
+- 事实卡片分离（LCAS Core Anchor）：文案师只拿锚定的卡片，杜绝硬事实幻觉
+- 增量快照（LCAS Dynamic Refreshing）：防车轱辘话/跨章重复
+- 论点聚焦 + 装置克制 + 金句不复读 + 原声句精准引用
 
-**关键机制**:
-- **原声台词程序化提取**: 文案师只选场景(scene_query)，highlight_text由程序从ASR时间窗提取，杜绝编造
-- **arc_episodes 元数据传递**: 策划师产出事件弧完整因果链集数，文案师据此补前因（防导火索归因错）
-- **审核策略**: 程序校验(事实/scene_query锚定) + 逻辑审核师(逻辑/表达)，各司其职
-- **scene_query 定位**: 创作意图快照（草图），不做画面匹配（那是分镜台的活）
+**API（V1）**: `POST /script/generate_drama_script`
 
-**关键模块**:
-- `drama_script_agents.py` — 四个Agent + 编排器 `run_drama_pipeline()`
-- `handlers/script_drama.py` — SSE端点处理函数
-- `handlers/prompts/script_drama.py` — Prompt模板 (故事师/策划师/文案师/审核师)
-- `lib/scene_map.py` — 场记Agent (scene_map已优化至100% event/mood覆盖)
-
-**API**: `POST /script/generate_drama_script`
+### 产出（V1/V2 统一）: segments.json (兼容VibeEdit/ScriptPanel/Storyboard)
 ```json
-{"topic": "苏明成人物线：从妈宝到守护者", "episodes": [1,3,21,39,41,45], "target_duration": 240}
-```
-
-**产出**: segments.json (兼容VibeEdit/ScriptPanel/Storyboard)
-```json
-{"narration_text": "...", "highlight_text": "...", "scene_query": {"episode":21, "time_range":[240,330], "characters":["苏明成","苏明玉"], "mood":"愤怒"}, "episode_marker":{"episode":21, "approx_minute":4.0}, "source_start":240.0, "source_end":330.0, "mode":"A"}
+{"narration_text": "...", "highlight_text": "...", "episode_marker":{"episode":21}, "mode":"A"}
 ```
 
 ## 配音台 v1.2 — 音频导入
