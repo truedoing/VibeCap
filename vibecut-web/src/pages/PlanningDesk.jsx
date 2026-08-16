@@ -8,6 +8,7 @@ import { useParams } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 import { colors, space, font as baseFont, radius } from '../styles/theme'
 import { flexRow, panelHeader, panelRoot, title, subtitle, label, mono, btn, input, select, textarea, card, divider as dividerStyle, importanceColor as impColor } from '../styles/mixins'
+import DramaSourcePanel from '../components/PlanPanel'
 
 const FPS = 25
 
@@ -214,82 +215,7 @@ const SourcePanel = memo(function SourcePanel({
 
 // ── 左侧（drama 模式）：显示脚本方案全文 ──
 // 文案由外部工具生成，本台只做查看/编辑/导出。左侧展示方案元信息，中间展示正文。
-const DramaSourcePanel = memo(function DramaSourcePanel({
-  projectName, segments, scriptMeta, onCollapse,
-}) {
-  const meta = scriptMeta || {}
-  const theme = Array.isArray(meta.theme) ? meta.theme : (meta.theme ? [meta.theme] : [])
-  const rc = meta.rhythm_check || {}
-  const rcStruct = rc.structure || {}
-
-  return (
-    <>
-      <div style={S.panelHeader}>
-        <div style={S.flexRow}>
-          <span style={S.headerTitle}>📋 方案全文</span>
-          <span style={{ marginLeft: 6, fontSize: F.xs, color: '#6b7280' }}>
-            {projectName} · {segments.length}段
-          </span>
-        </div>
-        <div style={{ ...S.flexRow, gap: 4 }}>
-          <button onClick={onCollapse} style={{ ...S.headerBtn(false), fontSize: 11, padding: '1px 6px' }} title="折叠">◀</button>
-        </div>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '10px', borderBottom: S.borderSubtle }}>
-        {!meta.title && !meta.core_insight ? (
-          <p style={{ fontSize: F.xs, color: '#6b7280', lineHeight: 1.6, margin: 0 }}>
-            暂无方案元信息。文案由外部工具（扣子 / WorkBuddy）生成，导入 JSON 后这里展示方案全文。
-          </p>
-        ) : (
-          <>
-            {meta.title && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: F.sm, fontWeight: 700, color: '#e5e7eb', lineHeight: 1.4 }}>{meta.title}</div>
-                {meta.series && <div style={{ fontSize: F.xs, color: '#9ca3af', marginTop: 2 }}>{meta.series} · {meta.type || ''}{meta.arc_episodes ? ` · EP${meta.arc_episodes}` : ''}</div>}
-              </div>
-            )}
-
-            {meta.core_insight && (
-              <div style={{ marginBottom: 10, padding: '8px', borderRadius: 6, background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.15)' }}>
-                <div style={{ fontSize: F.xs, fontWeight: 600, color: '#a78bfa', marginBottom: 4 }}>💡 核心洞察</div>
-                <div style={{ fontSize: F.xs, color: '#d1d5db', lineHeight: 1.6 }}>{meta.core_insight}</div>
-              </div>
-            )}
-
-            {theme.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: F.xs, fontWeight: 600, color: '#9ca3af', marginBottom: 4 }}>主题</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {theme.map((t, i) => (
-                    <span key={i} style={{ fontSize: F.xs, padding: '2px 6px', borderRadius: 3, background: S.purpleBg, color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>{t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {Object.keys(rc).length > 0 && (
-              <div style={{ marginBottom: 10, padding: '8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div style={{ fontSize: F.xs, fontWeight: 600, color: '#9ca3af', marginBottom: 4 }}>节奏检查</div>
-                {rc.dialogue_ratio && <div style={{ fontSize: F.xs, color: '#d1d5db' }}>原声占比：{rc.dialogue_ratio}</div>}
-                {rc.total_segments && <div style={{ fontSize: F.xs, color: '#d1d5db' }}>总段数：{rc.total_segments}</div>}
-                {Object.keys(rcStruct).length > 0 && (
-                  <div style={{ marginTop: 6 }}>
-                    {Object.entries(rcStruct).map(([k, v]) => (
-                      <div key={k} style={{ fontSize: F.xs, color: '#9ca3af', lineHeight: 1.5 }}>
-                        <span style={{ color: '#6b7280' }}>{k}：</span>{v}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </>
-  )
-})
+// 实现见 components/PlanPanel.jsx（DramaSourcePanel），此处仅 import。
 
 // ── 中间：解说脚本（兼容 interview + drama） ──
 const ScriptPanel = memo(function ScriptPanel({

@@ -72,7 +72,7 @@ def api_segments(task: str = Query(None)):
                           "project_type": project_type}
                 # 合并文件里的 meta 信息（方案全文）
                 if file_data:
-                    for k in ("meta", "theme", "core_insight", "cover", "hook_line", "closing_line"):
+                    for k in ("meta", "theme", "core_insight", "cover", "hook_line", "closing_line", "device", "type"):
                         if file_data.get(k) is not None:
                             result[k] = file_data[k]
                 located_file = resolve_task_dir(task_name) / "segments_located.json"

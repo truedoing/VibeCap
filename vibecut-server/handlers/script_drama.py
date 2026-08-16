@@ -107,6 +107,8 @@ def generate_drama_script_v2(
         "title": data.get("title", ""),
         "theme": data.get("theme", ""),
         "device": data.get("device", ""),
+        "type": data.get("type", ""),
+        "arc_episodes": data.get("arc_episodes", ""),
         "segments": segments,
         "total": len(segments),
         "total_chars": sum(len(s.get("narration_text", "")) for s in segments),
@@ -156,6 +158,17 @@ def _save_to_task_dir_v2(result: dict):
         "cover": result.get("cover", ""),
         "hook_line": result.get("theme", "")[:60],
         "closing_line": "",
+        "device": result.get("device", ""),
+        "type": result.get("type", ""),
+        # 方案全文元信息（与外部导入契约对齐，供左侧面板展示）
+        "meta": {
+            "title": result.get("title", ""),
+            "theme": result.get("theme", ""),
+            "device": result.get("device", ""),
+            "type": result.get("type", ""),
+            "arc_episodes": result.get("arc_episodes", ""),
+            "core_insight": result.get("theme", ""),  # V2 的 theme 即反常识论点
+        },
         "audio_verified": False,
         "segments": result["segments"],
     }

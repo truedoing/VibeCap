@@ -160,14 +160,22 @@ def normalize_external(data: dict, sources_dir: Path = None) -> dict:
         "closing_line": "",
         "theme": theme,
         "core_insight": core_insight,
-        # 方案全文元信息（左侧面板展示用）
+        # 方案全文元信息（左侧面板展示用）—— 完整透传外部工具的所有「非正文」字段
         "meta": {
+            "script_id": data.get("script_id", ""),
             "title": data.get("title", ""),
             "series": data.get("series", ""),
             "type": data.get("type", ""),
             "theme": theme,
             "arc_episodes": data.get("arc_episodes", ""),
+            "estimated_duration": data.get("estimated_duration", ""),
             "core_insight": core_insight,
+            "core_insight_detail": data.get("core_insight_detail", ""),
+            "golden_quotes": data.get("golden_quotes", []),
+            "argument_chain": data.get("argument_chain", []),
+            "emotion_curve": data.get("emotion_curve", {}),
+            "alternate_titles": data.get("alternate_titles", []),
+            "production_notes": data.get("production_notes", {}),
             "rhythm_check": data.get("rhythm_check", {}),
             "revision_log": data.get("revision_log", {}),
         },
