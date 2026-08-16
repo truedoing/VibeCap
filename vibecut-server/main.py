@@ -1,4 +1,4 @@
-"""VibeCut Server v1.3 — FastAPI 入口 (瘦入口, 路由分发到 routers/)
+"""VibeCut Server v1.4 — FastAPI 入口 (瘦入口, 路由分发到 routers/)
 
 drama编剧Agent + interview编剧台 + 导演Agent分镜匹配 + 配音台
 """
@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
     shutdown()
 
 
-app = FastAPI(title="VibeCut API", version="1.3.0", lifespan=lifespan)
+app = FastAPI(title="VibeCut API", version="1.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

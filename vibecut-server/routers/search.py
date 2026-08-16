@@ -13,7 +13,7 @@ def health_check():
         "project": project_name,
         "type": project_type,
         "task": args.task,
-        "version": "1.3.0",
+        "version": "1.4.0",
     }
 
 
