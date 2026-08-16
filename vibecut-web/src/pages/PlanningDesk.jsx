@@ -48,61 +48,14 @@ function secToMin(s) {
  *   "苏明玉职场逆袭"
  *
  * @param {string} desc       - 原始任务描述
- * @param {object} actions    - { setTopic, setSelectedEps }
+ * @param {object} actions    - { setTopic }
  */
-function _parseTaskDescription(desc, { setTopic, setSelectedEps }) {
+function _parseTaskDescription(desc, { setTopic }) {
   if (!desc || !desc.trim()) return
 
   const raw = desc.trim()
 
-  // ── 第一步：提取所有数字范围的剧集号 ──
-  // 模式: EP1-3, EP 1-3, 1-3集, 第1-3集, 1集, 第1集, 1,3,5
-  //       1-5, 10-15, 16-20, ... 纯数字范围
-  const epSet = new Set()
-
-  // EP前缀 + 范围: EP1-3, EP 1, ep1
-  const epRangeRe = /(?:EP|ep|Ep)\s*(\d+)\s*(?:[-–]\s*(\d+))?/g
-  let m
-  while ((m = epRangeRe.exec(raw)) !== null) {
-    const from = parseInt(m[1], 10)
-    const to = m[2] ? parseInt(m[2], 10) : from
-    for (let e = from; e <= to; e++) epSet.add(e)
-  }
-
-  // 中文范围: 1-3集, 第1-3集, 1到3集, 1-5, 10-15
-  const cnRangeRe = /第?\s*(\d+)\s*(?:[-–到至]\s*(\d+)\s*)?(?:集|话|回)/g
-  while ((m = cnRangeRe.exec(raw)) !== null) {
-    const from = parseInt(m[1], 10)
-    const to = m[2] ? parseInt(m[2], 10) : from
-    for (let e = from; e <= to; e++) epSet.add(e)
-  }
-
-  // 纯数字列表: , 1, 3, 21, 39, 41, 45, (后面可能跟其他文本)
-  // 先提取所有纯数字 token (2位及以下, 范围 1-46)
-  const numTokens = raw.match(/\b(\d{1,2})\b/g)
-  if (numTokens) {
-    for (const t of numTokens) {
-      const n = parseInt(t, 10)
-      if (n >= 1 && n <= 46) epSet.add(n)
-    }
-  }
-
-  // 快速范围匹配: "16-20", "1-5" 之类的赤裸范围(无ep/集后缀)
-  const bareRangeRe = /\b(\d{1,2})\s*[-–]\s*(\d{1,2})\b/g
-  while ((m = bareRangeRe.exec(raw)) !== null) {
-    const from = parseInt(m[1], 10)
-    const to = parseInt(m[2], 10)
-    if (from <= 46 && to <= 46 && from < to) {
-      for (let e = from; e <= to; e++) epSet.add(e)
-    }
-  }
-
-  // ── 第二步: 如果解析出了剧集号，设置选中状态 ──
-  if (epSet.size > 0) {
-    setSelectedEps(new Set(epSet))
-  }
-
-  // ── 第三步: 提取纯选题文本 (去掉剧集引用部分) ──
+  // ── 提取纯选题文本 (去掉剧集引用部分) ──
   let topic = raw
     // EP1-5 开头引用
     .replace(/^(?:EP|ep|Ep)\s*\d[\d\s,\-–]*(?:集|话|回)?\s*/g, '')
@@ -345,7 +298,7 @@ const ScriptPanel = memo(function ScriptPanel({
   selectedIdx, setSelectedIdx, editingIdx, setEditingIdx,
   moveSegment, removeSegment, updateSegment,
   generating, genMsg, exportJSON, importExternalJSON,
-  isDrama, chapterStructure, clearAll,
+  isDrama, clearAll,
 }) {
   const [scriptTab, setScriptTab] = useState('coarse')  // 'coarse' | 'refine'
   const hasRefine = useMemo(() => segments.some(s => s.sub_clips?.length > 0), [segments])
@@ -372,9 +325,6 @@ const ScriptPanel = memo(function ScriptPanel({
         <div style={S.flexRow}>
           <span style={S.headerTitle}>{isDrama ? '📜 解说脚本' : '解说脚本'}</span>
           {segments.length > 0 && <span style={{ marginLeft: 6, fontSize: F.sm, color: '#6b7280' }}>{segments.length} 段</span>}
-          {isDrama && chapterStructure?.chapters?.length > 0 && (
-            <span style={{ marginLeft: 6, fontSize: F.xs, color: '#6b7280' }}>{chapterStructure.chapters.length} 章</span>
-          )}
           {/* 精切页签 */}
           {hasRefine && (
             <div style={{ display: 'flex', marginLeft: 10, gap: 0 }}>
@@ -407,27 +357,10 @@ const ScriptPanel = memo(function ScriptPanel({
         </div>
       </div>
 
-      {/* 主题 + 大纲（interview模式）/ 章节概览（drama模式） */}
+      {/* 主题 + 大纲（interview模式） */}
       <div style={{ padding: '4px 8px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
         {isDrama ? (
-          <>
-            {chapterStructure?.title && (
-              <div style={{ fontSize: F.sm, fontWeight: 700, color: '#c4b5fd', marginBottom: 4 }}>{chapterStructure.title}</div>
-            )}
-            {chapterStructure?.chapters?.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                {chapterStructure.chapters.map((ch, i) => (
-                  <span key={i} style={{ fontSize: F.xs, padding: '2px 6px', borderRadius: 3,
-                    background: S.purpleBg, color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>
-                    Ch{i+1}: {ch.title}
-                  </span>
-                ))}
-              </div>
-            )}
-            {!chapterStructure && segments.length === 0 && (
-              <div style={{ fontSize: F.xs, color: '#6b7280' }}>在左侧填选题→选剧集→点生成</div>
-            )}
-          </>
+          <div style={{ fontSize: F.xs, color: '#6b7280' }}>正文区 · 左侧为方案全文</div>
         ) : (
           <>
             <textarea value={topic} onChange={e => setTopic(e.target.value)}
@@ -933,11 +866,11 @@ export default function PlanningDesk() {
 
   const [topic, setTopic] = useState('')
 
-  // ── 任务描述解析：选题 + 剧集选择 ──
+  // ── 任务描述解析：选题 ──
   const [taskParsed, setTaskParsed] = useState(false)
   useEffect(() => {
     if (!taskDescription || taskParsed) return
-    _parseTaskDescription(taskDescription, { setTopic, setSelectedEps })
+    _parseTaskDescription(taskDescription, { setTopic })
     setTaskParsed(true)
   }, [taskDescription, taskParsed])
 
@@ -958,33 +891,6 @@ export default function PlanningDesk() {
   const [scriptMeta, setScriptMeta] = useState(null)  // 方案全文元信息（title/theme/core_insight/rhythm_check）
   const [editingIdx, setEditingIdx] = useState(null)
   const [selectedIdx, setSelectedIdx] = useState(null)
-
-  // ── drama 专用状态 ──
-  const [selectedEps, setSelectedEps] = useState(() => {
-    const s = new Set(); for (let i = 1; i <= 46; i++) s.add(i); return s
-  })
-  const [targetDuration, setTargetDuration] = useState(300)
-  const [chapterStructure, setChapterStructure] = useState(null)
-  // ── 论点拍板（两段式）──
-  const [thesis, setThesis] = useState(null)          // 人拍板选定的论点 dict
-  const [thesisCandidates, setThesisCandidates] = useState([])  // 论点师产出的候选
-  const [thesisLoading, setThesisLoading] = useState(false)
-  const [thesisError, setThesisError] = useState('')
-  const quickRanges = useMemo(() => [
-    ['苏母线 1-5', [1,2,3,4,5]],
-    ['投资被骗 10-15', [10,11,12,13,14,15]],
-    ['买房风波 16-20', [16,17,18,19,20]],
-    ['暴力冲突 21-25', [21,22,23,24,25]],
-    ['离婚失业 30-35', [30,31,32,33,34,35]],
-    ['骗婚事件 40-41', [40,41]],
-    ['和解收尾 44-46', [44,45,46]],
-  ], [])
-  const toggleEp = useCallback((ep) => {
-    setSelectedEps(prev => { const s = new Set(prev); if (s.has(ep)) s.delete(ep); else s.add(ep); return s })
-  }, [])
-  const epQuickSelect = useCallback((eps) => {
-    setSelectedEps(new Set(eps))
-  }, [])
 
   // ── 素材状态 ──
   const [asrLoaded, setAsrLoaded] = useState(false)
@@ -1136,16 +1042,12 @@ export default function PlanningDesk() {
     input.click()
   }, [taskId, setSegments])
 
-  // ── 清除：脚本 + AI助手输出 + 论点，全部复位；【保留选题】避免重新生成费时 ──
+  // ── 清除：脚本 + AI助手输出，全部复位 ──
   const clearAll = useCallback(() => {
     setSegments([])
     setGenResult(null)
     setGenLog([])
     setGenMsg('')
-    setChapterStructure(null)
-    setThesis(null)
-    setThesisCandidates([])
-    setThesisError('')
     setOutline([])
   }, [])
 
@@ -1228,37 +1130,14 @@ export default function PlanningDesk() {
   const removeOutlineItem = useCallback((idx) => { setOutline(prev => prev.filter((_, i) => i !== idx)) }, [])
   const toggleGroup = useCallback((gi) => setCollapsedGroups(prev => ({ ...prev, [gi]: !prev[gi] })), [])
 
-  // ── 论点拍板：调论点师产出候选 ──
-  const generateThesis = useCallback(async () => {
-    if (!topic.trim()) return
-    setThesisLoading(true); setThesisError(''); setThesisCandidates([])
-    try {
-      const resp = await fetch('/script/generate_thesis', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: topic.trim() }),
-      })
-      const data = await resp.json()
-      if (data?.ok && data?.candidates?.length) {
-        setThesisCandidates(data.candidates)
-      } else {
-        setThesisError(data?.error || '论点生成失败')
-      }
-    } catch (e) {
-      setThesisError('论点请求失败: ' + e.message)
-    } finally {
-      setThesisLoading(false)
-    }
-  }, [topic])
-
-  // ── AI 编剧 (drama SSE, V2 单LLM) ──
+  // ── AI 生成 (SSE 流式 — 口播用) ──
   const generateDramaScript = useCallback(async () => {
     if (!topic.trim()) return
     setGenerating(true); setError(''); setGenResult(null); setGenLog([])
-    setChapterStructure(null)
     try {
       const resp = await fetch('/script/generate_drama_script_v2', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: topic.trim(), target_duration: targetDuration }),
+        body: JSON.stringify({ topic: topic.trim() }),
       })
       const reader = resp.body.getReader(); const decoder = new TextDecoder()
       let buf = ''; let currentEvent = ''
@@ -1293,7 +1172,7 @@ export default function PlanningDesk() {
       }
     } catch (e) { setError('网络错误: ' + e.message) }
     finally { setGenerating(false) }
-  }, [topic, targetDuration])
+  }, [topic])
 
   // ── 快捷键 ──
   useEffect(() => {
@@ -1322,7 +1201,7 @@ export default function PlanningDesk() {
         </>
       )}
       <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON, importExternalJSON, isDrama, chapterStructure, clearAll }} />
+        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON, importExternalJSON, isDrama, clearAll }} />
       </div>
       <Divider onDrag={dragX(() => rightW, setRightW, 360)} />
       <div style={{ width: rightW, flexShrink: 0, display: rightW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: S.border, overflow: 'hidden' }}>
