@@ -259,54 +259,23 @@ const SourcePanel = memo(function SourcePanel({
   )
 })
 
-// ── 左侧（drama 模式）：选题 + 剧集多选 ──
+// ── 左侧（drama 模式）：显示脚本方案全文 ──
+// 文案由外部工具生成，本台只做查看/编辑/导出。左侧展示方案元信息，中间展示正文。
 const DramaSourcePanel = memo(function DramaSourcePanel({
-  projectName, topic, setTopic, targetDuration, setTargetDuration,
-  selectedEps, setSelectedEps, toggleEp, epQuickSelect, quickRanges,
-  segments, generating, generateDramaScript,
-  thesis, setThesis, thesisCandidates, setThesisCandidates,
-  thesisLoading, thesisError, generateThesis,
-  onCollapse,
+  projectName, segments, scriptMeta, onCollapse,
 }) {
-  const allChecked = selectedEps.size === 46
-  const toggleAll = () => {
-    if (allChecked) { const s = new Set(); setSelectedEps(s) }
-    else { const s = new Set(); for (let i = 1; i <= 46; i++) s.add(i); setSelectedEps(s) }
-  }
-
-  // ── 选题推荐 ──
-  const [recTopics, setRecTopics] = useState([])
-  const [recLoading, setRecLoading] = useState(false)
-  const [recError, setRecError] = useState('')
-  const [recOpen, setRecOpen] = useState(false)
-
-  const loadRecommend = async (force = false) => {
-    setRecLoading(true); setRecError(''); setRecOpen(true)
-    try {
-      const resp = await fetch(`/topics/recommend?drama=${encodeURIComponent(projectName)}${force ? '&force=true' : ''}`)
-      const data = await resp.json()
-      if (data?.ok && data?.ranked?.length) setRecTopics(data.ranked)
-      else setRecError(data?.error || '暂无推荐')
-    } catch (e) {
-      setRecError('推荐请求失败: ' + e.message)
-    } finally {
-      setRecLoading(false)
-    }
-  }
-
-  const pickTopic = (t) => {
-    setTopic(t.title)
-    if (t.episodes?.length) setSelectedEps(new Set(t.episodes))
-    setRecOpen(false)
-  }
+  const meta = scriptMeta || {}
+  const theme = Array.isArray(meta.theme) ? meta.theme : (meta.theme ? [meta.theme] : [])
+  const rc = meta.rhythm_check || {}
+  const rcStruct = rc.structure || {}
 
   return (
     <>
       <div style={S.panelHeader}>
         <div style={S.flexRow}>
-          <span style={S.headerTitle}>📺 选题配置</span>
+          <span style={S.headerTitle}>📋 方案全文</span>
           <span style={{ marginLeft: 6, fontSize: F.xs, color: '#6b7280' }}>
-            {projectName} · {selectedEps.size}集选中
+            {projectName} · {segments.length}段
           </span>
         </div>
         <div style={{ ...S.flexRow, gap: 4 }}>
@@ -314,157 +283,56 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
         </div>
       </div>
 
-      <div style={{ padding: '8px 10px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>📝 选题描述</span>
-          <div style={{ display: 'flex', gap: 4 }}>
-            <button onClick={() => loadRecommend(true)}
-              disabled={recLoading}
-              title="绕过缓存，重新分析剧情弧生成选题"
-              style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: recLoading ? 'not-allowed' : 'pointer',
-                background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.25)' }}>
-              {recLoading ? '生成中…' : '🔄 重新推荐'}
-            </button>
-            <button onClick={() => loadRecommend(false)}
-              disabled={recLoading}
-              style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: recLoading ? 'not-allowed' : 'pointer',
-                background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}>
-              {recLoading ? '推荐中…' : '✨ 选题推荐'}
-            </button>
-          </div>
-        </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '10px', borderBottom: S.borderSubtle }}>
+        {!meta.title && !meta.core_insight ? (
+          <p style={{ fontSize: F.xs, color: '#6b7280', lineHeight: 1.6, margin: 0 }}>
+            暂无方案元信息。文案由外部工具（扣子 / WorkBuddy）生成，导入 JSON 后这里展示方案全文。
+          </p>
+        ) : (
+          <>
+            {meta.title && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 700, color: '#e5e7eb', lineHeight: 1.4 }}>{meta.title}</div>
+                {meta.series && <div style={{ fontSize: F.xs, color: '#9ca3af', marginTop: 2 }}>{meta.series} · {meta.type || ''}{meta.arc_episodes ? ` · EP${meta.arc_episodes}` : ''}</div>}
+              </div>
+            )}
 
-        {recOpen && (
-          <div style={{ marginBottom: 6, maxHeight: 240, overflowY: 'auto', borderRadius: 6,
-            border: '1px solid rgba(139,92,246,0.25)', background: 'rgba(0,0,0,0.2)' }}>
-            {recLoading && <div style={{ padding: 12, fontSize: F.xs, color: '#9ca3af' }}>⏳ 正在分析剧情弧，约需 1 分钟…</div>}
-            {recError && <div style={{ padding: 12, fontSize: F.xs, color: '#f87171' }}>⚠️ {recError}</div>}
-            {!recLoading && !recError && recTopics.map((t, i) => (
-              <button key={i} onClick={() => pickTopic(t)}
-                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px',
-                  background: i === 0 ? 'rgba(139,92,246,0.12)' : 'transparent', border: 'none',
-                  borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', color: '#e5e7eb' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {t.recommend && <span style={{ fontSize: 10, color: '#4ade80' }}>✅</span>}
-                  <span style={{ fontSize: F.xs, fontWeight: 600 }}>{t.title}</span>
-                  <span style={{ fontSize: 10, color: '#9ca3af' }}>{t.score}分</span>
+            {meta.core_insight && (
+              <div style={{ marginBottom: 10, padding: '8px', borderRadius: 6, background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.15)' }}>
+                <div style={{ fontSize: F.xs, fontWeight: 600, color: '#a78bfa', marginBottom: 4 }}>💡 核心洞察</div>
+                <div style={{ fontSize: F.xs, color: '#d1d5db', lineHeight: 1.6 }}>{meta.core_insight}</div>
+              </div>
+            )}
+
+            {theme.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: F.xs, fontWeight: 600, color: '#9ca3af', marginBottom: 4 }}>主题</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {theme.map((t, i) => (
+                    <span key={i} style={{ fontSize: F.xs, padding: '2px 6px', borderRadius: 3, background: S.purpleBg, color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>{t}</span>
+                  ))}
                 </div>
-                {t.reason && <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>{t.reason}</div>}
-                {t.episodes?.length > 0 && <div style={{ fontSize: 10, color: '#a78bfa', marginTop: 1 }}>集 {t.episodes.join(',')}</div>}
-              </button>
-            ))}
-          </div>
+              </div>
+            )}
+
+            {Object.keys(rc).length > 0 && (
+              <div style={{ marginBottom: 10, padding: '8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ fontSize: F.xs, fontWeight: 600, color: '#9ca3af', marginBottom: 4 }}>节奏检查</div>
+                {rc.dialogue_ratio && <div style={{ fontSize: F.xs, color: '#d1d5db' }}>原声占比：{rc.dialogue_ratio}</div>}
+                {rc.total_segments && <div style={{ fontSize: F.xs, color: '#d1d5db' }}>总段数：{rc.total_segments}</div>}
+                {Object.keys(rcStruct).length > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    {Object.entries(rcStruct).map(([k, v]) => (
+                      <div key={k} style={{ fontSize: F.xs, color: '#9ca3af', lineHeight: 1.5 }}>
+                        <span style={{ color: '#6b7280' }}>{k}：</span>{v}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
-
-        <textarea value={topic} onChange={e => setTopic(e.target.value)}
-          placeholder="例如：苏明成人物线：从妈宝到守护者。围绕 EP1/21/35/39/41 的核心事件..."
-          rows={3}
-          style={{ width: '100%', padding: '5px 8px', fontSize: F.sm, background: S.bgPanel, color: '#e5e7eb',
-            border: `1px solid ${topic ? '#a78bfa' : '#232938'}`, borderRadius: 4, outline: 'none', resize: 'vertical',
-            lineHeight: 1.5, marginBottom: 6 }} />
-
-        {/* ── 论点拍板（两段式第一步）── */}
-        <div style={{ marginBottom: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-            <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>💡 核心论点</span>
-            <button onClick={generateThesis}
-              disabled={thesisLoading || !topic.trim()}
-              style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: (thesisLoading || !topic.trim()) ? 'not-allowed' : 'pointer',
-                background: 'rgba(34,197,94,0.15)', color: '#86efac', border: '1px solid rgba(34,197,94,0.3)' }}>
-              {thesisLoading ? '提炼中…' : '✨ 生成论点'}
-            </button>
-          </div>
-
-          {thesisError && <div style={{ padding: 4, fontSize: F.xs, color: '#f87171' }}>⚠️ {thesisError}</div>}
-
-          {thesisCandidates.length > 0 && (
-            <div style={{ marginBottom: 6, maxHeight: 180, overflowY: 'auto', borderRadius: 6,
-              border: '1px solid rgba(34,197,94,0.25)', background: 'rgba(0,0,0,0.2)' }}>
-              {thesisCandidates.map((c, i) => {
-                const picked = thesis && thesis.thesis === c.thesis
-                return (
-                  <button key={i} onClick={() => setThesis(c)}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px',
-                      background: picked ? 'rgba(34,197,94,0.15)' : 'transparent', border: 'none',
-                      borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', color: '#e5e7eb' }}>
-                    <div style={{ fontSize: F.xs, fontWeight: 600 }}>
-                      {picked && <span style={{ color: '#4ade80' }}>✅ </span>}{c.thesis}
-                    </div>
-                    {c.device && <div style={{ fontSize: 10, color: '#a78bfa', marginTop: 1 }}>装置：{c.device}</div>}
-                    {c.why_not_common && <div style={{ fontSize: 10, color: '#6b7280', marginTop: 1 }}>{c.why_not_common}</div>}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-
-          {thesis && (
-            <div style={{ fontSize: F.xs, color: '#86efac' }}>
-              已选论点：{thesis.thesis}{thesis.device ? `（装置：${thesis.device}）` : ''}
-            </div>
-          )}
-          {!thesis && !thesisLoading && (
-            <div style={{ fontSize: 10, color: '#6b7280' }}>
-              未选论点时，后端自动提炼；推荐先「生成论点」拍板，文案会锚定它来写。
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>⏱ 目标时长</span>
-          <input type="range" min="60" max="900" step="30" value={targetDuration}
-            onChange={e => setTargetDuration(Number(e.target.value))}
-            style={{ flex: 1, accentColor: '#a78bfa' }} />
-          <span style={{ fontSize: F.sm, color: '#c4b5fd', fontWeight: 600, minWidth: 48, textAlign: 'right' }}>
-            {Math.floor(targetDuration/60)}分
-          </span>
-        </div>
-      </div>
-
-      <div style={{ padding: '8px 10px', borderBottom: S.borderSubtle, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <span style={{ fontSize: F.xs, color: '#9ca3af', fontWeight: 600 }}>🎬 剧集选择</span>
-          <div style={{ display: 'flex', gap: 3 }}>
-            <button onClick={toggleAll} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, cursor: 'pointer',
-              background: allChecked ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.04)', color: allChecked ? '#c4b5fd' : '#9ca3af',
-              border: '1px solid rgba(139,92,246,0.15)' }}>
-              {allChecked ? '✕ 全清' : '全选'}
-            </button>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 3, marginBottom: 6, flexWrap: 'wrap' }}>
-          {quickRanges.map(([label, eps]) => (
-            <button key={label} onClick={() => epQuickSelect(eps)}
-              style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, cursor: 'pointer',
-                background: 'rgba(255,255,255,0.03)', color: '#9ca3af', border: '1px solid rgba(255,255,255,0.06)' }}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 3, maxHeight: 220, overflowY: 'auto' }}>
-          {Array.from({length: 46}, (_, i) => i + 1).map(ep => (
-            <button key={ep} onClick={() => toggleEp(ep)}
-              style={{ fontSize: 10, padding: '3px 0', borderRadius: 3, cursor: 'pointer', textAlign: 'center',
-                background: selectedEps.has(ep) ? 'rgba(139,92,246,0.25)' : 'rgba(255,255,255,0.02)',
-                color: selectedEps.has(ep) ? '#c4b5fd' : '#6b7280', fontWeight: selectedEps.has(ep) ? 700 : 400,
-                border: `1px solid ${selectedEps.has(ep) ? 'rgba(139,92,246,0.4)' : 'rgba(255,255,255,0.04)'}` }}>
-              {ep}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ padding: '10px', flexShrink: 0 }}>
-        <button onClick={generateDramaScript}
-          disabled={generating || !topic.trim()}
-          style={{ width: '100%', padding: '10px 0', borderRadius: 8, border: 'none',
-            cursor: (generating || !topic.trim()) ? 'not-allowed' : 'pointer',
-            fontSize: 14, fontWeight: 700,
-            background: (!generating && topic.trim())
-              ? 'linear-gradient(135deg, rgba(139,92,246,0.35), rgba(34,197,94,0.25))' : 'rgba(255,255,255,0.04)',
-            color: (!generating && topic.trim()) ? '#e5e7eb' : '#6b7280' }}>
-          {generating ? '⏳ 创作中...' : '🧠 AI 编剧 — 生成解说脚本'}
-        </button>
       </div>
     </>
   )
@@ -476,7 +344,7 @@ const ScriptPanel = memo(function ScriptPanel({
   segments, setSegments, setGenResult,
   selectedIdx, setSelectedIdx, editingIdx, setEditingIdx,
   moveSegment, removeSegment, updateSegment,
-  generating, genMsg, exportJSON,
+  generating, genMsg, exportJSON, importExternalJSON,
   isDrama, chapterStructure, clearAll,
 }) {
   const [scriptTab, setScriptTab] = useState('coarse')  // 'coarse' | 'refine'
@@ -525,6 +393,10 @@ const ScriptPanel = memo(function ScriptPanel({
           )}
         </div>
         <div style={{ ...S.flexRow, gap: 4 }}>
+          <button onClick={importExternalJSON} disabled={!isDrama}
+            style={{ ...S.headerBtn(false), background: 'rgba(34,197,94,0.15)', color: '#86efac' }}>
+            📥 导入 JSON
+          </button>
           <button onClick={clearAll}
             style={{ ...S.headerBtn(false), color: '#f87171', background: 'rgba(239,68,68,0.08)' }}>✕ 清除</button>
           <button onClick={exportJSON} disabled={segments.length === 0}
@@ -874,7 +746,7 @@ const AIPanel = memo(function AIPanel({ report, genResult, segments, asrStats, s
             )}
             {isDrama && genResult && (
               <div style={{ fontSize: F.xs, color: '#6b7280', padding: '5px 0', flex: 1, textAlign: 'center' }}>
-                在左侧选题→选剧集→点「AI 编剧」
+                文案由外部生成，本台仅用于编辑与导出
               </div>
             )}
 
@@ -1083,6 +955,7 @@ export default function PlanningDesk() {
   const [refineResult, setRefineResult] = useState(null)
 
   const [segments, setSegments] = useState([])
+  const [scriptMeta, setScriptMeta] = useState(null)  // 方案全文元信息（title/theme/core_insight/rhythm_check）
   const [editingIdx, setEditingIdx] = useState(null)
   const [selectedIdx, setSelectedIdx] = useState(null)
 
@@ -1165,6 +1038,11 @@ export default function PlanningDesk() {
     if (!taskId) return
     fetch(`/segments.json?task=${encodeURIComponent(taskId)}`).then(r => r.json()).then(d => {
       if (d.segments?.length) setSegments(d.segments)
+      if (d.meta) setScriptMeta(d.meta)
+      else if (d.theme || d.core_insight || d.cover) {
+        // 兜底：没有 meta 字段时，用顶层字段拼一个
+        setScriptMeta({ title: d.cover || '', theme: d.theme, core_insight: d.core_insight, cover: d.cover })
+      }
     }).catch(() => {})
   }, [taskId])
 
@@ -1226,6 +1104,37 @@ export default function PlanningDesk() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'segments.json'; a.click()
     URL.revokeObjectURL(a.href)
   }, [segments, isDrama])
+
+  // ── 导入外部 JSON（扣子/WorkBuddy 产出）→ 解析替换当前脚本 ──
+  const importExternalJSON = useCallback(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0]
+      if (!file) return
+      try {
+        const text = await file.text()
+        const data = JSON.parse(text)
+        const resp = await fetch('/script/import_external_json', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task: taskId, data }),
+        })
+        const r = await resp.json()
+        if (r?.ok) {
+          // 重新加载 segments
+          const segResp = await fetch(`/segments.json?task=${encodeURIComponent(taskId)}`)
+          const segData = await segResp.json()
+          if (segData.segments?.length) setSegments(segData.segments)
+        } else {
+          console.error('导入失败:', r?.error)
+        }
+      } catch (err) {
+        console.error('导入失败:', err)
+      }
+    }
+    input.click()
+  }, [taskId, setSegments])
 
   // ── 清除：脚本 + AI助手输出 + 论点，全部复位；【保留选题】避免重新生成费时 ──
   const clearAll = useCallback(() => {
@@ -1404,7 +1313,7 @@ export default function PlanningDesk() {
         <>
           <div style={{ width: leftPanelW, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: S.border, overflow: 'hidden' }}>
             {isDrama ? (
-              <DramaSourcePanel {...{ projectName, topic, setTopic, targetDuration, setTargetDuration, selectedEps, setSelectedEps, toggleEp, epQuickSelect, quickRanges, segments, generating, generateDramaScript, thesis, setThesis, thesisCandidates, setThesisCandidates, thesisLoading, thesisError, generateThesis, onCollapse: () => setLeftCollapsed(true) }} />
+              <DramaSourcePanel {...{ projectName, segments, scriptMeta, onCollapse: () => setLeftCollapsed(true) }} />
             ) : (
               <SourcePanel {...{ transcript, asrLoaded, asrGroups, asrStats, classifiedSegs, filterMode, setFilterMode, collapsedGroups, setCollapsedGroups, toggleGroup, searchInputRef, searchQuery, setSearchQuery, searchMode, setSearchMode, doSearch, searching, searchResults, setSearchResults, matchSet, isMatch, hl, segments, selectedIdx, addSegmentFromLine, onCollapse: () => setLeftCollapsed(true) }} />
             )}
@@ -1413,7 +1322,7 @@ export default function PlanningDesk() {
         </>
       )}
       <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON, isDrama, chapterStructure, clearAll }} />
+        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON, importExternalJSON, isDrama, chapterStructure, clearAll }} />
       </div>
       <Divider onDrag={dragX(() => rightW, setRightW, 360)} />
       <div style={{ width: rightW, flexShrink: 0, display: rightW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: S.border, overflow: 'hidden' }}>
