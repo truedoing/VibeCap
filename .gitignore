@@ -8,6 +8,9 @@ vibecut.db
 解说剪辑/
 杨老师教育/
 
+# 全局音色库（运行时生成，含用户上传参考音频）
+voices/
+
 # 前端测试数据
 vibecut-web/public/asr_groups.json
 vibecut-web/public/content_report.json

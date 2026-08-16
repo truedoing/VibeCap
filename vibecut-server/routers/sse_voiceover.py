@@ -1,10 +1,40 @@
 """路由: 配音台 SSE 端点"""
-from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Request, UploadFile, File, Form
+from fastapi.responses import StreamingResponse, JSONResponse
 from config import args
 from lib.sse import sse_stream
 
 router = APIRouter(prefix="/voiceover", tags=["配音台 SSE"])
+
+
+@router.get("/voices")
+def api_list_voices():
+    """列出所有音色（预设 + 克隆）"""
+    from handlers.voiceover import list_voices
+    return {"ok": True, "voices": list_voices()}
+
+
+@router.post("/create_voice")
+async def api_create_voice(
+    name: str = Form(...),
+    ref_text: str = Form(""),
+    audio: UploadFile = File(...),
+):
+    """新建克隆音色（全局共享）。上传参考音频 + 音色名。"""
+    from pathlib import Path
+    from handlers.voiceover import create_clone_voice, GLOBAL_VOICES_DIR
+
+    ext = Path(audio.filename or "").suffix.lower() or ".wav"
+    if ext not in (".wav", ".mp3"):
+        return JSONResponse({"ok": False, "error": f"仅支持 wav/mp3，收到: {ext}"}, status_code=400)
+
+    GLOBAL_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = "".join(c for c in name if c.isalnum() or c in "-_") or "voice"
+    save_path = GLOBAL_VOICES_DIR / f"ref_{safe_name}{ext}"
+    save_path.write_bytes(await audio.read())
+
+    result = create_clone_voice(name, str(save_path), ref_text)
+    return JSONResponse(result)
 
 
 @router.post("/generate_stream")

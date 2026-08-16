@@ -923,7 +923,7 @@ export default function PlanningDesk() {
       </div>
       <Divider onDrag={dragX(() => rightW, setRightW, 360)} />
       <div style={{ width: rightW, flexShrink: 0, display: rightW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: S.border, overflow: 'hidden' }}>
-        <VoicePanel taskId={taskId} segments={segments} />
+        <VoicePanel taskId={taskId} segments={segments} selectedIdx={selectedIdx} />
       </div>
     </div>
   )

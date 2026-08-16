@@ -75,6 +75,9 @@ INDEX_NPY = PROJECT_DIR / "semantic_embeddings.npy"
 INDEX_META = PROJECT_DIR / "semantic_metas.json"
 INDEX_FILE = PROJECT_DIR / "semantic_index.pkl"  # drama only
 
+# 全局音色库（克隆音色，跨项目共享）
+GLOBAL_VOICES_DIR = BASE_DIR / "voices"
+
 
 # ── 源视频索引 ──
 SOURCE_VIDEOS: dict = {}

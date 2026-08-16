@@ -1,8 +1,7 @@
 /**
  * 配音面板 — 编辑台右侧
- * 轻量配音：选音色 → 逐段生成 / 一键全部 → 试听
- * 复用后端 /voiceover/generate_stream（全量）+ /voiceover/regenerate_segment（单段）。
- * 产物契约：narr_{seg_id:03d}.wav + segments.json 反写 audio_duration/audio_path（分镜台消费）。
+ * 选中段模式：直接操作中间选中的脚本段（不重复列文本），保留「一键生成全部」。
+ * 音色：内置预设 + 全局克隆音色（浏览器上传参考音频创建）。
  */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { colors, font as baseFont } from '../styles/theme'
@@ -22,24 +21,33 @@ const S = {
   headerBtn: (a) => ({ ...btn(a ? 'primary' : 'default', 'md'), fontSize: F.sm }),
 }
 
-// 预设音色（与后端 tts_engine.PRESET_VOICES 保持一致）
-const PRESET_VOICES = [
-  { id: '冰糖', label: '冰糖 · 活泼少女' },
-  { id: '茉莉', label: '茉莉 · 知性女声' },
-  { id: '苏打', label: '苏打 · 阳光少年' },
-  { id: '白桦', label: '白桦 · 成熟男声' },
-]
-
 function audioUrl(path, taskId) {
   const name = (path || '').split('/').pop()
   return `/tts_segments/${name}?task=${encodeURIComponent(taskId)}&t=${Date.now()}`
 }
 
-export default function VoicePanel({ taskId, segments }) {
+export default function VoicePanel({ taskId, segments, selectedIdx }) {
   const [voice, setVoice] = useState('白桦')
+
+  // 音色列表（后端 /voiceover/voices：预设 + 克隆）
+  const [voices, setVoices] = useState([])
+  const [showCreate, setShowCreate] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [refText, setRefText] = useState('')
+  const [refFile, setRefFile] = useState(null)
+  const [creating, setCreating] = useState(false)
+  const [createMsg, setCreateMsg] = useState('')
 
   // 只配音有 narration_text 的段（原声/dialogue 段跳过）
   const narrSegs = useMemo(() => (segments || []).filter(s => (s.narration_text || '').trim()), [segments])
+
+  // 当前选中段（按 seg_id 定位；selectedIdx 是数组下标）
+  const selectedSeg = useMemo(() => {
+    if (selectedIdx == null) return null
+    const seg = segments?.[selectedIdx]
+    if (!seg || !(seg.narration_text || '').trim()) return null
+    return seg
+  }, [segments, selectedIdx])
 
   // 初始 ttsState：从 segments 的 audio_duration/audio_path 恢复
   const initialTts = useMemo(() => {
@@ -47,11 +55,9 @@ export default function VoicePanel({ taskId, segments }) {
     for (const s of narrSegs) {
       const sid = s.seg_id
       const path = s.audio_path || `tts_segments/narr_${String(sid).padStart(3, '0')}.wav`
-      if (s.audio_duration) {
-        m[sid] = { status: 'ready', audioPath: path, duration: s.audio_duration }
-      } else {
-        m[sid] = { status: 'pending', audioPath: path, duration: null }
-      }
+      m[sid] = s.audio_duration
+        ? { status: 'ready', audioPath: path, duration: s.audio_duration }
+        : { status: 'pending', audioPath: path, duration: null }
     }
     return m
   }, [narrSegs])
@@ -60,34 +66,43 @@ export default function VoicePanel({ taskId, segments }) {
   const [generating, setGenerating] = useState(false)        // 全量生成中
   const [regeneratingSegs, setRegeneratingSegs] = useState(new Set())
   const [progress, setProgress] = useState({ done: 0, total: 0 })
-  const [playingIdx, setPlayingIdx] = useState(null)
-  const audioRefs = useRef({})
+  const [playing, setPlaying] = useState(false)
+  const audioRef = useRef(null)
 
-  // 当 segments 变化时（如重新导入/编辑），刷新 ttsState
-  useEffect(() => { setTtsState(initialTts) }, [initialTts])
-
-  // unmount 清理 audio
-  useEffect(() => () => {
-    Object.values(audioRefs.current).forEach(a => { try { a.pause(); a.src = '' } catch {} })
+  // 加载音色列表
+  useEffect(() => {
+    fetch('/voiceover/voices')
+      .then(r => r.json())
+      .then(d => { if (d.ok && Array.isArray(d.voices)) setVoices(d.voices) })
+      .catch(() => {})
   }, [])
 
-  const handlePlay = useCallback((sid, path) => {
-    if (playingIdx === sid) {
-      if (audioRefs.current[sid]) { audioRefs.current[sid].pause(); audioRefs.current[sid].currentTime = 0 }
-      setPlayingIdx(null)
+  useEffect(() => { setTtsState(initialTts) }, [initialTts])
+
+  useEffect(() => () => { if (audioRef.current) { try { audioRef.current.pause() } catch {} } }, [])
+
+  // 当前选中段的状态
+  const selState = selectedSeg ? (ttsState[selectedSeg.seg_id] || { status: 'pending', audioPath: `tts_segments/narr_${String(selectedSeg.seg_id).padStart(3, '0')}.wav` }) : null
+
+  const handlePlay = useCallback(() => {
+    if (!selectedSeg || !selState || selState.status !== 'ready') return
+    if (playing) {
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0 }
+      setPlaying(false)
       return
     }
-    if (audioRefs.current[playingIdx]) { audioRefs.current[playingIdx].pause(); audioRefs.current[playingIdx].currentTime = 0 }
-    const audio = new Audio(audioUrl(path, taskId))
-    audioRefs.current[sid] = audio
-    audio.onended = () => setPlayingIdx(null)
-    audio.onerror = () => setPlayingIdx(null)
-    audio.play().catch(() => setPlayingIdx(null))
-    setPlayingIdx(sid)
-  }, [playingIdx, taskId])
+    const audio = new Audio(audioUrl(selState.audioPath, taskId))
+    audioRef.current = audio
+    audio.onended = () => setPlaying(false)
+    audio.onerror = () => setPlaying(false)
+    audio.play().catch(() => setPlaying(false))
+    setPlaying(true)
+  }, [selectedSeg, selState, playing, taskId])
 
-  // 单段生成（复用 /voiceover/regenerate_segment，跳过配音师）
-  const generateOne = useCallback(async (sid) => {
+  // 单段生成
+  const generateOne = useCallback(async () => {
+    if (!selectedSeg) return
+    const sid = selectedSeg.seg_id
     if (generating || regeneratingSegs.has(sid)) return
     setRegeneratingSegs(prev => new Set(prev).add(sid))
     setTtsState(prev => ({ ...prev, [sid]: { ...prev[sid], status: 'generating' } }))
@@ -122,14 +137,13 @@ export default function VoicePanel({ taskId, segments }) {
     } finally {
       setRegeneratingSegs(prev => { const n = new Set(prev); n.delete(sid); return n })
     }
-  }, [taskId, voice, generating, regeneratingSegs])
+  }, [selectedSeg, taskId, voice, generating, regeneratingSegs])
 
-  // 一键生成全部（复用 /voiceover/generate_stream）
+  // 一键生成全部
   const generateAll = useCallback(async () => {
     if (generating || !narrSegs.length) return
     setGenerating(true)
     setProgress({ done: 0, total: narrSegs.length })
-    // 标记所有待生成段
     setTtsState(prev => {
       const n = { ...prev }
       for (const s of narrSegs) if (!n[s.seg_id]?.duration) n[s.seg_id] = { ...n[s.seg_id], status: 'generating' }
@@ -166,6 +180,35 @@ export default function VoicePanel({ taskId, segments }) {
     finally { setGenerating(false) }
   }, [generating, narrSegs, taskId, voice])
 
+  // 新建克隆音色
+  const createVoice = useCallback(async () => {
+    if (!newName.trim() || !refFile) { setCreateMsg('请填音色名并选择参考音频'); return }
+    setCreating(true); setCreateMsg('')
+    try {
+      const fd = new FormData()
+      fd.append('name', newName.trim())
+      fd.append('ref_text', refText.trim())
+      fd.append('audio', refFile)
+      const resp = await fetch('/voiceover/create_voice', { method: 'POST', body: fd })
+      const d = await resp.json()
+      if (d.ok) {
+        setCreateMsg(`✅ 已创建「${d.voice?.name}」`)
+        setNewName(''); setRefText(''); setRefFile(null)
+        setShowCreate(false)
+        // 刷新音色列表 + 选中新音色
+        const v = await fetch('/voiceover/voices').then(r => r.json())
+        if (v.ok) setVoices(v.voices)
+        setVoice(d.voice?.name || newName.trim())
+      } else {
+        setCreateMsg(`❌ ${d.error || '创建失败'}`)
+      }
+    } catch (e) {
+      setCreateMsg(`❌ ${e.message}`)
+    } finally {
+      setCreating(false)
+    }
+  }, [newName, refText, refFile])
+
   const readyCount = Object.values(ttsState).filter(s => s.status === 'ready').length
   const totalDuration = Object.values(ttsState).reduce((sum, s) => sum + (s.duration || 0), 0)
 
@@ -179,11 +222,38 @@ export default function VoicePanel({ taskId, segments }) {
       <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
         {/* 音色选择 */}
         <div style={{ ...card(), marginBottom: 8 }}>
-          <div style={{ ...label(), marginBottom: 4 }}>音色</div>
+          <div style={{ ...S.flexRow, justifyContent: 'space-between' }}>
+            <div style={{ ...label() }}>音色</div>
+            <button onClick={() => setShowCreate(s => !s)} style={btn('ghost', 'xs')}>
+              {showCreate ? '收起' : '＋ 克隆音色'}
+            </button>
+          </div>
           <select value={voice} onChange={e => setVoice(e.target.value)}
-            style={{ ...selectStyle(), width: '100%', padding: '4px 6px', fontSize: F.xs }}>
-            {PRESET_VOICES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+            style={{ ...selectStyle(), width: '100%', padding: '4px 6px', fontSize: F.xs, marginTop: 2 }}>
+            {voices.map(v => (
+              <option key={v.name} value={v.name}>{v.label}{v.kind === 'clone' ? ' (克隆)' : ''}</option>
+            ))}
+            {voices.length === 0 && <option value="白桦">白桦 · 成熟男声</option>}
           </select>
+
+          {/* 克隆音色表单 */}
+          {showCreate && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: S.borderSubtle }}>
+              <input value={newName} onChange={e => setNewName(e.target.value)}
+                placeholder="音色名（如：我的声音）"
+                style={{ width: '100%', padding: '4px 6px', fontSize: F.xs, background: colors.bg, color: colors.text, border: S.border, borderRadius: 4, outline: 'none', marginBottom: 6, boxSizing: 'border-box' }} />
+              <input type="file" accept=".wav,.mp3" onChange={e => setRefFile(e.target.files?.[0] || null)}
+                style={{ fontSize: F.xs, color: colors.textMuted, marginBottom: 6 }} />
+              <input value={refText} onChange={e => setRefText(e.target.value)}
+                placeholder="参考音频对应文本（可选，克隆更准）"
+                style={{ width: '100%', padding: '4px 6px', fontSize: F.xs, background: colors.bg, color: colors.text, border: S.border, borderRadius: 4, outline: 'none', marginBottom: 6, boxSizing: 'border-box' }} />
+              <button onClick={createVoice} disabled={creating || !newName.trim() || !refFile}
+                style={{ ...S.headerBtn(creating ? false : true), width: '100%' }}>
+                {creating ? '⏳ 创建中…' : '🎤 创建克隆音色'}
+              </button>
+              {createMsg && <div style={{ fontSize: F.xs, color: createMsg.startsWith('✅') ? colors.greenLight : colors.redLight, marginTop: 4 }}>{createMsg}</div>}
+            </div>
+          )}
         </div>
 
         {/* 一键全部 */}
@@ -192,46 +262,35 @@ export default function VoicePanel({ taskId, segments }) {
           {generating ? `🔄 生成中 ${progress.done}/${progress.total}` : '🎙️ 一键生成全部'}
         </button>
 
-        {/* 段落列表 */}
-        {narrSegs.length === 0 ? (
-          <div style={{ textAlign: 'center', color: colors.textFaint, fontSize: F.xs, padding: 20 }}>
-            暂无可配音段（无 narration_text）
-          </div>
-        ) : (
-          narrSegs.map(s => {
-            const sid = s.seg_id
-            const st = ttsState[sid] || { status: 'pending', audioPath: `tts_segments/narr_${String(sid).padStart(3, '0')}.wav` }
-            const isReady = st.status === 'ready'
-            const isGenerating = st.status === 'generating'
-            const isPlaying = playingIdx === sid
-            return (
-              <div key={sid} style={{ ...card({ active: isReady }), marginBottom: 6, opacity: isReady ? 1 : 0.75 }}>
-                <div style={{ ...S.flexRow, marginBottom: 4 }}>
-                  <span style={{ fontSize: F.xs, fontFamily: 'monospace', color: colors.textFaint, background: colors.bgHover, padding: '0 4px', borderRadius: 3 }}>S{sid}</span>
-                  {isGenerating && <span style={{ fontSize: F.xs, color: colors.gold }}>🔄 生成中</span>}
-                  {isReady && <span style={{ fontSize: F.xs, color: colors.greenLight, fontWeight: 600 }}>✅ {st.duration?.toFixed(1)}s</span>}
-                  {!isReady && !isGenerating && <span style={{ fontSize: F.xs, color: colors.textFaint }}>⏳ 待生成</span>}
-                </div>
-                <div style={{ fontSize: F.xs, color: isReady ? colors.textDim : colors.textFaint, lineHeight: 1.5, marginBottom: 6 }}>
-                  {s.narration_text.length > 60 ? s.narration_text.slice(0, 60) + '…' : s.narration_text}
-                </div>
-                <div style={{ ...S.flexRow }}>
-                  {isReady && (
-                    <button onClick={() => handlePlay(sid, st.audioPath)}
-                      style={btn(isPlaying ? 'danger' : 'success', 'xs')}>
-                      {isPlaying ? '⏹ 停止' : '▶ 播放'}
-                    </button>
-                  )}
-                  <button onClick={() => generateOne(sid)}
-                    disabled={generating || regeneratingSegs.has(sid)}
-                    style={btn(generating || regeneratingSegs.has(sid) ? 'disabled' : 'ghost', 'xs')}>
-                    {regeneratingSegs.has(sid) ? '🔄…' : isReady ? '🔄 重生成' : '🎙 生成'}
-                  </button>
-                </div>
+        {/* 选中段操作 */}
+        <div style={{ ...card(), marginBottom: 8 }}>
+          <div style={{ ...label(), marginBottom: 4 }}>选中段落</div>
+          {!selectedSeg ? (
+            <div style={{ fontSize: F.xs, color: colors.textFaint, lineHeight: 1.6 }}>
+              在中间脚本区点选一段（解说段）后，这里直接操作该段生成/试听。
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: F.xs, color: colors.textMuted, fontFamily: 'monospace', marginBottom: 4 }}>
+                S{selectedSeg.seg_id}
+                {selState?.status === 'ready' && <span style={{ color: colors.greenLight, marginLeft: 6 }}>✅ {selState.duration?.toFixed(1)}s</span>}
+                {selState?.status === 'generating' && <span style={{ color: colors.gold, marginLeft: 6 }}>🔄 生成中</span>}
+                {selState?.status === 'pending' && <span style={{ color: colors.textFaint, marginLeft: 6 }}>⏳ 待生成</span>}
               </div>
-            )
-          })
-        )}
+              <div style={{ ...S.flexRow, marginTop: 2 }}>
+                {selState?.status === 'ready' && (
+                  <button onClick={handlePlay} style={btn(playing ? 'danger' : 'success', 'sm')}>
+                    {playing ? '⏹ 停止' : '▶ 试听'}
+                  </button>
+                )}
+                <button onClick={generateOne} disabled={generating || regeneratingSegs.has(selectedSeg.seg_id)}
+                  style={btn(generating || regeneratingSegs.has(selectedSeg.seg_id) ? 'disabled' : 'primary', 'sm')}>
+                  {regeneratingSegs.has(selectedSeg.seg_id) ? '🔄…' : selState?.status === 'ready' ? '🔄 重生成' : '🎙 生成'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* 底部合计 */}

@@ -16,11 +16,105 @@ import time
 from pathlib import Path
 
 from config import project_name, PROJECT_DIR, BASE_DIR, args
-from config import resolve_work_dir, resolve_task_dir
+from config import resolve_work_dir, resolve_task_dir, GLOBAL_VOICES_DIR
 from db import VibeCutDB
 
 DB_PATH = BASE_DIR / "vibecut.db"
 db = VibeCutDB(str(DB_PATH))
+
+
+# ═══════════════════════════════════════════════════════════════
+# 全局音色库（预设 + 克隆音色）
+# ═══════════════════════════════════════════════════════════════
+
+from tts_engine import PRESET_VOICES
+
+def _global_voice_registry_path() -> Path:
+    return GLOBAL_VOICES_DIR / "voices.json"
+
+
+def list_voices() -> list[dict]:
+    """返回所有可用音色（预设 + 克隆），按名称排序。
+
+    克隆音色条目：{"name", "label", "kind": "clone", "ref_audio", "ref_text"}
+    预设音色条目：{"name", "label", "kind": "preset"}
+    """
+    presets = [{"name": name, "label": v.get("label", name), "kind": "preset"}
+               for name, v in PRESET_VOICES.items()]
+    clones = []
+    registry = _global_voice_registry_path()
+    if registry.exists():
+        try:
+            data = json.load(open(registry))
+            for entry in data.get("voices", []):
+                name = entry.get("name", "")
+                if not name:
+                    continue
+                clones.append({
+                    "name": name,
+                    "label": entry.get("label", name),
+                    "kind": "clone",
+                    "ref_audio": entry.get("ref_audio", ""),
+                    "ref_text": entry.get("ref_text", ""),
+                })
+        except Exception:
+            pass
+    return presets + clones
+
+
+def create_clone_voice(name: str, ref_audio: str, ref_text: str = "") -> dict:
+    """新建克隆音色（全局共享）。ref_audio 为参考音频的本地绝对路径。
+
+    Returns:
+        {"ok": True, "voice": {...}}
+        {"ok": False, "error": str}
+    """
+    name = (name or "").strip()
+    if not name:
+        return {"ok": False, "error": "音色名不能为空"}
+    if not ref_audio or not Path(ref_audio).exists():
+        return {"ok": False, "error": f"参考音频不存在: {ref_audio}"}
+
+    GLOBAL_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    registry = _global_voice_registry_path()
+    data = {"voices": []}
+    if registry.exists():
+        try:
+            data = json.load(open(registry))
+        except Exception:
+            data = {"voices": []}
+
+    # 同名覆盖
+    data["voices"] = [v for v in data.get("voices", []) if v.get("name") != name]
+    entry = {
+        "name": name,
+        "label": name,
+        "ref_audio": str(Path(ref_audio).resolve()),
+        "ref_text": (ref_text or "").strip(),
+    }
+    data["voices"].append(entry)
+    json.dump(data, open(registry, "w"), ensure_ascii=False, indent=2)
+    return {"ok": True, "voice": {"name": name, "label": name, "kind": "clone",
+                                  "ref_audio": entry["ref_audio"], "ref_text": entry["ref_text"]}}
+
+
+def resolve_voice_ref(voice: str) -> tuple[str | None, str | None]:
+    """根据音色名解析 (ref_audio_path, ref_text)。
+
+    预设音色返回 (None, None)；克隆音色返回 (ref_audio, ref_text)。
+    未知音色返回 (None, None)（按预设音色名直接传给 MiMo）。
+    """
+    registry = _global_voice_registry_path()
+    if not registry.exists():
+        return None, None
+    try:
+        data = json.load(open(registry))
+        for entry in data.get("voices", []):
+            if entry.get("name") == voice:
+                return entry.get("ref_audio"), entry.get("ref_text", "")
+    except Exception:
+        pass
+    return None, None
 
 
 def resolve_tts_dir(task_name: str = None) -> Path:
@@ -188,6 +282,11 @@ def generate_voiceover(
             if override.get("pauseMs") is not None:
                 seg_pause = override["pauseMs"]
 
+        # ── 克隆音色解析：音色名对应全局音色库 → 参考音频 ──
+        clone_ref_audio, clone_ref_text = resolve_voice_ref(seg_voice)
+        if clone_ref_audio:
+            ref_audio_for_seg = clone_ref_audio
+
         # 构建 style_hint
         emotion_hints = {
             "suspense": "压低声音，制造悬念感，语气神秘",
@@ -210,6 +309,7 @@ def generate_voiceover(
             voice=seg_voice,
             speed=seg_speed,
             ref_audio_path=ref_audio_for_seg,
+            ref_text=clone_ref_text,
             style_hint=style,
         )
 
@@ -541,6 +641,14 @@ def regenerate_segment(
     tts_dir.mkdir(parents=True, exist_ok=True)
     out_path = tts_dir / f"narr_{seg_id:03d}.wav"
 
+    # 克隆音色解析：音色名 → 参考音频
+    seg_ref_audio = ref_audio_path
+    seg_ref_text = None
+    clone_ref_audio, clone_ref_text = resolve_voice_ref(final_voice)
+    if clone_ref_audio:
+        seg_ref_audio = clone_ref_audio
+        seg_ref_text = clone_ref_text
+
     emit_progress("segment_start",
         f"🔄 重生成 S{seg_id} | {final_emotion} | {narr_text[:30]}...",
         {"seg_id": seg_id, "index": target_index, "emotion": final_emotion,
@@ -550,7 +658,8 @@ def regenerate_segment(
         narr_text, str(out_path),
         voice=final_voice,
         speed=final_speed,
-        ref_audio_path=ref_audio_path,
+        ref_audio_path=seg_ref_audio,
+        ref_text=seg_ref_text,
         style_hint=style,
     )
 
