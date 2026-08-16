@@ -116,7 +116,7 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
         placeholder="任务名称，如 Task0804"
         className="w-full bg-card border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary/50" />
       <textarea value={description} onChange={e => setDescription(e.target.value)}
-        placeholder="任务描述（将自动填入编剧台选题），如：苏明成人物线：从妈宝到守护者"
+        placeholder="任务描述（将自动填入脚本台选题），如：苏明成人物线：从妈宝到守护者"
         rows={2}
         className="w-full bg-card border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary/50 resize-none" />
       <div className="flex gap-1 text-[10px]">
@@ -199,13 +199,9 @@ function TaskDetail({ task, dramaName }) {
           </div>
         </div>
         <div className="flex gap-1.5">
-          <button onClick={() => nav(`/${toSlug(dramaName)}/${task.name}/planning`)}
+          <button onClick={() => nav(`/${toSlug(dramaName)}/${task.name}/script`)}
             className="flex-1 py-1 rounded text-[10px] bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors font-medium">
-            ✍️ 编剧台
-          </button>
-          <button onClick={() => nav(`/${toSlug(dramaName)}/${task.name}/voice`)}
-            className="flex-1 py-1 rounded text-[10px] bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors font-medium">
-            🎙️ 配音台
+            ✍️ 脚本台
           </button>
           <button onClick={() => nav(`/${toSlug(dramaName)}/${task.name}/vibe`)}
             className="flex-1 py-1 rounded text-[10px] bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors font-medium">

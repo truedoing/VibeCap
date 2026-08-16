@@ -9,7 +9,7 @@ import { useMemo } from 'react'
 import { colors, font as baseFont } from '../styles/theme'
 import { flexRow, panelHeader, title, btn } from '../styles/mixins'
 
-// 编剧台: 文字密集型, 字号比全局大一号（与 PlanningDesk 一致）
+// 脚本台: 文字密集型, 字号比全局大一号（与 ScriptDesk 一致）
 const F = { xs: 13, sm: 14, md: 15, lg: 16, xl: 18, mono: baseFont.mono }
 
 const S = {

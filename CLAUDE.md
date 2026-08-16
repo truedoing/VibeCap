@@ -35,57 +35,49 @@
 ## 产品定位：五台流水线
 
 ```
-项目 ──→ 数据台 ──→ 编剧台 ──→ 配音台 ──→ 分镜台 ──→ 剪映
-制片      建索引     写解说词    导入配音    分镜匹配    精剪导出
+项目 ──→ 数据台 ──→ 脚本台 ──→ 分镜台 ──→ 剪映
+制片      建索引     定稿+配音    分镜匹配    精剪导出
 ```
 
 | 台 | 角色 | 职责 |
 |---|---|---|
 | 项目 | 制片 | 选项目，管进度 |
 | 数据台 | DIT | 建索引，跑管线 |
-| 编剧台 | 编剧 | 写解说词，生成脚本 (interview + drama双模式) |
-| 配音台 | 配音导演 | 导入整段解说音频 → ASR对齐切分 → 逐段试听 |
+| 脚本台 | 编剧 | 看方案全文 + 编辑脚本 + 配音 (选段生成/试听/克隆音色) |
 | 分镜台 | 导演/分镜师 | 解说词 → 镜头匹配 |
 
 ## 项目类型
 
-| 类型 | 项目 | 源素材 | 编剧模式 |
+| 类型 | 项目 | 源素材 | 脚本来源 |
 |---|---|---|---|
-| drama | 都挺好 | 46集 1080p | AI编剧Agent (故事师+策划师+文案师, scene_map驱动) |
-| interview | 杨老师教育 | 口播采访 | AI选句编排 (v3/v4 pipeline) |
+| drama | 都挺好 | 46集 1080p | 外部导入 JSON（扣子/WorkBuddy）+ AI V2 单 LLM |
+| interview | 杨老师教育 | 口播采访 | 外部导入 + 素材选句编排 |
 
 ## 目录
 
 ```
 VibeCut/
 ├── vibecut-server/            ← Python 后端 (端口8765)
-│   ├── main.py                     ← FastAPI 入口 (v1.2)
-│   ├── build_index.py              ← BGE索引统一入口
-│   ├── analyze_episodes.py         ← VLM v2.4: 三层推理 (DeepSeek→ASR→VLM)
-│   ├── script_agents.py            ← interview编剧台 AI: v3+v4
-│   ├── drama_script_agents.py      ← drama编剧台 AI: 故事师+策划师+文案师 (新)
-│   ├── refine_segments.py          ← 口播精切引擎
-│   ├── export_capcut.py            ← 剪映草稿导出
+│   ├── main.py                     ← FastAPI 入口 (v1.4)
+│   ├── build_index.py              ← BGE索引统一入口 (在 cli/)
+│   ├── analyze_episodes.py         ← VLM v2.4: 三层推理 (在 cli/)
 │   │
 │   ├── handlers/
-│   │   ├── search.py               ← 搜索 (BGE语义/ASR关键词/ASR锚定)
-│   │   ├── dialogue.py             ← 对话匹配 + AI聊天 (184行)
-│   │   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY (581行)
-│   │   ├── script_gen.py           ← interview AI脚本生成 (SSE)
-│   │   ├── script_drama.py         ← drama AI脚本生成 SSE handler (新)
-│   │   ├── voiceover.py            ← 配音台: 配音师Agent + 音频导入 (新)
+│   │   ├── search.py               ← 搜索 (BGE语义/ASR关键词)
+│   │   ├── storyboard.py           ← 导演Agent v8.5: PRIMARY+SECONDARY
+│   │   ├── script_drama.py         ← drama 脚本生成 v2 (单 LLM)
+│   │   ├── voiceover.py            ← 配音: 规则驱动方案 + MiMo TTS
 │   │   ├── pipeline.py             ← 后台流水线
 │   │   ├── media.py                ← 媒体服务
 │   │   ├── static.py               ← SPA前端回退
 │   │   └── prompts/
-│   │       ├── director.py         ← DIRECTOR_PROMPT 模板 (150行)
-│   │       ├── script_drama.py     ← 编剧Agent Prompt模板 (新)
-│   │       └── voiceover.py        ← 配音师 Prompt模板 (新)
+│   │       ├── director.py         ← DIRECTOR_PROMPT 模板
+│   │       └── script_drama.py     ← SCRIPT_V2_PROMPT 模板
 │   │
 │   └── lib/
-│       ├── llm.py                  ← 统一LLM调用 (Moonshot/MiMo/DeepSeek)
+│       ├── llm.py                  ← 统一LLM调用 (Moonshot/DeepSeek)
 │       ├── embeddings.py           ← BGE模型单例管理
-│       ├── sse.py                  ← SSE发射器 + 心跳
+│       ├── sse.py                  ← SSE发射器 + make_emitter
 │       ├── vlm_cache.py            ← VLM 场景缓存加载 (111行)
 │       ├── storyboard_match.py     ← 分镜匹配引擎 (195行)
 │       └── scene_map.py            ← 场记Agent: scene_map + synopsis生成
@@ -93,14 +85,14 @@ VibeCut/
 ├── vibecut-web/               ← React 前端 (Vite, 端口3000)
 │   └── src/
 │       ├── pages/
-│       │   ├── PlanningDesk.jsx  ← 编剧台: interview+drama双模式
-│       │   ├── VoiceDesk.jsx     ← 配音台: 音频导入 + 逐段试听
+│       │   ├── ScriptDesk.jsx   ← 脚本台: 方案全文 + 编辑 + 配音
 │       │   ├── VibeEdit.jsx      ← 分镜台: 解说词→镜头匹配
 │       │   ├── DataDesk.jsx      ← 数据台: 流水线管理+质量评分
 │       │   └── Home.jsx          ← 项目
 │       ├── components/
-│       │   ├── ScriptPanel.jsx   ← 脚本面板 (精切/粗段自适应)
-│       │   ├── ChatPanel.jsx     ← AI搜索面板 (调 storyboard_suggest)
+│       │   ├── PlanPanel.jsx    ← 方案全文面板 (论点/装置/情绪曲线/图表)
+│       │   ├── VoicePanel.jsx   ← 配音面板 (选段生成/试听/克隆音色)
+│       │   ├── ScriptPanel.jsx  ← 脚本面板 (精切/粗段自适应)
 │       │   ├── SourceInspector.jsx ← PR风格源检视器
 │       │   └── TimelineControls.jsx ← 播放控制栏
 │       └── lib/
@@ -135,14 +127,12 @@ cd vibecut-web && npm run dev
 | GET /search?q=&mode=semantic | GET | BGE语义搜索 |
 | GET /segments.json?task= | GET | 任务分段 (DB→文件fallback) |
 | POST /storyboard_suggest | POST | 分镜推荐 v8.5 (导演Agent: beats+PRIMARY+SECONDARY) |
-| POST /dialogue_match | POST | 台词→ASR锚定 (第一句滑窗, 无需LLM) |
-| POST /script/generate_script_stream | POST | v3搜索流水线 SSE (interview) |
-| POST /script/generate_story_first | POST | v4故事优先 SSE (interview) |
-| POST /script/generate_drama_script | POST | **v1 编剧Agent SSE (drama) — 新** |
-| POST /script/refine | POST | 精切 SSE |
-| POST /voiceover/import_audio | POST | **配音台: 导入整段解说音频 SSE (ASR→对齐→切分)** |
-| POST /voiceover/generate_stream | POST | 配音台: 配音师Agent + TTS生成 SSE |
-| POST /tasks/create_json | POST | 创建任务 (支持无docx, AI编剧模式) |
+| POST /script/import_external_json | POST | 外部解说 JSON 导入（扣子/WorkBuddy） |
+| POST /script/generate_drama_script_v2 | POST | drama 脚本生成 v2 (单 LLM) SSE |
+| POST /voiceover/voices | GET | 音色列表（预设 + 克隆） |
+| POST /voiceover/create_voice | POST | 新建克隆音色（上传参考音频） |
+| POST /voiceover/generate_stream | POST | 一键全量配音 SSE (规则方案 + MiMo TTS) |
+| POST /voiceover/regenerate_segment | POST | 单段配音 SSE |
 | GET /data/quality?project= | GET | 每集数据质量统计 (ASR+VLM+scene_map+概要) |
 | GET /proxies/manifest | GET | 代理视频清单 |
 | GET /status | GET | 健康检查 |
@@ -151,8 +141,7 @@ cd vibecut-web && npm run dev
 
 - `/` — 项目 (Home)
 - `/:project/:task/data` — 数据台 (DataDesk)
-- `/:project/:task/planning` — 编剧台 (PlanningDesk, interview+drama双模式)
-- `/:project/:task/voice` — 配音台 (VoiceDesk, 音频导入)
+- `/:project/:task/script` — 脚本台 (ScriptDesk, 方案全文 + 编辑 + 配音)
 - `/:project/:task/vibe` — 分镜台 (VibeEdit)
 
 ## 电视剧数据管线 (v3.1)
@@ -192,7 +181,7 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 
 **结果**: 46 集 VLM 全部完成，空响应 452→17，情绪矛盾 22→0。
 
-## 编剧台 — Drama脚本生成
+## 脚本台 — Drama脚本定稿
 
 ### V2（当前）：单 LLM + 方法论
 
@@ -219,71 +208,33 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 {"topic": "苏大强与保姆小蔡：保姆三句话，骗走一套房", "target_duration": 300}
 ```
 
-### V1（已保留，可回退对比）：多 Agent 协作
-
-**核心理念**: 多个Agent角色协作，将46集剧情结构化数据转化为影视解说脚本。人提供创意方向（选题+选集+时长），Agent负责执行。
-
-```
-选题+选集+时长 → 故事师(全剧概要→故事地图) → 策划师(故事地图→章节方案)
-                                                        │
-                                                        ▼
-                                              文案师(章节+scene_map→解说词+scene_query意图快照)
-                                                        │
-                                                        ▼
-                                        程序校验(scene_query 锚定 + 从ASR提取原声台词)
-                                                        │
-                                                        ▼
-                                        逻辑审核师(Self-Reflection: 审逻辑断层/过度拔高)
-                                                        │
-                                                        ▼
-                                              segments.json (带episode_marker+source_start/end)
-```
-
-**核心Agent**（`agents/drama_script_agents.py`）:
-- **故事师** (`story_master_agent`) — 通读46集剧情概要 → 提取人物弧光/转折点/高光场景/选题建议
-- **论点师** (`thesis_agent`) — 故事地图→反常识论点+装置候选（人拍板）
-- **策划师** (`narrative_planner_agent`) — 故事地图+选题→章节方案（含scene_anchors+arc_episodes）
-- **文案师** (`script_writer_agent`) — 章节+事实卡片→解说词+scene_query
-- **逻辑审核师** (`reviewer_agent`) — Self-Reflection: 事后审逻辑/金句/幻觉
-
-**关键机制**（多 Agent 阶段的沉淀，方法论沿用到 V2）:
-- 事实卡片分离（LCAS Core Anchor）：文案师只拿锚定的卡片，杜绝硬事实幻觉
-- 增量快照（LCAS Dynamic Refreshing）：防车轱辘话/跨章重复
-- 论点聚焦 + 装置克制 + 金句不复读 + 原声句精准引用
-
-**API（V1）**: `POST /script/generate_drama_script`
-
-### 产出（V1/V2 统一）: segments.json (兼容VibeEdit/ScriptPanel/Storyboard)
+### 产出: segments.json (兼容 VibeEdit/ScriptPanel/Storyboard)
 ```json
 {"narration_text": "...", "highlight_text": "...", "episode_marker":{"episode":21}, "mode":"A"}
 ```
 
-## 配音台 v1.2 — 音频导入
+## 配音 — 脚本台内嵌（选段生成 + 试听 + 克隆音色）
 
-**定位**: 配音是一次性操作，本机（Intel i5 + AMD Radeon Pro 570，无 CUDA 无 Apple Silicon）跑神经 TTS 分钟级，故走"别的机器生成 → 导入"路线。
+**定位**: 配音已从独立「配音台」并入脚本台右侧面板。逐段用 MiMo API 生成，支持预设音色 + 全局克隆音色。
 
 ```
-整段解说音频.wav → faster-whisper ASR (narration_asr.json)
-                 → 文案↔ASR 对齐 (match_split.py, difflib)
-                 → 切分 narr_*.wav + narration.json + tts_meta.json
-                 → 反写 segments.json (audio_verified=true + audio_duration)
+选中段(narration_text) → 规则驱动方案(narrative + 1.0x) → MiMo TTS
+                       → 落盘 narr_{seg_id:03d}.wav + narration.json + tts_meta.json
+                       → 反写 segments.json (audio_duration + audio_path)
 ```
 
 **关键模块**:
-- `handlers/voiceover.py` — `import_voiceover_audio()` 编排导入流程 + 补产物 gap
-- `cli/asr_narration.py` — 整段音频 ASR (faster-whisper base)
-- `cli/match_split.py` — 文案↔ASR 对齐切分
-- `lib/f5_worker.py` — F5-TTS 常驻 worker (备用，本机不启用)
-- `tts_engine.py` — 双引擎 (F5-TTS subprocess + MiMo API)
+- `handlers/voiceover.py` — `generate_voiceover()`(全量) + `regenerate_segment()`(单段)
+- `lib/voice_store.py` — 全局音色库（预设 + 克隆），持久化到 voices/
+- `tts_engine.py` — MiMo API 单引擎 (预设音色 + voiceclone)
 
-**API**: `POST /voiceover/import_audio`
-```json
-{"task": "Task0804", "audio_path": "/path/to/解说音频.wav"}
-```
+**API**:
+- `GET /voiceover/voices` — 音色列表
+- `POST /voiceover/create_voice` — 新建克隆音色（上传参考音频）
+- `POST /voiceover/generate_stream` — 一键全量配音 SSE
+- `POST /voiceover/regenerate_segment` — 单段配音 SSE
 
 **产出**: work_dir/tts_segments/narr_*.wav + segments.json 带 audio_duration (分镜台消费)
-
-**注意**: 导入前需 segments.json 文案与音频内容一致，否则 ASR 对齐失败 (所有段落切分成 0.3s)。
 
 ## 分镜匹配策略 (v8.5 — 导演Agent)
 
@@ -312,15 +263,13 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 - PRIMARY+SECONDARY 主辅镜头层次
 - scene_map mood 情绪冲突补偿 (VLM 采样偏差容错)
 - 论证式解说词识别 (argument beat 自动拆解)
-- 第一句锚定 ASR 台词定位 (dialogue_match, 0ms 延迟)
 
 ## 依赖
 
 - Python: /opt/anaconda3/bin/python3 (sentence-transformers, numpy)
 - MPS: Apple Silicon GPU for BGE encoding (6.8GB VRAM limit)
-- DeepSeek API: DEEPSEEK_API_KEY (编剧Agent + scene_map + 分镜推荐)
-- Moonshot API: MOONSHOT_API_KEY (interview编剧台LLM)
-- MiMo API: MIMO_API_KEY (VLM画面分析)
+- DeepSeek API: DEEPSEEK_API_KEY (脚本生成 + scene_map + 分镜推荐)
+- MiMo API: MIMO_API_KEY / MIMO_TTS_API_KEY (VLM画面分析 + TTS配音)
 - ffmpeg: 视频处理 + 代理生成
 - Node: Vite + React 前端
 

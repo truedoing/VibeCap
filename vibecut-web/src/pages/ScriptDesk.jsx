@@ -1,5 +1,5 @@
 /**
- * 编剧台 — 口播/电视剧 解说脚本策划
+ * 脚本台 — 口播/电视剧 解说脚本定稿 + 配音
  * 三栏：素材 → 解说脚本 → AI 助手
  * v3: drama 模式 — 选题+选集 → 编剧Agent生成
  */
@@ -13,7 +13,7 @@ import VoicePanel from '../components/VoicePanel'
 
 const FPS = 25
 
-// 编剧台: 文字密集型工作, 字号比全局大一号
+// 脚本台: 文字密集型工作, 字号比全局大一号
 const F = { xs: 13, sm: 14, md: 15, lg: 16, xl: 18, mono: baseFont.mono }
 
 // 向后兼容别名
@@ -497,7 +497,7 @@ const numInputStyle = { flex: 1, padding: '2px 4px', fontSize: F.xs, fontFamily:
 const selectInputStyle = { padding: '2px 4px', fontSize: F.xs, background: S.bgPanel, color: '#e5e7eb', border: S.borderSubtle, borderRadius: 3, outline: 'none' }
 
 // ═══════════════════ 主组件 ═══════════════════
-export default function PlanningDesk() {
+export default function ScriptDesk() {
   const { seriesId, taskId } = useParams()
   const { taskDescription } = useProject()
   const projectName = seriesId === 'doutinghao' ? '都挺好' : seriesId === 'yanglaoshi' ? '杨老师教育' : decodeURIComponent(seriesId || '')

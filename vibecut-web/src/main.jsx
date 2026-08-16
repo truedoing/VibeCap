@@ -6,7 +6,7 @@ import { TaskProvider, EmptyProjectProvider } from './context/ProjectContext'
 import Home from './pages/Home'
 import SeriesPage from './pages/Series'
 import VibeEdit from './pages/VibeEdit'
-import PlanningDesk from './pages/PlanningDesk'
+import ScriptDesk from './pages/ScriptDesk'
 import DataDesk from './pages/DataDesk'
 import { loadSeriesList, loadTask } from './model/series'
 
@@ -53,7 +53,7 @@ function AppLayout() {
               `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
             }>项目</NavLink>
 
-          {/* 数据台 / 编剧台 / 分镜台：仅在任务页可点击，否则置灰 */}
+          {/* 数据台 / 脚本台 / 分镜台：仅在任务页可点击，否则置灰 */}
           {isTaskPage ? (
             <NavLink to={`/${seriesId}/${taskId}/data`}
               className={({ isActive }) =>
@@ -64,12 +64,12 @@ function AppLayout() {
           )}
 
           {isTaskPage ? (
-            <NavLink to={`/${seriesId}/${taskId}/planning`}
+            <NavLink to={`/${seriesId}/${taskId}/script`}
               className={({ isActive }) =>
                 `text-xs px-3 py-1 rounded-md transition-colors ${isActive ? 'bg-background text-foreground font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/50'}`
-              }>编剧台</NavLink>
+              }>脚本台</NavLink>
           ) : (
-            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">编剧台</span>
+            <span className="text-xs px-3 py-1 rounded-md text-muted-foreground/35 select-none">脚本台</span>
           )}
 
           {isTaskPage ? (
@@ -117,7 +117,7 @@ function App() {
             <Route path=":seriesId/:taskId" element={<TaskLayout />}>
               <Route index element={<Navigate to="data" replace />} />
               <Route path="data" element={<DataDesk />} />
-              <Route path="planning" element={<PlanningDesk />} />
+              <Route path="script" element={<ScriptDesk />} />
               <Route path="timeline" element={<Navigate to="vibe" replace />} />
               <Route path="vibe" element={<VibeEdit />} />
             </Route>
