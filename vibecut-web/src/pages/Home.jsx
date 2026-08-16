@@ -76,6 +76,7 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [docxFile, setDocxFile] = useState(null)
+  const [jsonFile, setJsonFile] = useState(null)
   const [audioFile, setAudioFile] = useState(null)
   const [localPath, setLocalPath] = useState('')
   const [useLocalPath, setUseLocalPath] = useState(false)
@@ -94,6 +95,7 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
         fd.append('local_path', localPath.trim())
       } else {
         if (docxFile) fd.append('docx', docxFile)
+        if (jsonFile) fd.append('json', jsonFile)
         if (audioFile) fd.append('audio', audioFile)
       }
       const resp = await fetch('/tasks/create', { method: 'POST', body: fd })
@@ -129,6 +131,10 @@ function NewTaskForm({ dramaName, onCreated, onClose }) {
           <label className="flex-1 flex items-center gap-1 px-2 py-1 rounded border border-border text-[10px] cursor-pointer hover:bg-accent">
             <Upload size={10} /> {docxFile ? docxFile.name : '文案.docx'}
             <input type="file" accept=".docx" className="hidden" onChange={e => setDocxFile(e.target.files?.[0] || null)} />
+          </label>
+          <label className="flex-1 flex items-center gap-1 px-2 py-1 rounded border border-border text-[10px] cursor-pointer hover:bg-accent">
+            <Upload size={10} /> {jsonFile ? jsonFile.name : '解说.json'}
+            <input type="file" accept=".json" className="hidden" onChange={e => setJsonFile(e.target.files?.[0] || null)} />
           </label>
           <label className="flex-1 flex items-center gap-1 px-2 py-1 rounded border border-border text-[10px] cursor-pointer hover:bg-accent">
             <Upload size={10} /> {audioFile ? audioFile.name : '音频.wav'}

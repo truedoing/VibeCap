@@ -40,6 +40,7 @@ async def api_create_task(
     description: str = Form(None),
     local_path: str = Form(None),
     docx: UploadFile = File(None),
+    json: UploadFile = File(None),
     audio: UploadFile = File(None),
 ):
     """创建任务 — 支持 JSON 或 multipart"""
@@ -47,10 +48,11 @@ async def api_create_task(
     data = {"drama": drama or "", "name": name or "", "local_path": local_path or "",
             "description": description or ""}
     docx_bytes = await docx.read() if docx else None
+    json_bytes = await json.read() if json else None
     audio_bytes = await audio.read() if audio else None
     docx_name = docx.filename if docx else "解说文案.docx"
     audio_name = audio.filename if audio else "解说音频.wav"
-    return create_task(data, docx_bytes, audio_bytes, docx_name, audio_name)
+    return create_task(data, docx_bytes, audio_bytes, docx_name, audio_name, json_bytes=json_bytes)
 
 
 @crud_router.post("/create_json")

@@ -69,8 +69,9 @@ def list_tasks(drama_name: str):
 
 
 def create_task(data: dict, docx_bytes: bytes = None, audio_bytes: bytes = None,
-                docx_name: str = "解说文案.docx", audio_name: str = "解说音频.wav") -> dict:
-    """创建任务目录 + 处理解说素材"""
+                docx_name: str = "解说文案.docx", audio_name: str = "解说音频.wav",
+                json_bytes: bytes = None) -> dict:
+    """创建任务目录 + 处理解说素材（docx / json / audio）"""
     drama_name = data.get("drama", project_name)
     task_name = data.get("name", "").strip()
     local_path = data.get("local_path", "").strip()
@@ -95,16 +96,40 @@ def create_task(data: dict, docx_bytes: bytes = None, audio_bytes: bytes = None,
             for f in src_dir.iterdir():
                 if f.suffix == ".docx":
                     shutil.copy(f, task_dir / "解说文案.docx")
+                elif f.suffix == ".json":
+                    shutil.copy(f, task_dir / "解说文案.json")
                 elif f.suffix in (".wav", ".mp3"):
                     shutil.copy(f, task_dir / f"解说音频{f.suffix}")
         else:
             if docx_bytes:
                 (task_dir / "解说文案.docx").write_bytes(docx_bytes)
+            if json_bytes:
+                (task_dir / "解说文案.json").write_bytes(json_bytes)
             if audio_bytes:
                 ext = Path(audio_name).suffix or ".wav"
                 (task_dir / f"解说音频{ext}").write_bytes(audio_bytes)
 
         docx_file = task_dir / "解说文案.docx"
+        json_file = task_dir / "解说文案.json"
+
+        # 外部 JSON 解说文件 → 解析成 segments.json（替代 docx 路径）
+        if not docx_file.exists() and json_file.exists():
+            print(f"[create_task] 检测到解说文案.json，走外部JSON解析 ({task_name})")
+            env = {"VibeCut_DRAMA": drama_name, "VibeCut_TASK": task_name}
+            r = run_script("parse_external_json.py", timeout=60, env_extra=env,
+                           args_list=[str(json_file)])
+            drama_id = db.get_drama_id(drama_name)
+            if not drama_id:
+                drama_id = db.ensure_drama(drama_name)
+            if drama_id:
+                task_id = db.create_task(drama_id, task_name, description)
+                if r["ok"] and (task_dir / "segments.json").exists():
+                    seg_data = json.load(open(task_dir / "segments.json"))
+                    db.save_task_segments(task_id, seg_data.get("segments", []))
+            return {"ok": True, "task": task_name,
+                    "steps": [{"step": "parse_external_json", "ok": r["ok"],
+                               "output": "\n".join(r.get("log_lines", [])[-3:])}]}
+
         if not docx_file.exists():
             # docx 不是必需的 — 新任务允许不传解说文案，由 AI 编剧生成
             print(f"[create_task] 无解说文案.docx，跳过A1解析步骤 ({task_name})")
