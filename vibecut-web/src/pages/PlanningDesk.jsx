@@ -456,14 +456,14 @@ const DramaSourcePanel = memo(function DramaSourcePanel({
 
       <div style={{ padding: '10px', flexShrink: 0 }}>
         <button onClick={generateDramaScript}
-          disabled={generating || !topic.trim() || selectedEps.size === 0}
+          disabled={generating || !topic.trim()}
           style={{ width: '100%', padding: '10px 0', borderRadius: 8, border: 'none',
-            cursor: (generating || !topic.trim() || selectedEps.size === 0) ? 'not-allowed' : 'pointer',
+            cursor: (generating || !topic.trim()) ? 'not-allowed' : 'pointer',
             fontSize: 14, fontWeight: 700,
-            background: (!generating && topic.trim() && selectedEps.size > 0)
+            background: (!generating && topic.trim())
               ? 'linear-gradient(135deg, rgba(139,92,246,0.35), rgba(34,197,94,0.25))' : 'rgba(255,255,255,0.04)',
-            color: (!generating && topic.trim() && selectedEps.size > 0) ? '#e5e7eb' : '#6b7280' }}>
-          {generating ? '⏳ Agent 工作中...' : '🧠 AI 编剧 — 生成解说脚本'}
+            color: (!generating && topic.trim()) ? '#e5e7eb' : '#6b7280' }}>
+          {generating ? '⏳ 创作中...' : '🧠 AI 编剧 — 生成解说脚本'}
         </button>
       </div>
     </>
@@ -1341,16 +1341,15 @@ export default function PlanningDesk() {
     }
   }, [topic])
 
-  // ── AI 编剧 (drama SSE) ──
+  // ── AI 编剧 (drama SSE, V2 单LLM) ──
   const generateDramaScript = useCallback(async () => {
-    if (!topic.trim() || selectedEps.size === 0) return
+    if (!topic.trim()) return
     setGenerating(true); setError(''); setGenResult(null); setGenLog([])
     setChapterStructure(null)
-    const eps = Array.from(selectedEps).sort((a, b) => a - b)
     try {
-      const resp = await fetch('/script/generate_drama_script', {
+      const resp = await fetch('/script/generate_drama_script_v2', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: topic.trim(), episodes: eps, target_duration: targetDuration, thesis }),
+        body: JSON.stringify({ topic: topic.trim(), target_duration: targetDuration }),
       })
       const reader = resp.body.getReader(); const decoder = new TextDecoder()
       let buf = ''; let currentEvent = ''
@@ -1367,19 +1366,15 @@ export default function PlanningDesk() {
             const data = JSON.parse(trimmed.slice(6))
             if (currentEvent === 'progress') {
               setGenLog(prev => [...prev, { step: data.step, msg: data.msg, ts: Date.now() }])
-              // 接收章节结构（策划师完成后）
-              if (data.chapter_structure) setChapterStructure(data.chapter_structure)
             } else if (currentEvent === 'complete') {
               if (data.ok && data.segments) {
                 setSegments(data.segments.map((s, i) => ({ ...s, seg_id: i })))
                 setGenResult({
-                  pipeline: 'drama-agent-v1', topic: data.topic, cover: data.cover,
-                  review_verdict: data.review_verdict, review_issues: data.review_issues || [],
-                  time_estimate: data.time_estimate,
+                  pipeline: 'drama-v2-single-llm', topic: data.topic, cover: data.cover,
+                  theme: data.theme, device: data.device,
                   total_chars: data.total_chars,
                 })
-                if (data.chapter_structure) setChapterStructure(data.chapter_structure)
-                setGenLog(prev => [...prev, { step: 'done', msg: `✅ 完成 · ${data.total}段 · ${data.total_chars}字 · 预估${data.time_estimate?.estimated_sec || '?'}s`, ts: Date.now() }])
+                setGenLog(prev => [...prev, { step: 'done', msg: `✅ 完成 · ${data.total}段 · ${data.total_chars}字`, ts: Date.now() }])
               }
             } else if (currentEvent === 'error') {
               setError(data.error || '生成失败')
@@ -1389,7 +1384,7 @@ export default function PlanningDesk() {
       }
     } catch (e) { setError('网络错误: ' + e.message) }
     finally { setGenerating(false) }
-  }, [topic, selectedEps, targetDuration, thesis])
+  }, [topic, targetDuration])
 
   // ── 快捷键 ──
   useEffect(() => {
