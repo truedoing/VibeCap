@@ -98,32 +98,3 @@ def api_serve_poster(file_path: str):
     return FileResponse(path, media_type=mime)
 
 
-# ── 剪辑操作 ──
-@router.post("/assign")
-async def api_assign(request: Request):
-    from handlers.media import assign_clip
-    data = await request.json()
-    return assign_clip(data.get("task", args.task), data)
-
-
-@router.post("/copy")
-async def api_copy_clip(request: Request):
-    from handlers.media import copy_clip
-    data = await request.json()
-    return copy_clip(data.get("task", args.task), data)
-
-
-@router.post("/thumb")
-async def api_thumb(request: Request):
-    from handlers.media import extract_clip
-    data = await request.json()
-    return extract_clip(data.get("ep", 1), float(data.get("start", 0)),
-                        float(data.get("end", 0)), full=False)
-
-
-@router.post("/download")
-async def api_download(request: Request):
-    from handlers.media import download_clip
-    data = await request.json()
-    return download_clip(data.get("task", args.task), data.get("ep", 1),
-                         float(data.get("start", 0)), float(data.get("end", 0)))

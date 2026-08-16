@@ -221,10 +221,10 @@ const SourcePanel = memo(function SourcePanel({
 // ── 中间：解说脚本（兼容 interview + drama） ──
 const ScriptPanel = memo(function ScriptPanel({
   topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem,
-  segments, setSegments, setGenResult,
+  segments, setSegments,
   selectedIdx, setSelectedIdx, editingIdx, setEditingIdx,
   moveSegment, removeSegment, updateSegment,
-  generating, genMsg, exportJSON, importExternalJSON,
+  exportJSON, importExternalJSON,
   isDrama, clearAll,
 }) {
   const [scriptTab, setScriptTab] = useState('coarse')  // 'coarse' | 'refine'
@@ -496,77 +496,6 @@ const smallBtn = (enabled) => ({ padding: '0 3px', fontSize: F.xs, border: 'none
 const numInputStyle = { flex: 1, padding: '2px 4px', fontSize: F.xs, fontFamily: 'monospace', background: S.bgPanel, color: '#e5e7eb', border: S.borderSubtle, borderRadius: 3, outline: 'none' }
 const selectInputStyle = { padding: '2px 4px', fontSize: F.xs, background: S.bgPanel, color: '#e5e7eb', border: S.borderSubtle, borderRadius: 3, outline: 'none' }
 
-// ── 右侧：AI 助手 ──
-/* ── 精切结果卡片（可展开详情）── */
-function RefineResultCard({ refineResult, segments }) {
-  const [show, setShow] = useState(false)
-  const allSubClips = useMemo(() => {
-    const r = []
-    for (const seg of segments) {
-      for (const sc of (seg.sub_clips || [])) {
-        r.push({ ...sc, seg_id: seg.seg_id })
-      }
-    }
-    return r.sort((a, b) => a.start - b.start)
-  }, [segments])
-
-  return (
-    <div style={{ marginBottom: 10, padding: 6, borderRadius: 5, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <div style={{ fontWeight: 600, color: '#6ee7b7', fontSize: 10 }}>✅ 精切完成</div>
-          <div style={{ display: 'flex', gap: 6, fontSize: 9, color: '#9ca3af', marginTop: 1 }}>
-            <span style={{ color: '#6ee7b7', fontWeight: 600 }}>{refineResult.keep} 保留</span>
-            <span style={{ color: '#f87171', fontWeight: 600 }}>{refineResult.cut} 删除</span>
-            <span>保留 {refineResult.keep_duration}s</span>
-            <span style={{ color: '#6b7280' }}>删除 {refineResult.cut_duration}s</span>
-          </div>
-        </div>
-        <button onClick={() => setShow(!show)}
-          style={{ background: 'none', border: 'none', color: '#6ee7b7', cursor: 'pointer', fontSize: 10, padding: '2px 4px' }}>
-          {show ? '收起 ▲' : '详情 ▼'}
-        </button>
-      </div>
-
-      {show && (
-        <div style={{ marginTop: 6, maxHeight: 260, overflowY: 'auto' }}>
-          {allSubClips.length === 0 ? (
-            <div style={{ fontSize: 9, color: '#6b7280', padding: 4 }}>暂无精切数据，请确认 segments 已包含 sub_clips</div>
-          ) : (
-            <div className="space-y-0.5">
-              {allSubClips.map((sc, i) => {
-                const isKeep = sc.decision === 'KEEP'
-                const dur = sc.end - sc.start
-                return (
-                  <div key={i} style={{
-                    display: 'flex', alignItems: 'flex-start', gap: 4, padding: '3px 4px', borderRadius: 3, fontSize: 9,
-                    background: isKeep ? 'rgba(16,185,129,0.06)' : 'rgba(239,68,68,0.06)',
-                    borderLeft: `2px solid ${isKeep ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.4)'}`,
-                  }}>
-                    <span style={{ fontWeight: 600, color: isKeep ? '#6ee7b7' : '#f87171', flexShrink: 0 }}>
-                      {isKeep ? '✅' : '❌'}
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', gap: 4, marginBottom: 1 }}>
-                        <span style={{ color: '#6b7280', fontFamily: 'monospace' }}>S{sc.seg_id}</span>
-                        <span style={{ color: isKeep ? '#6ee7b7' : '#f87171', fontWeight: 500 }}>{dur.toFixed(1)}s</span>
-                        <span style={{ color: '#6b7280' }}>{sc.speaker}</span>
-                      </div>
-                      <span style={{ color: isKeep ? '#d1d5db' : '#9ca3af', textDecoration: isKeep ? 'none' : 'line-through' }}>
-                        {sc.text.length > 50 ? sc.text.substring(0, 50) + '...' : sc.text}
-                      </span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ═══════════════════ 主组件 ═══════════════════
 export default function PlanningDesk() {
   const { seriesId, taskId } = useParams()
@@ -579,10 +508,6 @@ export default function PlanningDesk() {
 
   // ── 数据状态 ──
   const [transcript, setTranscript] = useState('')
-  const [sentences, setSentences] = useState([])
-  const [structure, setStructure] = useState(null)
-  const [analyzing, setAnalyzing] = useState(false)
-  const [error, setError] = useState('')
 
   const [topic, setTopic] = useState('')
 
@@ -603,10 +528,6 @@ export default function PlanningDesk() {
     { label: '亲身案例', narrative_role: 'proof' },
     { label: '深层洞察', narrative_role: 'insight' },
   ])
-  const [generating, setGenerating] = useState(false)
-  const [refining, setRefining] = useState(false)
-  const [refineResult, setRefineResult] = useState(null)
-
   const [segments, setSegments] = useState([])
   const [scriptMeta, setScriptMeta] = useState(null)  // 方案全文元信息（title/theme/core_insight/rhythm_check）
   const [editingIdx, setEditingIdx] = useState(null)
@@ -625,10 +546,6 @@ export default function PlanningDesk() {
   const [searchResults, setSearchResults] = useState(null)
   const [searching, setSearching] = useState(false)
   const [searchMode, setSearchMode] = useState('keyword')
-
-  // ── AI报告 ──
-  const [report, setReport] = useState(null)
-  const [genResult, setGenResult] = useState(null)
 
   // ── UI 状态 ──
   const [leftW, setLeftW] = useState(510)
@@ -650,14 +567,12 @@ export default function PlanningDesk() {
     setTranscript(d.segments?.map(s => `[${s.start_sec.toFixed(1)}s] ${s.text}`).join('\n') || '')
   }).catch(() => fetch(`/asr/raw?${projectParam}`).then(r => r.json()).then(d => {
     if (d.ok) { setTranscript(d.transcript); setAsrLoaded(true) }
-  }).catch(() => setError('ASR 加载失败'))) }, [])
+  }).catch(() => {})) }, [])
 
   useEffect(() => { fetch(`/data/segmented?${projectParam}`).then(r => r.json()).then(d => {
     const groups = Object.values(d)[0]?.groups; if (groups?.length) setAsrGroups(groups)
     else fetch('/asr_groups.json?' + Date.now()).then(r => r.json()).then(d2 => setAsrGroups(d2.segments || []))
   }).catch(() => {}) }, [])
-
-  useEffect(() => { fetch(`/content_report.json?${projectParam}&` + Date.now()).then(r => r.json()).then(setReport).catch(() => {}) }, [projectName])
 
   useEffect(() => {
     if (!taskId) return
@@ -761,137 +676,16 @@ export default function PlanningDesk() {
     input.click()
   }, [taskId, setSegments])
 
-  // ── 清除：脚本 + AI助手输出，全部复位 ──
+  // ── 清除：脚本 + 方案，全部复位 ──
   const clearAll = useCallback(() => {
     setSegments([])
-    setGenResult(null)
-    setGenLog([])
-    setGenMsg('')
     setOutline([])
   }, [])
-
-  // ── AI 生成 (SSE 流式 — 口播用) ──
-  const [genMsg, setGenMsg] = useState('')
-  const [genLog, setGenLog] = useState([])
-  const generateScript = useCallback(async () => {
-    if (!topic.trim()) return
-    setGenerating(true); setError(''); setGenResult(null); setGenMsg('连接中...'); setGenLog([])
-    try {
-      const resp = await fetch('/script/generate_script_stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic: topic.trim() }) })
-      const reader = resp.body.getReader(); const decoder = new TextDecoder()
-      let buf = ''; let currentEvent = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n'); buf = lines.pop() || ''
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (trimmed.startsWith('event: ')) { currentEvent = trimmed.slice(7); continue }
-          if (!trimmed.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(trimmed.slice(6))
-            if (currentEvent === 'progress') {
-              if (data.step) { setGenMsg(data.msg || ''); setGenLog(prev => [...prev, { step: data.step, msg: data.msg, ts: Date.now() }]) }
-              if (data.result?.sections) setGenResult(prev => ({ ...prev, sections: data.result.sections, topic: data.result.topic }))
-            } else if (currentEvent === 'complete') {
-              if (data.ok && data.segments) {
-                setSegments(data.segments.map((s, i) => ({ ...s, seg_id: i })))
-                setGenResult({ sections: data.sections || [], checks: data.checks || {}, bridges: data.bridges || [], notes: data.notes || '', aiCount: data.ai_generated_count || 0, time_estimate: data.time_estimate || null, topic: data.topic, richCount: data.rich_count, finalCount: data.final_count, review_issues: data.review_issues || [] })
-                if (data.sections?.length) setOutline(data.sections.map(s => ({ label: s.point?.slice(0, 20) || s.role, narrative_role: s.role })))
-                setGenMsg(''); setGenLog(prev => [...prev, { step: 'done', msg: `✅ 生成完成 · ${data.total || 0}句 · 预估${data.time_estimate?.estimated_final || 0}s`, ts: Date.now() }])
-              }
-            } else if (currentEvent === 'error') {
-              setError(data.error || '生成失败')
-            }
-          } catch {}
-        }
-      }
-    } catch (e) { setError('网络错误: ' + e.message) }
-    finally { setGenerating(false); setGenMsg('') }
-  }, [topic])
-
-  // ── 精切 (POST /script/refine SSE) ──
-  const handleRefine = useCallback(async () => {
-    if (!segments?.length) return
-    setRefining(true); setRefineResult(null)
-    try {
-      const resp = await fetch('/script/refine', { method: 'POST' })
-      const reader = resp.body.getReader(); const decoder = new TextDecoder()
-      let buf = ''; let currentEvent = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n'); buf = lines.pop() || ''
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (trimmed.startsWith('event: ')) { currentEvent = trimmed.slice(7); continue }
-          if (!trimmed.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(trimmed.slice(6))
-            if (currentEvent === 'complete' && data.ok) {
-              setRefineResult(data.summary)
-              // 更新 segments 为精切版（含 sub_clips）
-              if (data.segments) setSegments(data.segments)
-            } else if (currentEvent === 'error') {
-              setError(data.error || '精切失败')
-            }
-          } catch {}
-        }
-      }
-    } catch (e) { setError('精切网络错误: ' + e.message) }
-    finally { setRefining(false) }
-  }, [segments])
 
   const updateOutlineItem = useCallback((idx, f, v) => { setOutline(prev => prev.map((o, i) => i === idx ? { ...o, [f]: v } : o)) }, [])
   const addOutlineItem = useCallback(() => { setOutline(prev => [...prev, { label: '新段落', narrative_role: 'evidence' }]) }, [])
   const removeOutlineItem = useCallback((idx) => { setOutline(prev => prev.filter((_, i) => i !== idx)) }, [])
   const toggleGroup = useCallback((gi) => setCollapsedGroups(prev => ({ ...prev, [gi]: !prev[gi] })), [])
-
-  // ── AI 生成 (SSE 流式 — 口播用) ──
-  const generateDramaScript = useCallback(async () => {
-    if (!topic.trim()) return
-    setGenerating(true); setError(''); setGenResult(null); setGenLog([])
-    try {
-      const resp = await fetch('/script/generate_drama_script_v2', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: topic.trim() }),
-      })
-      const reader = resp.body.getReader(); const decoder = new TextDecoder()
-      let buf = ''; let currentEvent = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n'); buf = lines.pop() || ''
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (trimmed.startsWith('event: ')) { currentEvent = trimmed.slice(7); continue }
-          if (!trimmed.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(trimmed.slice(6))
-            if (currentEvent === 'progress') {
-              setGenLog(prev => [...prev, { step: data.step, msg: data.msg, ts: Date.now() }])
-            } else if (currentEvent === 'complete') {
-              if (data.ok && data.segments) {
-                setSegments(data.segments.map((s, i) => ({ ...s, seg_id: i })))
-                setGenResult({
-                  pipeline: 'drama-v2-single-llm', topic: data.topic, cover: data.cover,
-                  theme: data.theme, device: data.device,
-                  total_chars: data.total_chars,
-                })
-                setGenLog(prev => [...prev, { step: 'done', msg: `✅ 完成 · ${data.total}段 · ${data.total_chars}字`, ts: Date.now() }])
-              }
-            } else if (currentEvent === 'error') {
-              setError(data.error || '生成失败')
-            }
-          } catch {}
-        }
-      }
-    } catch (e) { setError('网络错误: ' + e.message) }
-    finally { setGenerating(false) }
-  }, [topic])
 
   // ── 快捷键 ──
   useEffect(() => {
@@ -919,7 +713,7 @@ export default function PlanningDesk() {
         </>
       )}
       <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, setGenResult, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, generating, genMsg, exportJSON, importExternalJSON, isDrama, clearAll }} />
+        <ScriptPanel {...{ topic, setTopic, outline, setOutline, updateOutlineItem, addOutlineItem, removeOutlineItem, segments, setSegments, selectedIdx, setSelectedIdx, editingIdx, setEditingIdx, moveSegment, removeSegment, updateSegment, exportJSON, importExternalJSON, isDrama, clearAll }} />
       </div>
       <Divider onDrag={dragX(() => rightW, setRightW, 360)} />
       <div style={{ width: rightW, flexShrink: 0, display: rightW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: S.border, overflow: 'hidden' }}>

@@ -55,14 +55,6 @@ async def api_create_task(
     return create_task(data, docx_bytes, audio_bytes, docx_name, audio_name, json_bytes=json_bytes)
 
 
-@crud_router.post("/create_json")
-async def api_create_task_json(request: Request):
-    """创建任务 — JSON body"""
-    from handlers.tasks import create_task
-    data = await request.json()
-    return create_task(data)
-
-
 @crud_router.post("/status")
 async def api_update_task_status(request: Request):
     from handlers.tasks import update_task_status
@@ -76,17 +68,3 @@ async def api_delete_task(request: Request):
     from handlers.tasks import delete_task
     data = await request.json()
     return delete_task(data.get("drama", project_name), data.get("name", ""))
-
-
-@crud_router.post("/description")
-async def api_update_task_description(request: Request):
-    """更新任务描述"""
-    data = await request.json()
-    drama_name = data.get("drama", project_name)
-    task_name = data.get("name", "")
-    description = data.get("description", "")
-    drama_id = db.get_drama_id(drama_name)
-    if not drama_id:
-        return JSONResponse({"ok": False, "error": "项目不存在"}, status_code=404)
-    db.update_task_description(drama_id, task_name, description)
-    return {"ok": True}

@@ -1,8 +1,6 @@
-"""编剧台 Drama SSE 处理函数 — POST /script/generate_drama_script
+"""编剧台 Drama SSE 处理函数 — POST /script/generate_drama_script_v2
 
-对标 handlers/script_gen.py 的模式：
-  generate_drama_script() 作为 SSE 回调函数
-  负责加载数据 → 调用 Agent → 保存结果 → 发送 SSE 事件
+单 LLM + 方法论，一次产出完整解说脚本。
 """
 
 import json

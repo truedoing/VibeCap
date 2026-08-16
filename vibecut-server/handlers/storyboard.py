@@ -1,8 +1,6 @@
-"""分镜台 handler — 导演Agent + 分镜推荐 + 口播分析
+"""分镜台 handler — 导演Agent + 分镜推荐
 
-POST /storyboard_suggest   → storyboard_suggest()
-POST /script/analyze_transcript   → analyze_transcript()
-POST /script/generate_from_outline → generate_from_outline()
+POST /storyboard_suggest → storyboard_suggest()
 """
 
 import json
@@ -16,7 +14,7 @@ from lib.llm import call_moonshot, call_moonshot_json, call_deepseek_json
 from lib.vlm_cache import load as load_vlm_cache, get_char_counts
 from lib.synopsis import load_synopsis, to_text
 from lib.storyboard_match import match_shot_query
-from handlers.search import search, _asr_first_search
+from handlers.search import search
 from handlers.prompts.director import DIRECTOR_PROMPT
 
 
@@ -515,64 +513,3 @@ def _build_reasoning(beats, focus_eps, bridge_eps, result_shots):
     return reasoning
 
 
-# ── POST /script/analyze_transcript ──
-
-def analyze_transcript(transcript: str) -> dict:
-    """LLM 分析采访转写，标注金句+识别结构"""
-    if not transcript.strip():
-        return {"ok": False, "error": "请提供转写文本"}
-
-    result = call_moonshot_json(
-        "你是短视频口播剪辑策划助手。分析引导式采访转写，找到最有价值的内容。\n\n"
-        "素材特征：引导式聊天中有两层——内容层(正式讲述，可入正片)和元讨论层(商量怎么讲/自我评价/重述尝试，不入正片)。主持人的短问句和肯定词也不入正片。\n\n"
-        "标注每句：\n"
-        "  speaker: guest/host\n"
-        "  layer: content(正式讲述)/meta(元讨论)/guide(主持人引导)\n"
-        "  importance: 1-5 (5=金句hook, 4=核心观点/数据, 3=细节, 2=过渡, 1=冗余。meta/guide类默认-2)\n"
-        "  narrative_role: hook_tension(激将式)/hook_promise(价值承诺)/personal_reveal(个人揭示)/empathy(共情)/evidence(方法论)/bridge(过桥)/turn(反转)/proof(案例)/insight(洞见)\n"
-        "  is_golden: 适合做hook或收尾的标题级金句\n\n"
-        "识别：\n"
-        "  hook_candidates: 可重复锚定2-4次的核心金句列表\n"
-        "  opening_strategy: tension_first或promise_first\n"
-        "  empathy_moment: 共情句(如'爱学习但别乱学')或null\n"
-        "  exclusive_moment: 独家揭示句(如'从没对外分享过')或null\n\n"
-        "输出严格JSON(无markdown代码块)",
-        f"采访转写文本：\n{transcript}",
-        temperature=0.3, max_tokens=8000, timeout=120, label="analyze_transcript",
-    )
-
-    if result["ok"]:
-        return {"ok": True, **result["data"]}
-    return {"ok": False, "error": result.get("error", "AI 返回格式异常"), "raw": result.get("raw", "")[:500]}
-
-
-# ── POST /script/generate_from_outline ──
-
-def generate_from_outline(topic: str, outline: list, transcript: str) -> dict:
-    """根据主题和结构大纲生成 segments"""
-    if not topic or not outline:
-        return {"ok": False, "error": "请提供 topic 和 outline"}
-
-    outline_desc = "\n".join(
-        f"{i+1}. [{o.get('narrative_role', '?')}] {o.get('label', '')}"
-        for i, o in enumerate(outline)
-    )
-
-    result = call_moonshot_json(
-        "你是短视频口播剪辑的文案助手。根据剪辑师确定的主题和大纲，从采访转写中提取最合适的原话，生成 segments.json。\n\n"
-        "规则：\n"
-        "1. 每段 highlight_text 必须是转写中真实存在的原话（可做最小限度的去口头禅），不要自己编造\n"
-        "2. 每段标注 source_start / source_end（从转写时间戳中取）\n"
-        "3. 根据 narrative_role 选择合适的表达力度\n"
-        "4. 每段 edit_type: 短句用trim, 多句合并用merge\n"
-        "5. topic 标签用于分段组织\n\n"
-        "输出严格JSON:\n"
-        '{"segments":[{"seg_id":0,"highlight_text":"原话","source_start":63.0,"source_end":67.0,"topic":"开场hook","edit_type":"trim","narration_text":"","note":"为什么选这句"}]}',
-
-        f"视频主题：{topic}\n\n结构大纲：\n{outline_desc}\n\n采访转写（带时间戳）：\n{transcript[:4000]}",
-        temperature=0.4, max_tokens=4000, timeout=120, label="generate_from_outline",
-    )
-
-    if result["ok"]:
-        return {"ok": True, "topic": topic, "segments": result["data"].get("segments", [])}
-    return {"ok": False, "error": result.get("error", "AI 返回格式异常")}

@@ -1,22 +1,17 @@
 """
 vibecut-server/tts_engine.py — 统一 TTS 引擎 v2.0
 
-双引擎:
-  F5-TTS (主):   零样本音色克隆, 通过 f5_worker.py 常驻子进程调用
-  MiMo API (备):  云端 TTS, 速度快, 支持预设音色和声音克隆
+MiMo API TTS: 云端 TTS, 支持预设音色和声音克隆。
 
 用法:
-  from tts_engine import generate_speech, ensure_f5_worker, shutdown_f5_worker
+  from tts_engine import generate_speech
   result = generate_speech("测试", out_path, voice="白桦", ref_audio_path="...")
 """
 
-import atexit
 import base64
 import json
 import os
-import select
 import subprocess
-import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -29,71 +24,6 @@ PRESET_VOICES = {
     "白桦": {"voice": "白桦", "label": "白桦 (成熟男声)"},
 }
 
-# ── F5 Worker 常量 ──
-F5_WORKER_SCRIPT = str(Path(__file__).resolve().parent / "lib" / "f5_worker.py")
-F5_PYTHON = "/opt/anaconda3/envs/cosyvoice/bin/python3"
-F5_DEFAULT_REF_AUDIO = "/Users/zgl/VIBECAP/都挺好/tasks/Task0804/work_dir/解说音频_30s.wav"
-F5_DEFAULT_REF_TEXT = "如果一个男人，没家庭，没事业、没道德、那他就没有弱点。他不光窝里横，在外边他也照样狂。"
-F5_NFE_STEP = 32
-F5_SPEED = 1.05
-
-# ── 全局 Worker 锁 ──
-_f5_lock = threading.Lock()
-_f5_proc: subprocess.Popen | None = None
-_f5_loaded = False
-
-
-def ensure_f5_worker(timeout: float = 120) -> bool:
-    """确保 F5 worker 进程已启动且模型已加载（幂等）"""
-    global _f5_proc, _f5_loaded
-    with _f5_lock:
-        if _f5_proc is not None and _f5_loaded:
-            # 检查进程是否还活着
-            if _f5_proc.poll() is not None:
-                _f5_proc = None
-                _f5_loaded = False
-            else:
-                return True
-
-        if _f5_proc is None:
-            _f5_proc = subprocess.Popen(
-                [F5_PYTHON, "-u", F5_WORKER_SCRIPT],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True, bufsize=1,
-            )
-
-        # 发送 load_model
-        _f5_proc.stdin.write(json.dumps({"action": "load_model"}) + "\n")
-        _f5_proc.stdin.flush()
-
-        ready, _, _ = select.select([_f5_proc.stdout], [], [], timeout)
-        if ready:
-            resp = json.loads(_f5_proc.stdout.readline())
-            if resp.get("ok"):
-                _f5_loaded = True
-                return True
-
-        return False
-
-
-def shutdown_f5_worker():
-    """关闭 F5 worker"""
-    global _f5_proc, _f5_loaded
-    with _f5_lock:
-        if _f5_proc and _f5_proc.poll() is None:
-            try:
-                _f5_proc.stdin.write(json.dumps({"action": "quit"}) + "\n")
-                _f5_proc.stdin.flush()
-                _f5_proc.wait(timeout=5)
-            except Exception:
-                _f5_proc.kill()
-        _f5_proc = None
-        _f5_loaded = False
-
-
-atexit.register(shutdown_f5_worker)
-
 
 def generate_speech(text: str, out_path: str, *,
                     voice: str = "白桦",
@@ -104,79 +34,18 @@ def generate_speech(text: str, out_path: str, *,
                     output_format: str = "wav",
                     timeout: int = 600,
                     retries: int = 1,
-                    engine: str = "auto",
                     ) -> dict:
-    """TTS 语音合成
+    """TTS 语音合成 (MiMo API)
 
     Returns: {"ok": True, "path": str, "duration": float, "engine": str}
     """
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-
-    # engine 选择: 默认走 MiMo (快)，F5 需显式指定
-    if engine == "auto":
-        engine = "mimo"
-
-    if engine == "f5":
-        return _generate_f5(text, out_path, voice=voice,
-                            ref_audio_path=ref_audio_path,
-                            ref_text=ref_text,
-                            speed=speed, timeout=timeout)
     return _generate_mimo(text, out_path, voice=voice, speed=speed,
                           ref_audio_path=ref_audio_path,
+                          ref_text=ref_text,
                           style_hint=style_hint,
                           output_format=output_format,
                           timeout=min(timeout, 120), retries=retries)
-
-
-# ═══ F5-TTS ═══
-
-def _generate_f5(text: str, out_path: str, *,
-                 voice: str = "白桦",
-                 ref_audio_path: str = None,
-                 ref_text: str = None,
-                 speed: float = 1.0,
-                 timeout: int = 600) -> dict:
-    global _f5_proc
-
-    ref_audio = ref_audio_path or F5_DEFAULT_REF_AUDIO
-    if not os.path.exists(ref_audio):
-        return {"ok": False, "error": f"参考音频不存在: {ref_audio}", "engine": "f5"}
-
-    ref_t = ref_text or text  # 没提供 ref_text 则用 gen_text (短文本可接受)
-
-    out_abs = str(Path(out_path).resolve())
-
-    with _f5_lock:
-        if not ensure_f5_worker(timeout=30):
-            return {"ok": False, "error": "F5 worker 未就绪", "engine": "f5"}
-
-        _f5_proc.stdin.write(json.dumps({
-            "action": "infer",
-            "ref_audio": ref_audio,
-            "ref_text": ref_t,
-            "gen_text": text,
-            "out_path": out_abs,
-            "speed": speed,
-        }, ensure_ascii=False) + "\n")
-        _f5_proc.stdin.flush()
-
-    ready, _, _ = select.select([_f5_proc.stdout], [], [], timeout)
-    if not ready:
-        return {"ok": False, "error": f"F5 推理超时 ({timeout}s)", "engine": "f5"}
-
-    try:
-        resp = json.loads(_f5_proc.stdout.readline())
-    except json.JSONDecodeError:
-        return {"ok": False, "error": "F5 worker 返回异常", "engine": "f5"}
-
-    if resp.get("ok"):
-        return {
-            "ok": True, "path": out_abs,
-            "duration": round(resp["duration"], 2),
-            "size": resp.get("size", 0),
-            "engine": "f5",
-        }
-    return {"ok": False, "error": resp.get("error", "F5 推理失败"), "engine": "f5"}
 
 
 # ═══ MiMo API ═══
@@ -185,6 +54,7 @@ def _generate_mimo(text: str, out_path: str, *,
                    voice: str = "白桦",
                    speed: float = 1.0,
                    ref_audio_path: str = None,
+                   ref_text: str = None,
                    style_hint: str = None,
                    output_format: str = "wav",
                    timeout: int = 120,

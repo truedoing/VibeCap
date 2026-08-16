@@ -241,14 +241,6 @@ class VibeCutDB:
         c.execute(sql, list(values.values()))
         self.commit()
 
-    def get_episode(self, drama_id: int, ep: int) -> dict | None:
-        c = self._cursor()
-        row = c.execute(
-            "SELECT * FROM episodes WHERE drama_id = ? AND ep_number = ?",
-            (drama_id, ep),
-        ).fetchone()
-        return dict(row) if row else None
-
     def get_all_episodes(self, drama_id: int) -> list[dict]:
         """返回剧集质量列表（数据台用）"""
         c = self._cursor()
@@ -271,29 +263,6 @@ class VibeCutDB:
                 count += 1
         self.commit()
         return count
-
-    def get_episodes_summary(self, drama_id: int) -> dict:
-        """汇总统计"""
-        c = self._cursor()
-        row = c.execute("""
-            SELECT
-                COUNT(*) as total_eps,
-                SUM(CASE WHEN indexed THEN 1 ELSE 0 END) as indexed_eps,
-                SUM(CASE WHEN asr_raw_count > 0 THEN 1 ELSE 0 END) as asr_eps,
-                SUM(CASE WHEN vlm_scene_count > 0 THEN 1 ELSE 0 END) as vlm_eps,
-                SUM(asr_raw_count) as total_asr_raw,
-                SUM(asr_clean_count) as total_asr_clean,
-                SUM(vlm_scene_count) as total_vlm_scenes,
-                AVG(asr_frag_rate) as avg_frag_rate,
-                SUM(subtitle_count) as total_subtitles,
-                SUM(indexed_entries) as total_indexed
-            FROM episodes WHERE drama_id = ?
-        """, (drama_id,)).fetchone()
-        return dict(row) if row else {}
-
-    # ═══════════════════════════════════════════════
-    # Index Entries — 语义索引元数据
-    # ═══════════════════════════════════════════════
 
     def bulk_insert_index_entries(self, drama_id: int, entries: list[dict]) -> int:
         """批量插入索引元数据，返回插入数"""
@@ -331,27 +300,6 @@ class VibeCutDB:
         stats["total"] = sum(stats.values())
         return stats
 
-    def count_indexed_eps(self, drama_id: int) -> int:
-        c = self._cursor()
-        row = c.execute(
-            "SELECT COUNT(DISTINCT ep_number) as cnt FROM index_entries WHERE drama_id = ?",
-            (drama_id,),
-        ).fetchone()
-        return row["cnt"] if row else 0
-
-    def get_indexed_eps(self, drama_id: int) -> list[int]:
-        """返回已索引的集数列表"""
-        c = self._cursor()
-        rows = c.execute(
-            "SELECT DISTINCT ep_number FROM index_entries WHERE drama_id = ? ORDER BY ep_number",
-            (drama_id,),
-        ).fetchall()
-        return [r["ep_number"] for r in rows]
-
-    # ═══════════════════════════════════════════════
-    # Tasks
-    # ═══════════════════════════════════════════════
-
     def list_tasks(self, drama_id: int) -> list[dict]:
         """返回剧集下所有任务（API: /tasks）"""
         c = self._cursor()
@@ -376,11 +324,6 @@ class VibeCutDB:
             "SELECT * FROM tasks WHERE drama_id = ? AND name = ?",
             (drama_id, name),
         ).fetchone()
-        return dict(row) if row else None
-
-    def get_task_by_id(self, task_id: int) -> dict | None:
-        c = self._cursor()
-        row = c.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return dict(row) if row else None
 
     def create_task(self, drama_id: int, name: str, description: str = "") -> int:
@@ -408,28 +351,6 @@ class VibeCutDB:
             "UPDATE tasks SET description = ?, updated_at = unixepoch() WHERE drama_id = ? AND name = ?",
             (description, drama_id, name),
         )
-        self.commit()
-
-    def update_task_picks(self, task_id: int, picks_json: str) -> None:
-        c = self._cursor()
-        c.execute(
-            "UPDATE tasks SET picks_json = ?, updated_at = unixepoch() WHERE id = ?",
-            (picks_json, task_id),
-        )
-        self.commit()
-
-    def update_task_timeline(self, task_id: int, timeline_json: str, media_cache_json: str = None) -> None:
-        c = self._cursor()
-        if media_cache_json:
-            c.execute(
-                "UPDATE tasks SET timeline_json = ?, media_cache_json = ?, updated_at = unixepoch() WHERE id = ?",
-                (timeline_json, media_cache_json, task_id),
-            )
-        else:
-            c.execute(
-                "UPDATE tasks SET timeline_json = ?, updated_at = unixepoch() WHERE id = ?",
-                (timeline_json, task_id),
-            )
         self.commit()
 
     def update_task_status(self, drama_id: int, name: str, status: str) -> None:
@@ -556,32 +477,6 @@ class VibeCutDB:
                 seg["highlight_end"] = r["highlight_end"]
             result.append(seg)
         return result
-
-    def validate_episode_markers(self, task_id: int) -> list[dict]:
-        """校验分段 episode markers（数据台用）"""
-        c = self._cursor()
-        segments = self.get_task_segments(task_id)
-        task = self.get_task_by_id(task_id)
-        if not task:
-            return []
-        drama_id = task["drama_id"]
-        indexed_eps = set(self.get_indexed_eps(drama_id))
-        results = []
-        for seg in segments:
-            marker = seg.get("episode_marker")
-            ep = marker.get("episode") if marker else None
-            has_data = ep in indexed_eps if ep is not None else None
-            results.append({
-                "seg_id": seg["seg_id"],
-                "marker_ep": ep,
-                "has_index": has_data,
-                "status": "ok" if has_data else ("unknown" if ep is None else "missing"),
-            })
-        return results
-
-    # ═══════════════════════════════════════════════
-    # Quality Reports
-    # ═══════════════════════════════════════════════
 
     def compute_quality_report(self, drama_id: int, ep: int, drama_dir: str = None) -> dict:
         """基于 episodes 数据 + 原始 ASR 文件计算质量评分"""
@@ -715,64 +610,3 @@ class VibeCutDB:
             "subtitle_score": subtitle_score, "overall_score": overall,
             "summary": summary,
         }
-
-    def get_quality_report(self, drama_id: int, ep: int) -> dict | None:
-        c = self._cursor()
-        row = c.execute(
-            "SELECT * FROM quality_reports WHERE drama_id = ? AND ep_number = ?",
-            (drama_id, ep),
-        ).fetchone()
-        return dict(row) if row else None
-
-    def get_all_quality_reports(self, drama_id: int) -> list[dict]:
-        c = self._cursor()
-        rows = c.execute(
-            "SELECT * FROM quality_reports WHERE drama_id = ? ORDER BY ep_number",
-            (drama_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-    # ═══════════════════════════════════════════════
-    # Picks (便捷 API)
-    # ═══════════════════════════════════════════════
-
-    def get_picks(self, drama_id: int, task_name: str) -> dict:
-        task = self.get_task(drama_id, task_name)
-        if not task or not task.get("picks_json"):
-            return {}
-        import json
-        try:
-            return json.loads(task["picks_json"])
-        except (json.JSONDecodeError, TypeError):
-            return {}
-
-    def save_picks(self, drama_id: int, task_name: str, picks: dict) -> None:
-        import json
-        task = self.get_task(drama_id, task_name)
-        if not task:
-            task_id = self.create_task(drama_id, task_name)
-        else:
-            task_id = task["id"]
-        self.update_task_picks(task_id, json.dumps(picks, ensure_ascii=False))
-
-    def get_timeline(self, drama_id: int, task_name: str) -> dict | None:
-        task = self.get_task(drama_id, task_name)
-        if not task or not task.get("timeline_json"):
-            return None
-        import json
-        try:
-            return json.loads(task["timeline_json"])
-        except (json.JSONDecodeError, TypeError):
-            return None
-
-    def save_timeline(self, drama_id: int, task_name: str, timeline: dict, media_cache: dict = None) -> None:
-        import json
-        task = self.get_task(drama_id, task_name)
-        if not task:
-            return
-        mc_json = json.dumps(media_cache, ensure_ascii=False) if media_cache else None
-        self.update_task_timeline(
-            task["id"],
-            json.dumps(timeline, ensure_ascii=False),
-            mc_json,
-        )

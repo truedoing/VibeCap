@@ -101,3 +101,12 @@ def api_data_status(task_id: str = Query(None)):
     if not task_id:
         return JSONResponse({"ok": False, "error": "missing task_id"}, status_code=400)
     return get_process_status(task_id)
+
+
+@router.get("/process_status")
+def api_data_process_status(task_id: str = Query(None)):
+    """数据台加工进度轮询（前端 DataDesk 使用此路径）"""
+    from handlers.pipeline import get_process_status
+    if not task_id:
+        return JSONResponse({"ok": False, "error": "missing task_id"}, status_code=400)
+    return get_process_status(task_id)

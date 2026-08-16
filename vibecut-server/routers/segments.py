@@ -34,10 +34,8 @@ async def api_import_external_json(request: Request):
     result = normalize_external(ext_data, sources_dir)
 
     # 落盘
-    task_dir = resolve_task_dir(task_name)
-    task_dir.mkdir(parents=True, exist_ok=True)
-    seg_file = task_dir / "segments.json"
-    json.dump(result, open(seg_file, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    from lib.segments_store import save_segments
+    save_segments(task_name, result)
 
     # 同步 DB
     drama_id = db.get_drama_id(project_name)

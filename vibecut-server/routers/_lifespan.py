@@ -5,8 +5,6 @@
 
 import json
 import os
-import threading
-import time
 
 import numpy as np
 
@@ -19,7 +17,6 @@ from config import (
 )
 from db import VibeCutDB
 from lib.env import load_env
-from lib.embeddings import get_model as get_bge_model, encode as bge_encode
 
 # ── 全局搜索状态 (所有 router 共享) ──
 semantic_emb = None
@@ -98,52 +95,6 @@ def startup(app, _args):
                 interview_asr = json.load(open(cf))
                 print(f"[data] 口播 ASR: {cf.name} ({len(interview_asr)} 句)")
                 break
-
-    # ── 注入 Agent 搜索 ──
-    try:
-        from agents.script_agents import set_search_fn
-
-        def _agent_search(query, limit=15):
-            if semantic_emb is None:
-                return []
-            q_emb = bge_encode(query)
-            scores = np.dot(semantic_emb, q_emb)
-            top = np.argsort(scores)[-limit * 2:][::-1]
-            results = []
-            for i in top:
-                if scores[i] <= 0.25:
-                    continue
-                m = semantic_metas[i]
-                display_text = m.get("original_text", m.get("text", ""))
-                results.append({
-                    "start": m.get("start", 0),
-                    "end": m.get("end", m.get("start", 0) + 4),
-                    "description": display_text[:200],
-                    "asr": display_text[:200],
-                    "cleaned_text": m.get("text", "")[:200],
-                    "score": round(float(scores[i]) * 100, 1),
-                })
-            return sorted(results, key=lambda x: -x["score"])[:limit]
-
-        set_search_fn(_agent_search)
-
-        print("[agent] 预热 BGE 模型...")
-        warm_ready = threading.Event()
-
-        def _warm():
-            try:
-                _agent_search("预热", limit=1)
-                print("[agent] BGE 模型预热完成 ✓")
-                warm_ready.set()
-            except Exception as e:
-                print(f"[agent] 预热失败: {e}")
-                warm_ready.set()
-
-        threading.Thread(target=_warm, daemon=True).start()
-        if not warm_ready.wait(timeout=30):
-            print("[agent] ⚠️ 预热超时(30s)")
-    except Exception as e:
-        print(f"[agent] search injection failed: {e}")
 
     # 注入 handlers 所需的全局搜索状态
     import handlers.search as hs

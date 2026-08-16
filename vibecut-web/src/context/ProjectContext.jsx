@@ -1,7 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { loadTask, saveTask, loadSeriesList, loadTasks, migrateLegacyProject } from '../model/series'
-import { saveProject as saveLegacyProject, loadProject as loadLegacyProject } from '../model/project'
 
 const TaskContext = createContext(null)
 
@@ -209,9 +208,4 @@ export function EmptyProjectProvider({ children }) {
     invalidateTimeline: () => {},
   }
   return <TaskContext.Provider value={empty}>{children}</TaskContext.Provider>
-}
-
-// 向后兼容导出
-export function ProjectProvider({ children }) {
-  return children
 }

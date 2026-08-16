@@ -1,120 +1,19 @@
-"""配音台 SSE 处理函数 — POST /voiceover/generate_stream
+"""配音台 SSE 处理函数 — POST /voiceover/generate_stream + /regenerate_segment
 
-配音师 Agent 协议:
-  输入: segments 脚本 (narration_text + section_role)
-  输出: 配音方案 (emotion + speed + pause_after_ms) → 逐段 TTS 生成
-
-对标 handlers/script_drama.py 的模式:
-  generate_voiceover() 作为 SSE 回调函数
-  负责加载数据 → 配音师Agent设计方案 → 逐段TTS生成 → 保存结果 → 发送 SSE 事件
+规则驱动配音方案（无 LLM 配音师）→ 逐段 MiMo TTS 生成 → 保存产物。
 """
-
 import json
-import os
-import subprocess
 import time
 from pathlib import Path
 
 from config import project_name, PROJECT_DIR, BASE_DIR, args
-from config import resolve_work_dir, resolve_task_dir, GLOBAL_VOICES_DIR
+from config import resolve_work_dir
 from db import VibeCutDB
+from lib.voice_store import resolve_voice_ref
+from lib.segments_store import find_segments_file
 
 DB_PATH = BASE_DIR / "vibecut.db"
 db = VibeCutDB(str(DB_PATH))
-
-
-# ═══════════════════════════════════════════════════════════════
-# 全局音色库（预设 + 克隆音色）
-# ═══════════════════════════════════════════════════════════════
-
-from tts_engine import PRESET_VOICES
-
-def _global_voice_registry_path() -> Path:
-    return GLOBAL_VOICES_DIR / "voices.json"
-
-
-def list_voices() -> list[dict]:
-    """返回所有可用音色（预设 + 克隆），按名称排序。
-
-    克隆音色条目：{"name", "label", "kind": "clone", "ref_audio", "ref_text"}
-    预设音色条目：{"name", "label", "kind": "preset"}
-    """
-    presets = [{"name": name, "label": v.get("label", name), "kind": "preset"}
-               for name, v in PRESET_VOICES.items()]
-    clones = []
-    registry = _global_voice_registry_path()
-    if registry.exists():
-        try:
-            data = json.load(open(registry))
-            for entry in data.get("voices", []):
-                name = entry.get("name", "")
-                if not name:
-                    continue
-                clones.append({
-                    "name": name,
-                    "label": entry.get("label", name),
-                    "kind": "clone",
-                    "ref_audio": entry.get("ref_audio", ""),
-                    "ref_text": entry.get("ref_text", ""),
-                })
-        except Exception:
-            pass
-    return presets + clones
-
-
-def create_clone_voice(name: str, ref_audio: str, ref_text: str = "") -> dict:
-    """新建克隆音色（全局共享）。ref_audio 为参考音频的本地绝对路径。
-
-    Returns:
-        {"ok": True, "voice": {...}}
-        {"ok": False, "error": str}
-    """
-    name = (name or "").strip()
-    if not name:
-        return {"ok": False, "error": "音色名不能为空"}
-    if not ref_audio or not Path(ref_audio).exists():
-        return {"ok": False, "error": f"参考音频不存在: {ref_audio}"}
-
-    GLOBAL_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-    registry = _global_voice_registry_path()
-    data = {"voices": []}
-    if registry.exists():
-        try:
-            data = json.load(open(registry))
-        except Exception:
-            data = {"voices": []}
-
-    # 同名覆盖
-    data["voices"] = [v for v in data.get("voices", []) if v.get("name") != name]
-    entry = {
-        "name": name,
-        "label": name,
-        "ref_audio": str(Path(ref_audio).resolve()),
-        "ref_text": (ref_text or "").strip(),
-    }
-    data["voices"].append(entry)
-    json.dump(data, open(registry, "w"), ensure_ascii=False, indent=2)
-    return {"ok": True, "voice": {"name": name, "label": name, "kind": "clone",
-                                  "ref_audio": entry["ref_audio"], "ref_text": entry["ref_text"]}}
-
-
-def resolve_voice_ref(voice: str) -> tuple[str | None, str | None]:
-    """根据音色名解析 (ref_audio_path, ref_text)。
-
-    预设音色返回 (None, None)；克隆音色返回 (ref_audio, ref_text)。
-    未知音色返回 (None, None)（按预设音色名直接传给 MiMo）。
-    """
-    registry = _global_voice_registry_path()
-    if not registry.exists():
-        return None, None
-    try:
-        data = json.load(open(registry))
-        for entry in data.get("voices", []):
-            if entry.get("name") == voice:
-                return entry.get("ref_audio"), entry.get("ref_text", "")
-    except Exception:
-        pass
-    return None, None
 
 
 def resolve_tts_dir(task_name: str = None) -> Path:
@@ -122,89 +21,28 @@ def resolve_tts_dir(task_name: str = None) -> Path:
     return resolve_work_dir(task_name) / "tts_segments"
 
 
-# ═══════════════════════════════════════════════════════════════
-# 音色试听
-# ═══════════════════════════════════════════════════════════════
-
-VOICE_SAMPLE_TEXT = (
-    "你好，欢迎使用VibeCut配音台。这是一段音色试听样本，"
-    "帮助你选择合适的配音风格。"
-)
-
-
-def preview_voice(task_name: str, voice: str, force: bool = False) -> dict:
-    """生成/返回音色试听样本 (磁盘缓存)
-
-    Returns:
-        {"ok": True, "audio_path": str, "duration": float}
-        {"ok": False, "error": str}
-    """
-    from tts_engine import generate_speech, _get_audio_duration
-
-    tts_dir = resolve_tts_dir(task_name)
-    tts_dir.mkdir(parents=True, exist_ok=True)
-
-    sample_path = tts_dir / f"_voice_sample_{voice}.wav"
-
-    # 缓存命中
-    if sample_path.exists() and not force:
-        duration = _get_audio_duration(str(sample_path))
-        return {
-            "ok": True,
-            "audio_path": f"tts_segments/_voice_sample_{voice}.wav",
-            "duration": round(duration, 2),
-            "cached": True,
-        }
-
-    # 生成新样本
-    result = generate_speech(
-        VOICE_SAMPLE_TEXT, str(sample_path),
-        voice=voice,
-        speed=1.0,
-        style_hint="自然流畅的试听样本",
-        timeout=60,
-        retries=1,
-    )
-
-    if result["ok"]:
-        return {
-            "ok": True,
-            "audio_path": f"tts_segments/_voice_sample_{voice}.wav",
-            "duration": round(result["duration"], 2),
-            "cached": False,
-        }
-    else:
-        return {"ok": False, "error": result.get("error", "TTS 生成失败")}
-
-
 def generate_voiceover(
     task_name: str,
     voice: str,
     speed: float,
     pause_ms: int,
-    ref_audio_path: str | None,
     emit_progress,
     emit_complete,
     emit_error,
-    seg_overrides: dict | None = None,
 ):
     """配音台 SSE 主流程
 
     流程:
       1. 加载 segments.json
-      2. 配音师 Agent 设计配音方案 (LLM)
+      2. 规则驱动配音方案（无 LLM）
       3. 逐段 TTS 生成 (MiMo API)
       4. 保存 narration.json + tts_meta.json
     """
     from tts_engine import generate_speech, PRESET_VOICES
 
     task_dir = resolve_work_dir(task_name).parent
-    seg_file = task_dir / "segments.json"
-    if not seg_file.exists():
-        seg_file = PROJECT_DIR / "tasks" / "segments.json"
-    if not seg_file.exists():
-        seg_file = PROJECT_DIR / "tasks" / "文案脚本.json"
-    if not seg_file.exists():
+    seg_file = find_segments_file(task_name)
+    if not seg_file:
         emit_error("未找到脚本文件", "请先在编剧台生成解说脚本")
         return
 
@@ -234,7 +72,7 @@ def generate_voiceover(
         return
 
     emit_progress("init",
-        f"🎙️ 配音师就绪 · {len(narr_segments)}段解说词 · 音色: {PRESET_VOICES.get(voice, {}).get('label', voice)}",
+        f"🎙️ 配音就绪 · {len(narr_segments)}段解说词 · 音色: {voice}",
         {"total": len(narr_segments), "skip": skip_count, "voice": voice, "speed": speed})
 
     # ── Phase 1: 配音方案（规则驱动，无 LLM 配音师） ──
@@ -255,34 +93,17 @@ def generate_voiceover(
         seg_id = plan.get("seg_id", i)
         text = plan.get("narration_text", "")
 
-        # 找到原始 segment 的完整数据
-        orig = next((s for s in narr_segments if s.get("seg_id") == seg_id), None)
-        if not orig:
-            continue
-
         # 音频文件名用 seg_id（不是顺序 i），保证 timelineBuilder 用 sid 拼文件名时能找到
         out_path = tts_dir / f"narr_{seg_id:03d}.wav"
 
-        seg_voice = voice  # 全局默认，可被段覆盖
+        seg_voice = voice
         seg_emotion = plan.get("emotion", "narrative")
         seg_speed = plan.get("speed", speed)
         seg_pause = plan.get("pause_after_ms", pause_ms)
         emphasize = plan.get("emphasize", [])
 
-        # ── 应用段级覆盖 ──
-        ref_audio_for_seg = ref_audio_path
-        override = (seg_overrides or {}).get(str(seg_id)) or (seg_overrides or {}).get(seg_id)
-        if override:
-            if override.get("voice") and override["voice"] in PRESET_VOICES:
-                seg_voice = override["voice"]
-            if override.get("emotion"):
-                seg_emotion = override["emotion"]
-            if override.get("speed") is not None:
-                seg_speed = override["speed"]
-            if override.get("pauseMs") is not None:
-                seg_pause = override["pauseMs"]
-
         # ── 克隆音色解析：音色名对应全局音色库 → 参考音频 ──
+        ref_audio_for_seg = None
         clone_ref_audio, clone_ref_text = resolve_voice_ref(seg_voice)
         if clone_ref_audio:
             ref_audio_for_seg = clone_ref_audio
@@ -554,16 +375,12 @@ def regenerate_segment(
     或
       segment_error → error
     """
-    from tts_engine import generate_speech, PRESET_VOICES
+    from tts_engine import generate_speech
 
     # ── 1. 加载 segments.json ──
     task_dir = resolve_work_dir(task_name).parent
-    seg_file = task_dir / "segments.json"
-    if not seg_file.exists():
-        seg_file = PROJECT_DIR / "tasks" / "segments.json"
-    if not seg_file.exists():
-        seg_file = PROJECT_DIR / "tasks" / "文案脚本.json"
-    if not seg_file.exists():
+    seg_file = find_segments_file(task_name)
+    if not seg_file:
         emit_error("未找到脚本文件", "请先在编剧台生成解说脚本")
         return
 
@@ -706,122 +523,3 @@ def regenerate_segment(
     })
 
 
-# ═══════════════════════════════════════════════════════════════
-# 音频导入 (整段解说音频 → ASR对齐 → 切分)
-# ═══════════════════════════════════════════════════════════════
-
-def import_voiceover_audio(
-    task_name: str,
-    audio_path: str,
-    emit_progress,
-    emit_complete,
-    emit_error,
-):
-    """导入整段解说音频，本地 ASR → 文案对齐 → 切分 narr_*.wav
-
-    复用 cli/asr_narration.py (faster-whisper ASR) + cli/match_split.py (对齐切分)，
-    在 handler 层补齐 segments.json 的 audio_verified/audio_duration 反写。
-
-    SSE 事件: init → asr → split → saved → complete
-    """
-    from lib.subprocess_runner import run_script
-
-    task_dir = resolve_task_dir(task_name)
-    work_dir = task_dir / "work_dir"
-
-    # ── 1. 校验音频 ──
-    if not audio_path:
-        emit_error("缺少音频路径", "请提供解说音频的本地路径 (audio_path)")
-        return
-
-    src = Path(audio_path)
-    if not src.exists():
-        # 回退: 任务目录下已有的 解说音频.wav
-        fallback = task_dir / "解说音频.wav"
-        if fallback.exists():
-            src = fallback
-        else:
-            emit_error("音频不存在", f"路径: {audio_path}")
-            return
-
-    if src.suffix.lower() not in (".wav", ".mp3"):
-        emit_error("不支持的格式", f"仅支持 wav/mp3，收到: {src.suffix}")
-        return
-
-    # ── 2. 拷贝到标准位置 ──
-    dest = task_dir / f"解说音频{src.suffix.lower()}"
-    if src.resolve() != dest.resolve():
-        import shutil
-        shutil.copy(src, dest)
-        emit_progress("init", f"📥 音频已就位: {dest.name} ({dest.stat().st_size/1024/1024:.1f}MB)")
-    else:
-        emit_progress("init", f"📥 音频已就位: {dest.name}")
-
-    # 校验 segments.json 存在 (match_split 需要)
-    seg_file = task_dir / "segments.json"
-    if not seg_file.exists():
-        seg_file = PROJECT_DIR / "tasks" / "segments.json"
-    if not seg_file.exists():
-        seg_file = PROJECT_DIR / "tasks" / "文案脚本.json"
-    if not seg_file.exists():
-        emit_error("无脚本", "请先在编剧台生成 segments.json (match_split 需要文案)")
-        return
-
-    # ── 3. ASR 转写 ──
-    emit_progress("asr", "🎧 ASR 转写解说音频 (faster-whisper)...")
-    env_extra = {"VibeCut_DRAMA": project_name, "VibeCut_TASK": task_name,
-                 "KMP_DUPLICATE_LIB_OK": "TRUE"}
-    r_asr = run_script("asr_narration.py", timeout=600, env_extra=env_extra)
-    if not r_asr["ok"]:
-        emit_error("ASR 转写失败", r_asr.get("error", ""))
-        return
-    emit_progress("asr_done", "✅ ASR 转写完成 → narration_asr.json")
-
-    # ── 4. 对齐 + 切分 ──
-    emit_progress("split", "✂️ 文案↔ASR 对齐 → 切分 narr_*.wav...")
-    r_split = run_script("match_split.py", timeout=120, env_extra=env_extra)
-    if not r_split["ok"]:
-        emit_error("切分失败", r_split.get("error", ""))
-        return
-    emit_progress("split_done", "✅ 切分完成 → tts_segments/narr_*.wav")
-
-    # ── 5. 补 gap: 反写 segments.json ──
-    meta_path = work_dir / "tts_meta.json"
-    if not meta_path.exists():
-        emit_error("tts_meta.json 未生成", "match_split 未产出 tts_meta.json")
-        return
-
-    try:
-        meta = json.load(open(meta_path))
-        seg_data = json.load(open(seg_file))
-        seg_data["audio_verified"] = True
-
-        # match_split 的 tts_meta segments 用 "index" 字段存 seg_id 值
-        audio_map = {}
-        for m in meta.get("segments", []):
-            sid = m.get("seg_id", m.get("index"))
-            if sid is not None and m.get("narration"):
-                audio_map[sid] = m
-
-        for seg in seg_data.get("segments", []):
-            sid = seg.get("seg_id")
-            if sid in audio_map:
-                m = audio_map[sid]
-                seg["audio_duration"] = round(m.get("end", 0) - m.get("start", 0), 2)
-                # 用相对文件名 (前端 /tts_segments/ 会映射到 work_dir/tts_segments/)
-                ap = m.get("audio_path", "")
-                seg["audio_path"] = f"tts_segments/{Path(ap).name}" if ap else f"tts_segments/narr_{sid:03d}.wav"
-                seg["audio_emotion"] = m.get("emotion", "自然叙述")
-
-        json.dump(seg_data, open(seg_file, "w"), ensure_ascii=False, indent=2)
-        emit_progress("saved", "✅ segments.json: audio_verified=true + audio_duration 注入完成")
-    except Exception as e:
-        emit_error("产物回写失败", str(e)[:200])
-        return
-
-    emit_complete({
-        "ok": True,
-        "total_segments": len(audio_map),
-        "tts_meta_path": str(meta_path),
-        "audio_path": str(dest),
-    })

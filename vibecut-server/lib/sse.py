@@ -61,6 +61,20 @@ def start_heartbeat(emit_fn: Callable, interval: float = 15.0) -> list:
     return heartbeat_active
 
 
+def make_emitter(emit):
+    """把 sse_stream 的 emit(event, data) 适配成 handler 惯用的三回调。
+
+    返回 (emit_progress, emit_complete, emit_error)，消除各 SSE 端点手写三件套的重复。
+    """
+    def emit_progress(step, msg, data=None):
+        emit("progress", {"step": step, "status": "running", "msg": msg, **(data or {})})
+    def emit_complete(result):
+        emit("complete", result)
+    def emit_error(error, detail=""):
+        emit("error", {"error": error, "detail": detail})
+    return emit_progress, emit_complete, emit_error
+
+
 def sse_stream(inner_fn, *args):
     """通用 SSE 生成器 — 消除 main.py 中 5 处重复的 _sse_gen 模式。
 
