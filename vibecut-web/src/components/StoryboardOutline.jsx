@@ -29,17 +29,17 @@ const SEG_TYPE_STYLE = {
 }
 
 /* ── 单个镜头卡片 ── */
-function ShotRow({ shot, onPreview }) {
+function ShotRow({ shot, onPreview, onSelect, selected }) {
   const st = SHOT_TYPE_STYLE[shot.shot_type] || SHOT_TYPE_STYLE.cutaway
   const hasSource = shot.source_file != null && shot.in_point != null
 
   return (
     <button
-      onClick={() => hasSource && onPreview(shot)}
-      disabled={!hasSource}
+      onClick={() => { onSelect?.(shot); if (hasSource) onPreview(shot) }}
       className={cn(
-        'w-full text-left px-2 py-1.5 rounded flex items-start gap-1.5 transition-colors border-l-2',
-        hasSource ? 'hover:bg-accent/50 cursor-pointer' : 'opacity-45 cursor-default'
+        'w-full text-left px-2 py-1.5 rounded flex items-start gap-1.5 transition-colors border-l-2 cursor-pointer',
+        hasSource ? 'hover:bg-accent/50' : 'opacity-45 hover:opacity-75',
+        selected && 'bg-accent/60'
       )}
       style={{ borderLeftColor: st.color }}
     >
@@ -64,7 +64,7 @@ function ShotRow({ shot, onPreview }) {
 }
 
 /* ── 单个段落 ── */
-function SegmentBlock({ seg, expanded, onToggle, onPreview }) {
+function SegmentBlock({ seg, expanded, onToggle, onPreview, onSelect, selectedShotId }) {
   const segSt = SEG_TYPE_STYLE[seg.type] || SEG_TYPE_STYLE.narration
   const shots = seg.shot_sequence || []
 
@@ -93,7 +93,8 @@ function SegmentBlock({ seg, expanded, onToggle, onPreview }) {
             </p>
           )}
           {shots.map((shot) => (
-            <ShotRow key={shot.shot_id || shot.description} shot={shot} onPreview={onPreview} />
+            <ShotRow key={shot.shot_id || shot.description} shot={shot} onPreview={onPreview}
+              onSelect={onSelect} selected={selectedShotId === shot.shot_id} />
           ))}
         </div>
       )}
@@ -102,7 +103,7 @@ function SegmentBlock({ seg, expanded, onToggle, onPreview }) {
 }
 
 /* ── 主组件 ── */
-export default function StoryboardOutline({ storyboard, loading, error }) {
+export default function StoryboardOutline({ storyboard, loading, error, notice, onReload, onSelectShot, selectedShotId }) {
   const [openSeg, setOpenSeg] = useState(null)
 
   // 默认展开第一段
@@ -122,18 +123,22 @@ export default function StoryboardOutline({ storyboard, loading, error }) {
     }
   }, [sourceFileToEp])
 
+  const handleSelect = useCallback((shot) => {
+    onSelectShot?.(shot)
+  }, [onSelectShot])
+
   if (loading) {
-    return <div className="h-full flex items-center justify-center text-xs text-textMuted">加载分镜脚本…</div>
+    return <div className="flex-1 min-h-0 flex items-center justify-center text-xs text-textMuted">加载分镜脚本…</div>
   }
   if (error) {
-    return <div className="h-full flex items-center justify-center text-xs text-textMuted">{error}</div>
+    return <div className="flex-1 min-h-0 flex items-center justify-center text-xs text-textMuted">{error}</div>
   }
   if (!storyboard) return null
 
   const notes = storyboard.editing_notes || {}
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* 顶部汇总条 */}
       <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border/50 shrink-0">
         <span className="text-[11px] font-medium text-foreground truncate">{storyboard.title || '分镜脚本'}</span>
@@ -142,8 +147,20 @@ export default function StoryboardOutline({ storyboard, loading, error }) {
         </span>
       </div>
 
+      {/* 检测到外部导入的新脚本 → 提示，不自动替换 */}
+      {notice && onReload && (
+        <button onClick={onReload}
+          className="shrink-0 flex items-center gap-1.5 mx-1.5 mt-1.5 px-2 py-1.5 rounded-lg border text-left transition-colors hover:brightness-110"
+          style={{ borderColor: 'rgba(251,191,36,0.45)', background: 'rgba(251,191,36,0.10)', color: colors.gold }}>
+          <span className="text-[11px]">📥</span>
+          <span className="flex-1 text-[11px] leading-tight">
+            检测到新的分镜脚本{notice && `（${notice.getHours()}:${String(notice.getMinutes()).padStart(2, '0')} 更新）`}，点击重新加载
+          </span>
+        </button>
+      )}
+
       {/* 段列表 */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-1.5 space-y-1">
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-1.5 space-y-1">
         {(storyboard.segments || []).map((seg) => (
           <SegmentBlock
             key={seg.seq}
@@ -151,6 +168,8 @@ export default function StoryboardOutline({ storyboard, loading, error }) {
             expanded={openSeg === seg.seq}
             onToggle={() => setOpenSeg(openSeg === seg.seq ? null : seg.seq)}
             onPreview={handlePreview}
+            onSelect={handleSelect}
+            selectedShotId={selectedShotId}
           />
         ))}
       </div>

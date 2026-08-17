@@ -16,6 +16,7 @@ export default defineConfig({
       '/narration.json': 'http://localhost:8765',
       '/segments.json': 'http://localhost:8765',
       '/storyboard.json': 'http://localhost:8765',
+      '/vlm': 'http://localhost:8765',
       '/素材clips': 'http://localhost:8765',
       '/clips': 'http://localhost:8765',
       '/copy': 'http://localhost:8765',

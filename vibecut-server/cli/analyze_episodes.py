@@ -162,12 +162,9 @@ def analyze_segment_vlm(seg_index, sm, frames, frame_times, prev_desc=""):
     # ── JSON 解析 + 容错 ──
     parsed = _parse_vlm_json(raw)
 
-    # 用 scene_map 信息补充：验证人物标签（从文本中提取已知角色名）
-    vs = parsed.get("visual_summary", "") or ""
-    visible_chars = [c for c in KNOWN_CHARACTERS if c in vs]
-    # 也检查整个 raw 文本
-    if not visible_chars:
-        visible_chars = [c for c in KNOWN_CHARACTERS if c in (raw or "")]
+    # 人物标签直接用 scene_map（字幕+LLM 推的权威），不信任 VLM 人脸识别
+    # （VLM 只分析画面，不负责人；把配角认成主角是已知局限，characters 以 scene_map 为准）
+    visible_chars = sm.get('characters', []) or []
 
     return {
         "scene_map_index": seg_index,

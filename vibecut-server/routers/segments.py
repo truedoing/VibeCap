@@ -149,5 +149,37 @@ def api_storyboard(task: str = Query(None)):
     if not sb_file.exists():
         sb_file = PROJECT_DIR / "tasks" / "storyboard.json"
     if sb_file.exists():
-        return JSONResponse(json.load(open(sb_file)))
+        data = json.load(open(sb_file))
+        # 附文件 mtime：前端轮询检测外部导入的新脚本（只提示，不自动替换）
+        data["_mtime"] = int(sb_file.stat().st_mtime)
+        return JSONResponse(data)
     return JSONResponse({"ok": False, "error": "分镜脚本尚未导入"}, status_code=404)
+
+
+@router.get("/vlm/lookup")
+def api_vlm_lookup(ep: int = Query(...), sec: float = Query(...)):
+    """按剧集+秒数查找命中的 VLM 场景段详情（分镜台核对镜头用）
+
+    复用 lib.vlm_cache.load()（scene_map time_range + VLM 描述合并后的内存缓存），
+    返回 start <= sec < end 的段；无命中时返回时间上最近的一段。
+    """
+    from lib.vlm_cache import load as load_vlm
+    try:
+        cache = load_vlm()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"VLM 缓存未初始化: {e}"}, status_code=500)
+
+    ep_scenes = cache.get(ep)
+    if not ep_scenes:
+        return JSONResponse({"ok": False, "error": f"EP{ep} 无 VLM 缓存"}, status_code=404)
+
+    hit = None
+    for idx in sorted(ep_scenes):
+        s = ep_scenes[idx]
+        if s["start"] <= sec < s["end"]:
+            hit = s
+            break
+    if hit is None:
+        hit = min(ep_scenes.values(), key=lambda s: abs(s["start"] - sec))
+
+    return {"ok": True, "ep": ep, "sec": sec, "scene": hit, "total_scenes": len(ep_scenes)}

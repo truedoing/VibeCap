@@ -2,7 +2,7 @@
  * 分镜台 v3 — 段落级分镜设计
  * 双引擎：节目引擎(大预览+底部时间轴) + 分镜序列面板(右侧)
  */
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 
@@ -17,7 +17,7 @@ import {
 
 import ScriptPanel from '../components/ScriptPanel'
 import StoryboardOutline from '../components/StoryboardOutline'
-import StoryboardSequence from '../components/StoryboardSequence'
+import ShotPropertyPanel from '../components/ShotPropertyPanel'
 import { colors } from '../styles/theme'
 import { divider as dividerStyle } from '../styles/mixins'
 import SourceInspector from '../components/SourceInspector'
@@ -25,7 +25,7 @@ import TimelineControls from '../components/TimelineControls'
 import ClipLinker from '../hooks/useLinkedClips'
 import { buildProjectFromProxyPicks, linkClipPair, clearLinkedPairs } from '../lib/timelineBuilder'
 import { fetchProxyManifest, proxyUrlForEpisode, proxyInfoForEpisode } from '../lib/proxyEngine'
-import { buildPicksFromStoryboard } from '../lib/storyboardUtils'
+import { buildPicksFromStoryboard, buildSourceFileToEp } from '../lib/storyboardUtils'
 import { migratePicks } from '../model/migrate'
 
 const FPS = 25
@@ -288,6 +288,9 @@ export default function VibeEdit() {
   const [storyboard, setStoryboard] = useState(null)
   const [sbLoading, setSbLoading] = useState(false)
   const [sbError, setSbError] = useState(null)
+  const [sbNewNotice, setSbNewNotice] = useState(null)  // 检测到的新分镜脚本更新时间
+  const sbSigRef = useRef(null)  // 已加载 storyboard 的 _mtime（轮询基线）
+  const [selectedShot, setSelectedShot] = useState(null)  // 分镜大纲里选中的镜头（属性面板消费）
   const [curSid, setCurSid] = useState(null)
   const [curHighlight, setCurHighlight] = useState('')  // 当前台词文本
   const [curNarration, setCurNarration] = useState('')   // 当前解说词文本
@@ -318,19 +321,54 @@ export default function VibeEdit() {
   }, [taskId])
 
   // 加载全局分镜脚本（扣子/WorkBuddy 导入）
-  useEffect(() => {
+  const loadStoryboard = useCallback(async () => {
     if (!taskId) return
     setSbLoading(true)
     setSbError(null)
-    fetch(`/storyboard.json?task=${taskId}`)
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
-      .then(d => {
-        if (d?.segments?.length) setStoryboard(d)
-        else setStoryboard(null)
-      })
-      .catch(() => { setStoryboard(null); setSbError('分镜脚本未导入') })
-      .finally(() => setSbLoading(false))
+    try {
+      const r = await fetch(`/storyboard.json?task=${taskId}`)
+      if (!r.ok) throw new Error(r.status)
+      const d = await r.json()
+      if (d?.segments?.length) {
+        setStoryboard(d)
+        sbSigRef.current = d._mtime ?? null
+      } else {
+        setStoryboard(null)
+      }
+      setSbNewNotice(null)
+    } catch {
+      setStoryboard(null)
+      setSbError('分镜脚本未导入')
+    } finally {
+      setSbLoading(false)
+    }
   }, [taskId])
+
+  useEffect(() => { loadStoryboard() }, [loadStoryboard])
+
+  // 轮询检测外部导入的新分镜脚本（只提示，不自动替换已加载数据）
+  useEffect(() => {
+    if (!taskId) return
+    const check = async () => {
+      if (sbSigRef.current == null) return  // 尚无基线，跳过
+      try {
+        const r = await fetch(`/storyboard.json?task=${taskId}`)
+        if (!r.ok) return
+        const d = await r.json()
+        const sig = d?._mtime
+        setSbNewNotice(sig && sig !== sbSigRef.current ? new Date(sig * 1000) : null)
+      } catch {}
+    }
+    const timer = setInterval(check, 20000)
+    return () => clearInterval(timer)
+  }, [taskId])
+
+  // 重新生成：先取最新分镜脚本，再整体重建时间线
+  const reloadStoryboard = useCallback(async () => {
+    await loadStoryboard()
+    invalidateTimeline()
+    setRebuildKey(k => k + 1)
+  }, [loadStoryboard, invalidateTimeline])
 
   // v3: 台词点击 → ASR 精确定位 (直接 seek 源素材)
   const handleDialogueClick = useCallback((sid) => {
@@ -420,6 +458,8 @@ export default function VibeEdit() {
 
   // v3: 分镜序列上下文 — 整段解说词
   const storyCtx = { sid: curSid, narration: curNarration, taskId, segments, cover, trigger: storyTrigger }
+  // 分镜脚本 source_files 反查（文件名 → ep），属性面板解析镜头用
+  const sourceFileToEp = useMemo(() => buildSourceFileToEp(storyboard?.source_files), [storyboard])
   const leftW = scriptCollapsed ? 0 : scriptW
   const rightPanelW = rightCollapsed ? 0 : rightW
 
@@ -436,11 +476,16 @@ export default function VibeEdit() {
               <div style={{ width: leftW, flexShrink: 0, overflow: 'hidden', transition: 'width 0.15s' }}>
                 {!scriptCollapsed && (
                   <div className="h-full flex flex-col">
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 shrink-0" style={{ minHeight: 32 }}>
+                    <div className="flex items-center gap-2 px-3 py-2 border-b border-border/50 shrink-0" style={{ minHeight: 32 }}>
                       <span className="text-xs font-medium text-foreground">分镜大纲</span>
-                      <button onClick={() => setScriptCollapsed(true)} className="text-muted-foreground hover:text-foreground shrink-0">◀</button>
+                      <button onClick={reloadStoryboard} title="重新加载分镜脚本并重建时间线"
+                        className="text-[10px] text-muted-foreground hover:text-foreground shrink-0 border border-border/60 rounded px-1.5 py-0.5">
+                        ⟳ 重新生成
+                      </button>
+                      <button onClick={() => setScriptCollapsed(true)} className="text-muted-foreground hover:text-foreground shrink-0 ml-auto">◀</button>
                     </div>
-                    <StoryboardOutline storyboard={storyboard} loading={sbLoading} error={sbError} />
+                    <StoryboardOutline storyboard={storyboard} loading={sbLoading} error={sbError} notice={sbNewNotice}
+                      onReload={reloadStoryboard} onSelectShot={setSelectedShot} selectedShotId={selectedShot?.shot_id} />
                   </div>
                 )}
               </div>
@@ -458,22 +503,17 @@ export default function VibeEdit() {
             </div>
           </div>
 
-          {/* ── 右：分镜序列 + 源检视器 ── */}
+          {/* ── 右：属性面板 + 源检视器 ── */}
           {rightCollapsed ? <div style={{ width: 4, flexShrink: 0, cursor: 'col-resize', background: T.border }} onClick={() => setRightCollapsed(false)} title="展开" />
             : <VBar onMouseDown={dragX(() => rightW, setRightW, 260, 0.45)} />}
           <div style={{ width: rightPanelW, flexShrink: 0, overflow: 'hidden', display: rightPanelW === 0 ? 'none' : 'flex', flexDirection: 'column', borderLeft: `1px solid ${T.border}` }}>
             <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 shrink-0">
-              <span className="text-xs font-medium text-foreground">分镜序列</span>
+              <span className="text-xs font-medium text-foreground">属性</span>
               <button onClick={() => setRightCollapsed(true)} className="text-muted-foreground hover:text-foreground">▶</button>
             </div>
-            {/* 分镜序列 — 上部，高度与预览区同步 */}
+            {/* 属性面板 — 上部，高度与预览区同步；按选中元素显示详情 */}
             <div style={{ flex: `${100 - bottomPct}%`, minHeight: 0, overflow: 'hidden' }}>
-              <StoryboardSequence
-                context={storyCtx}
-                proxyManifest={proxyManifest}
-                onAddToProgram={handleAddToProgram}
-                taskId={taskId}
-              />
+              <ShotPropertyPanel shot={selectedShot} sourceFileToEp={sourceFileToEp} />
             </div>
             {/* 分隔条 — 拖拽同步时间线高度 */}
             <div onMouseDown={(e) => {

@@ -123,7 +123,8 @@ def generate_voiceover(
 
         emit_progress("segment_start",
             f"  🎤 [{i+1}/{len(voice_plan)}] {seg_emotion} | {text[:40]}...",
-            {"seg_id": seg_id, "index": i, "emotion": seg_emotion, "speed": seg_speed})
+            {"seg_id": seg_id, "index": i, "emotion": seg_emotion, "speed": seg_speed,
+             "done": i, "total": len(voice_plan)})
 
         result = generate_speech(
             text, str(out_path),

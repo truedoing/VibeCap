@@ -83,8 +83,9 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
 
   const [ttsState, setTtsState] = useState(initialTts)
   const [generating, setGenerating] = useState(false)        // 全量生成中
+  const generatingRef = useRef(false)  // 同步锁：防连点产生并发流（进度/文件会打架）
   const [regeneratingSegs, setRegeneratingSegs] = useState(new Set())
-  const [progress, setProgress] = useState({ done: 0, total: 0 })
+  const [progress, setProgress] = useState({ current: 0, total: 0 })  // current = 正在生成的段序号(1-based)
   const [playing, setPlaying] = useState(false)
   const [curTime, setCurTime] = useState(0)  // 当前播放进度（秒）
   const audioRef = useRef(null)
@@ -144,7 +145,7 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
   const generateOne = useCallback(async () => {
     if (!selectedSeg) return
     const sid = selectedSeg.seg_id
-    if (generating || regeneratingSegs.has(sid)) return
+    if (generatingRef.current || generating || regeneratingSegs.has(sid)) return
     setRegeneratingSegs(prev => new Set(prev).add(sid))
     setTtsState(prev => ({ ...prev, [sid]: { ...prev[sid], status: 'generating' } }))
     try {
@@ -182,9 +183,10 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
 
   // 一键生成全部
   const generateAll = useCallback(async () => {
-    if (generating || !narrSegs.length) return
+    if (generatingRef.current || !narrSegs.length) return
+    generatingRef.current = true
     setGenerating(true)
-    setProgress({ done: 0, total: narrSegs.length })
+    setProgress({ current: 1, total: narrSegs.length })
     setTtsState(prev => {
       const n = { ...prev }
       for (const s of narrSegs) if (!n[s.seg_id]?.duration) n[s.seg_id] = { ...n[s.seg_id], status: 'generating' }
@@ -209,17 +211,19 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
           try {
             const d = JSON.parse(t.slice(6))
             if (ev === 'progress' && d.step === 'segment_start' && d.seg_id != null) {
+              // 当前段开始 → 按钮显示"正在生成第 N 段"（避免冻结在 done=N-1）
+              setProgress(prev => ({ current: (d.index ?? 0) + 1, total: d.total ?? prev.total }))
               setTtsState(prev => ({ ...prev, [d.seg_id]: { ...prev[d.seg_id], status: 'generating' } }))
             } else if (ev === 'progress' && d.step === 'segment_done' && d.seg_id != null) {
               setTtsState(prev => ({ ...prev, [d.seg_id]: { status: 'ready', audioPath: `tts_segments/narr_${String(d.seg_id).padStart(3, '0')}.wav`, duration: d.duration } }))
-              setProgress({ done: d.done, total: d.total })
+              setProgress(prev => ({ ...prev, total: d.total ?? prev.total }))
             }
           } catch {}
         }
       }
     } catch {}
-    finally { setGenerating(false) }
-  }, [generating, narrSegs, taskId, voice, speed])
+    finally { generatingRef.current = false; setGenerating(false) }
+  }, [narrSegs, taskId, voice, speed])
 
   // 新建克隆音色
   const createVoice = useCallback(async () => {
@@ -312,8 +316,9 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
 
         {/* 一键全部 */}
         <button onClick={generateAll} disabled={generating || !narrSegs.length}
+          title={generating ? `正在配音第 ${progress.current}/${progress.total} 段（已完成 ${Object.values(ttsState).filter(s => s.status === 'ready').length} 段）` : '为所有解说段生成配音'}
           style={{ ...S.headerBtn(generating || !narrSegs.length ? false : true), width: '100%', marginBottom: 8 }}>
-          {generating ? `🔄 生成中 ${progress.done}/${progress.total}` : '🎙️ 一键生成全部'}
+          {generating ? `🔄 生成中 ${progress.current}/${progress.total}` : '🎙️ 一键生成全部'}
         </button>
 
         {/* 选中段操作 */}
