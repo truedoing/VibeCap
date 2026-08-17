@@ -67,12 +67,13 @@ async def api_regenerate_segment(request: Request):
     task_name = data.get("task", args.task)
     seg_id = data["seg_id"]
     voice = data.get("voice")
+    speed = data.get("speed")
 
     def _run(task_name, emit):
         emit_progress, emit_complete, emit_error = make_emitter(emit)
         regenerate_segment(
             task_name=task_name, seg_id=seg_id, voice=voice,
-            emotion=None, speed=None, pause_ms=None, ref_audio_path=None,
+            emotion=None, speed=speed, pause_ms=None, ref_audio_path=None,
             emit_progress=emit_progress, emit_complete=emit_complete, emit_error=emit_error)
 
     return StreamingResponse(sse_stream(_run, task_name), media_type="text/event-stream",

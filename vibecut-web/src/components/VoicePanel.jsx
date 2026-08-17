@@ -26,8 +26,27 @@ function audioUrl(path, taskId) {
   return `/tts_segments/${name}?task=${encodeURIComponent(taskId)}&t=${Date.now()}`
 }
 
+function fmtTime(s) {
+  if (s == null || !isFinite(s)) return '0:00'
+  const m = Math.floor(s / 60), ss = Math.floor(s % 60)
+  return `${m}:${String(ss).padStart(2, '0')}`
+}
+
+const VOICE_PREF_KEY = 'vibecut-voice-prefs'
+
+// 从 localStorage 恢复音色/语速偏好
+function loadVoicePrefs() {
+  try {
+    const raw = localStorage.getItem(VOICE_PREF_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return {}
+}
+
 export default function VoicePanel({ taskId, segments, selectedIdx }) {
-  const [voice, setVoice] = useState('白桦')
+  const [prefs] = useState(loadVoicePrefs)
+  const [voice, setVoice] = useState(prefs.voice || '白桦')
+  const [speed, setSpeed] = useState(prefs.speed ?? 1.2)  // 语速倍率，默认 1.2x（原 1.0 太慢）
 
   // 音色列表（后端 /voiceover/voices：预设 + 克隆）
   const [voices, setVoices] = useState([])
@@ -67,6 +86,7 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
   const [regeneratingSegs, setRegeneratingSegs] = useState(new Set())
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [playing, setPlaying] = useState(false)
+  const [curTime, setCurTime] = useState(0)  // 当前播放进度（秒）
   const audioRef = useRef(null)
 
   // 加载音色列表
@@ -77,7 +97,19 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
       .catch(() => {})
   }, [])
 
+  // 持久化音色/语速偏好
+  useEffect(() => {
+    try { localStorage.setItem(VOICE_PREF_KEY, JSON.stringify({ voice, speed })) } catch {}
+  }, [voice, speed])
+
   useEffect(() => { setTtsState(initialTts) }, [initialTts])
+
+  // 切换选中段时，停止当前播放并复位进度
+  useEffect(() => {
+    if (audioRef.current) { try { audioRef.current.pause() } catch {} }
+    setPlaying(false)
+    setCurTime(0)
+  }, [selectedSeg?.seg_id])
 
   useEffect(() => () => { if (audioRef.current) { try { audioRef.current.pause() } catch {} } }, [])
 
@@ -87,17 +119,26 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
   const handlePlay = useCallback(() => {
     if (!selectedSeg || !selState || selState.status !== 'ready') return
     if (playing) {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0 }
+      if (audioRef.current) audioRef.current.pause()
       setPlaying(false)
       return
     }
     const audio = new Audio(audioUrl(selState.audioPath, taskId))
     audioRef.current = audio
-    audio.onended = () => setPlaying(false)
+    audio.ontimeupdate = () => setCurTime(audio.currentTime)
+    audio.onended = () => { setPlaying(false); setCurTime(0) }
     audio.onerror = () => setPlaying(false)
     audio.play().catch(() => setPlaying(false))
     setPlaying(true)
   }, [selectedSeg, selState, playing, taskId])
+
+  // 跳转进度
+  const handleSeek = useCallback((sec) => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = sec
+      setCurTime(sec)
+    }
+  }, [])
 
   // 单段生成
   const generateOne = useCallback(async () => {
@@ -109,7 +150,7 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
     try {
       const resp = await fetch('/voiceover/regenerate_segment', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: taskId, seg_id: sid, voice }),
+        body: JSON.stringify({ task: taskId, seg_id: sid, voice, speed }),
       })
       const reader = resp.body.getReader(); const decoder = new TextDecoder()
       let buf = ''; let ev = ''
@@ -137,7 +178,7 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
     } finally {
       setRegeneratingSegs(prev => { const n = new Set(prev); n.delete(sid); return n })
     }
-  }, [selectedSeg, taskId, voice, generating, regeneratingSegs])
+  }, [selectedSeg, taskId, voice, speed, generating, regeneratingSegs])
 
   // 一键生成全部
   const generateAll = useCallback(async () => {
@@ -152,7 +193,7 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
     try {
       const resp = await fetch('/voiceover/generate_stream', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: taskId, voice, speed: 1.0, pause_ms: 300 }),
+        body: JSON.stringify({ task: taskId, voice, speed, pause_ms: 300 }),
       })
       const reader = resp.body.getReader(); const decoder = new TextDecoder()
       let buf = ''; let ev = ''
@@ -178,7 +219,7 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
       }
     } catch {}
     finally { setGenerating(false) }
-  }, [generating, narrSegs, taskId, voice])
+  }, [generating, narrSegs, taskId, voice, speed])
 
   // 新建克隆音色
   const createVoice = useCallback(async () => {
@@ -236,6 +277,19 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
             {voices.length === 0 && <option value="白桦">白桦 · 成熟男声</option>}
           </select>
 
+          {/* 语速 */}
+          <div style={{ ...S.flexRow, justifyContent: 'space-between', marginTop: 8 }}>
+            <div style={{ ...label() }}>语速</div>
+            <span style={{ fontSize: F.xs, color: colors.textMuted, fontFamily: 'monospace' }}>{speed.toFixed(1)}x</span>
+          </div>
+          <input type="range" min={0.8} max={1.8} step={0.1} value={speed}
+            onChange={e => setSpeed(parseFloat(e.target.value))}
+            style={{ width: '100%', marginTop: 2 }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: colors.textFaint }}>
+            <span>0.8x 慢</span>
+            <span>1.8x 快</span>
+          </div>
+
           {/* 克隆音色表单 */}
           {showCreate && (
             <div style={{ marginTop: 8, paddingTop: 8, borderTop: S.borderSubtle }}>
@@ -277,12 +331,26 @@ export default function VoicePanel({ taskId, segments, selectedIdx }) {
                 {selState?.status === 'generating' && <span style={{ color: colors.gold, marginLeft: 6 }}>🔄 生成中</span>}
                 {selState?.status === 'pending' && <span style={{ color: colors.textFaint, marginLeft: 6 }}>⏳ 待生成</span>}
               </div>
+
+              {/* 简易播放器 */}
+              {selState?.status === 'ready' && (
+                <div style={{ ...card(), padding: 8, marginBottom: 4, background: colors.bg }}>
+                  <div style={{ ...S.flexRow, gap: 6 }}>
+                    <button onClick={handlePlay}
+                      style={{ ...btn(playing ? 'danger' : 'success', 'sm'), minWidth: 34, padding: '2px 8px' }}>
+                      {playing ? '⏸' : '▶'}
+                    </button>
+                    <span style={{ fontSize: 11, fontFamily: 'monospace', color: colors.textMuted, minWidth: 66, textAlign: 'center' }}>
+                      {fmtTime(curTime)} / {fmtTime(selState.duration || 0)}
+                    </span>
+                  </div>
+                  <input type="range" min={0} max={selState.duration || 1} step={0.1} value={curTime}
+                    onChange={e => handleSeek(parseFloat(e.target.value))}
+                    style={{ width: '100%', marginTop: 4 }} />
+                </div>
+              )}
+
               <div style={{ ...S.flexRow, marginTop: 2 }}>
-                {selState?.status === 'ready' && (
-                  <button onClick={handlePlay} style={btn(playing ? 'danger' : 'success', 'sm')}>
-                    {playing ? '⏹ 停止' : '▶ 试听'}
-                  </button>
-                )}
                 <button onClick={generateOne} disabled={generating || regeneratingSegs.has(selectedSeg.seg_id)}
                   style={btn(generating || regeneratingSegs.has(selectedSeg.seg_id) ? 'disabled' : 'primary', 'sm')}>
                   {regeneratingSegs.has(selectedSeg.seg_id) ? '🔄…' : selState?.status === 'ready' ? '🔄 重生成' : '🎙 生成'}

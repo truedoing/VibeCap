@@ -169,7 +169,8 @@ export function TaskProvider({ children }) {
   const handleInvalidateTimeline = useCallback(() => {
     setProject(prev => {
       if (!prev) return prev
-      const next = { ...prev, timeline: null, mediaCache: null }
+      // 同时清无前缀(timeline台)和 vibe 前缀(分镜台)缓存
+      const next = { ...prev, timeline: null, mediaCache: null, vibe_timeline: null, vibe_mediaCache: null }
       persist(next)
       return next
     })

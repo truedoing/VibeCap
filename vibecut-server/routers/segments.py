@@ -73,6 +73,15 @@ def api_segments(task: str = Query(None)):
                     for k in ("meta", "theme", "core_insight", "cover", "hook_line", "closing_line", "device", "type"):
                         if file_data.get(k) is not None:
                             result[k] = file_data[k]
+                    # 合并文件版 segments 的配音字段（audio_duration/audio_path 反写只落在文件，DB 版没有）
+                    file_segs = {s.get("seg_id"): s for s in file_data.get("segments", [])}
+                    for seg in result["segments"]:
+                        sid = seg.get("seg_id")
+                        fs = file_segs.get(sid) if sid is not None else None
+                        if fs:
+                            for k in ("audio_duration", "audio_path", "audio_emotion"):
+                                if fs.get(k) is not None:
+                                    seg[k] = fs[k]
                 located_file = resolve_task_dir(task_name) / "segments_located.json"
                 if located_file.exists():
                     try:
@@ -130,3 +139,15 @@ def api_script_file(task: str = Query(None)):
     if script_file.exists():
         return JSONResponse(json.load(open(script_file)))
     return JSONResponse({"ok": False, "error": "文案脚本尚未生成"}, status_code=404)
+
+
+@router.get("/storyboard.json")
+def api_storyboard(task: str = Query(None)):
+    """分镜脚本（扣子/WorkBuddy 导入的全局分镜，含 shot_sequence）"""
+    task_name = task or args.task
+    sb_file = resolve_task_dir(task_name) / "storyboard.json"
+    if not sb_file.exists():
+        sb_file = PROJECT_DIR / "tasks" / "storyboard.json"
+    if sb_file.exists():
+        return JSONResponse(json.load(open(sb_file)))
+    return JSONResponse({"ok": False, "error": "分镜脚本尚未导入"}, status_code=404)

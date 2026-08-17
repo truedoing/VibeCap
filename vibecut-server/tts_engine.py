@@ -25,6 +25,25 @@ PRESET_VOICES = {
 }
 
 
+def _speed_hint(speed: float) -> str:
+    """把语速倍率翻译成 MiMo 能理解的自然语言描述。
+
+    MiMo TTS 无结构化 speed 参数，语速靠 user message 的自然语言指令控制。
+    分级描述比"加快至1.4x"这种参数式表述更有效。
+    """
+    if speed >= 1.7:
+        return "语速极快，像连珠炮一样，节奏非常紧凑急促"
+    if speed >= 1.45:
+        return "语速较快，节奏紧凑流畅，稍显急促"
+    if speed >= 1.2:
+        return "语速稍快，自然流畅不拖沓"
+    if speed >= 0.95:
+        return "语速正常自然"
+    if speed >= 0.8:
+        return "语速稍慢，从容不迫，每个字都说得清楚"
+    return "语速很慢，一字一顿，拖长音，节奏舒缓"
+
+
 def generate_speech(text: str, out_path: str, *,
                     voice: str = "白桦",
                     speed: float = 1.0,
@@ -76,7 +95,7 @@ def _generate_mimo(text: str, out_path: str, *,
     if style_hint:
         hints.append(style_hint)
     if speed != 1.0:
-        hints.append(f"语速{'放慢' if speed < 1 else '加快'}至{speed:.1f}x")
+        hints.append(_speed_hint(speed))
     if hints:
         messages.append({"role": "user", "content": "；".join(hints)})
     messages.append({"role": "assistant", "content": text})

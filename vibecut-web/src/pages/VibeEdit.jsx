@@ -16,6 +16,7 @@ import {
 } from '@elah/editor'
 
 import ScriptPanel from '../components/ScriptPanel'
+import StoryboardOutline from '../components/StoryboardOutline'
 import StoryboardSequence from '../components/StoryboardSequence'
 import { colors } from '../styles/theme'
 import { divider as dividerStyle } from '../styles/mixins'
@@ -24,6 +25,7 @@ import TimelineControls from '../components/TimelineControls'
 import ClipLinker from '../hooks/useLinkedClips'
 import { buildProjectFromProxyPicks, linkClipPair, clearLinkedPairs } from '../lib/timelineBuilder'
 import { fetchProxyManifest, proxyUrlForEpisode, proxyInfoForEpisode } from '../lib/proxyEngine'
+import { buildPicksFromStoryboard } from '../lib/storyboardUtils'
 import { migratePicks } from '../model/migrate'
 
 const FPS = 25
@@ -48,14 +50,15 @@ function HBar({ onMouseDown }) {
 // ═══════════════════════════════════
 // 程序引擎数据加载
 // ═══════════════════════════════════
-function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
+function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId, storyboard, projectType }) {
   const engine = useTimelineEngine()
   const { project, saveTimelineCache } = useProject()
   const didInit = useRef(false)
   const saveTimer = useRef(null)
 
-  const projectType = segments?.project_type || (segments?.length > 0 && segments.some(s => s.source_start > 0) ? 'interview' : 'drama')
-  const isInterview = projectType === 'interview'
+  // 优先用显式传入的 projectType，fallback 到旧推断逻辑
+  const resolvedType = projectType || segments?.project_type || (segments?.length > 0 && segments.some(s => s.source_start > 0) ? 'interview' : 'drama')
+  const isInterview = resolvedType === 'interview'
 
   useEffect(() => {
     try {
@@ -118,55 +121,77 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
 
   const didAutoBuild = useRef(false)
   const [narrationMeta, setNarrationMeta] = useState(null)
+  const [narrLoaded, setNarrLoaded] = useState(false)
   useEffect(() => {
-    if (!taskId || isInterview) return
+    if (!taskId || isInterview) { setNarrLoaded(true); return }
     fetch(`/narration.json?task=${taskId}`)
       .then(r => r.json())
-      .then(d => setNarrationMeta(d))
+      .then(d => setNarrationMeta(d?.segments ? d : null))
       .catch(() => setNarrationMeta(null))
+      .finally(() => setNarrLoaded(true))
   }, [taskId, isInterview])
 
   useEffect(() => {
     if (!proxyManifest?.proxies?.length || !didInit.current || didAutoBuild.current) return
-    if (!segments?.length) return
     if (project?.vibe_timeline) return
+    // 等 narration 加载完成再铺轨（否则旁白轨缺失）
+    if (!narrLoaded) return
 
     try {
       let picks = {}
-      if (isInterview) {
-        const hasSubClips = segments.some(s => s.sub_clips?.length > 0)
-        if (hasSubClips) {
-          let idx = 0
-          for (const seg of segments) {
-            for (const sc of (seg.sub_clips || [])) {
-              if (sc.decision !== 'KEEP') continue
-              const ep = seg.episode_marker?.episode || seg.video_episode || 1
-              const key = `${seg.seg_id ?? 0}_${idx++}`
-              picks[key] = { main: [{ ep, sourceStartSec: sc.start, sourceEndSec: sc.end }] }
+      let source = 'segments'
+      let segDurations = null
+
+      // 优先：有 storyboard.json 时，用分镜脚本铺轨（全局分镜，按段类型分层）
+      if (storyboard?.segments?.length) {
+        const built = buildPicksFromStoryboard(storyboard)
+        picks = built.picks
+        source = 'storyboard'
+        // 音频为骨架：narration 段用音频真实时长，dialogue 段用画面估算时长
+        segDurations = { ...built.segDurMap }
+        if (narrationMeta?.segments) {
+          for (const ns of narrationMeta.segments) {
+            const sid = ns.seg_id ?? ns.index
+            const dur = (ns.end || 0) - (ns.start || 0)
+            if (sid != null && dur > 0) segDurations[sid] = dur
+          }
+        }
+      } else if (segments?.length) {
+        if (isInterview) {
+          const hasSubClips = segments.some(s => s.sub_clips?.length > 0)
+          if (hasSubClips) {
+            let idx = 0
+            for (const seg of segments) {
+              for (const sc of (seg.sub_clips || [])) {
+                if (sc.decision !== 'KEEP') continue
+                const ep = seg.episode_marker?.episode || seg.video_episode || 1
+                const key = `${seg.seg_id ?? 0}_${idx++}`
+                picks[key] = { main: [{ ep, sourceStartSec: sc.start, sourceEndSec: sc.end }] }
+              }
             }
+          } else {
+            const sorted = [...segments].sort((a, b) => (a.seg_id ?? 0) - (b.seg_id ?? 0))
+            sorted.forEach(s => {
+              const ep = s.episode_marker?.episode || s.video_episode || 1
+              const startSec = s.source_start ?? 0
+              const endSec = s.source_end ?? (startSec + 5)
+              if (startSec <= 0 && endSec <= 0) return
+              picks[`${s.seg_id ?? 0}_0`] = { main: [{ ep, sourceStartSec: startSec, sourceEndSec: endSec }] }
+            })
           }
         } else {
           const sorted = [...segments].sort((a, b) => (a.seg_id ?? 0) - (b.seg_id ?? 0))
           sorted.forEach(s => {
-            const ep = s.episode_marker?.episode || s.video_episode || 1
-            const startSec = s.source_start ?? 0
-            const endSec = s.source_end ?? (startSec + 5)
-            if (startSec <= 0 && endSec <= 0) return
-            picks[`${s.seg_id ?? 0}_0`] = { main: [{ ep, sourceStartSec: startSec, sourceEndSec: endSec }] }
+            const ep = s.video_episode || s.episode_marker?.episode
+            const startSec = s.source_start
+            const endSec = s.source_end
+            if (ep && startSec != null && startSec > 0) {
+              const marginStart = Math.max(0, startSec - 2)
+              const marginEnd = (endSec && endSec > startSec) ? endSec + 2 : startSec + 8
+              picks[`${s.seg_id ?? 0}_0`] = { main: [{ ep, sourceStartSec: marginStart, sourceEndSec: marginEnd }] }
+            }
           })
         }
-      } else {
-        const sorted = [...segments].sort((a, b) => (a.seg_id ?? 0) - (b.seg_id ?? 0))
-        sorted.forEach(s => {
-          const ep = s.video_episode || s.episode_marker?.episode
-          const startSec = s.source_start
-          const endSec = s.source_end
-          if (ep && startSec != null && startSec > 0) {
-            const marginStart = Math.max(0, startSec - 2)
-            const marginEnd = (endSec && endSec > startSec) ? endSec + 2 : startSec + 8
-            picks[`${s.seg_id ?? 0}_0`] = { main: [{ ep, sourceStartSec: marginStart, sourceEndSec: marginEnd }] }
-          }
-        })
       }
 
       if (Object.keys(picks).length === 0) return
@@ -174,14 +199,15 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
       const narrDurations = {}
       if (!isInterview && narrationMeta?.segments) {
         for (const ns of narrationMeta.segments) {
+          const sid = ns.seg_id ?? ns.index
           const dur = (ns.end || 0) - (ns.start || 0)
-          if (dur > 0) narrDurations[ns.index] = dur
+          if (sid != null && dur > 0) narrDurations[sid] = dur
         }
       }
 
       const mode = isInterview ? 'interview' : 'drama'
       const { project: elahProject, mediaList } = buildProjectFromProxyPicks(
-        picks, proxyManifest, [], { mode, narrDurations }
+        picks, proxyManifest, [], { mode, narrDurations, segDurations, taskName: taskId }
       )
 
       engine.loadProject(elahProject)
@@ -195,9 +221,9 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
       didAutoBuild.current = true
       if (onReady) setTimeout(onReady, 50)
       setTimeout(() => prgTLRef?.current?.fitToWindow(), 100)
-      console.log(`[prg] 🎬 ${isInterview ? 'Interview' : 'Drama'} 自动建轨: ${Object.keys(picks).length} segments → 时间轴`)
+      console.log(`[prg] 🎬 ${isInterview ? 'Interview' : 'Drama'} 自动建轨(${source}): ${Object.keys(picks).length} segments → 时间轴`)
     } catch (e) { console.error('[prg] auto-build error:', e) }
-  }, [isInterview, didInit.current, segments, proxyManifest, narrationMeta, project?.vibe_timeline])
+  }, [isInterview, didInit.current, segments, storyboard, proxyManifest, narrationMeta, narrLoaded, project?.vibe_timeline])
 
   const didPlaceholders = useRef(false)
   useEffect(() => {
@@ -245,9 +271,10 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId }) {
 // ═══════════════════════════════════
 export default function VibeEdit() {
   const { taskId } = useParams()
-  const { project, addPick } = useProject()
+  const { project, addPick, invalidateTimeline } = useProject()
   const prgTLRef = useRef(null)
   const demuxRef = useRef(null)
+  const [rebuildKey, setRebuildKey] = useState(0)  // 递增强制重挂 ProgramLoader，重新铺轨
 
   const [scriptW, setScriptW] = useState(380)
   const [rightW, setRightW] = useState(460)
@@ -257,6 +284,10 @@ export default function VibeEdit() {
   const [cover, setCover] = useState('')
 
   const [segments, setSegments] = useState([])
+  const [projectType, setProjectType] = useState('drama')
+  const [storyboard, setStoryboard] = useState(null)
+  const [sbLoading, setSbLoading] = useState(false)
+  const [sbError, setSbError] = useState(null)
   const [curSid, setCurSid] = useState(null)
   const [curHighlight, setCurHighlight] = useState('')  // 当前台词文本
   const [curNarration, setCurNarration] = useState('')   // 当前解说词文本
@@ -278,11 +309,27 @@ export default function VibeEdit() {
     if (!taskId) return
     fetch(`/segments.json?task=${taskId}`).then(r => r.json()).then(d => {
       setSegments(d.segments || [])
+      if (d.project_type) setProjectType(d.project_type)
       setCover(d.cover || '')
       window.__vibe_segments = d.segments || []
       window.__vibe_cover = d.cover || ''
       if (d.segments?.length && curSid == null) setCurSid(d.segments[0].seg_id)
     }).catch(() => {})
+  }, [taskId])
+
+  // 加载全局分镜脚本（扣子/WorkBuddy 导入）
+  useEffect(() => {
+    if (!taskId) return
+    setSbLoading(true)
+    setSbError(null)
+    fetch(`/storyboard.json?task=${taskId}`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
+      .then(d => {
+        if (d?.segments?.length) setStoryboard(d)
+        else setStoryboard(null)
+      })
+      .catch(() => { setStoryboard(null); setSbError('分镜脚本未导入') })
+      .finally(() => setSbLoading(false))
   }, [taskId])
 
   // v3: 台词点击 → ASR 精确定位 (直接 seek 源素材)
@@ -379,7 +426,7 @@ export default function VibeEdit() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <EditorProvider fps={FPS} defaultTrackHeight={36} stage={STAGE}>
-        <ProgramLoader prgTLRef={prgTLRef} proxyManifest={proxyManifest} onReady={() => setPrgReady(true)} segments={segments} taskId={taskId} />
+        <ProgramLoader key={rebuildKey} prgTLRef={prgTLRef} proxyManifest={proxyManifest} onReady={() => setPrgReady(true)} segments={segments} taskId={taskId} storyboard={storyboard} projectType={projectType} />
         <ClipLinker />
 
         <div className="elah-root" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
@@ -390,17 +437,10 @@ export default function VibeEdit() {
                 {!scriptCollapsed && (
                   <div className="h-full flex flex-col">
                     <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 shrink-0" style={{ minHeight: 32 }}>
-                      <span className="text-xs font-medium text-foreground">脚本段</span>
+                      <span className="text-xs font-medium text-foreground">分镜大纲</span>
                       <button onClick={() => setScriptCollapsed(true)} className="text-muted-foreground hover:text-foreground shrink-0">◀</button>
                     </div>
-                    <ScriptPanel
-                      segments={segments}
-                      curSid={curSid}
-                      onSelectSegment={handleDialogueClick}
-                      onStoryboard={handleStoryboard}
-                      picks={project.picks}
-                      cover={cover}
-                    />
+                    <StoryboardOutline storyboard={storyboard} loading={sbLoading} error={sbError} />
                   </div>
                 )}
               </div>
@@ -412,7 +452,8 @@ export default function VibeEdit() {
             </div>
             <HBar onMouseDown={dragTimeline} />
             <div style={{ height: `${bottomPct}%`, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-              <TimelineControls timelineRef={prgTLRef} showTrackButtons={true} showRebuild={true} />
+              <TimelineControls timelineRef={prgTLRef} showTrackButtons={true} showRebuild={true}
+                onRebuild={() => { invalidateTimeline(); setRebuildKey(k => k + 1) }} />
               <Timeline key={prgReady ? 'ready' : 'init'} ref={prgTLRef} fps={FPS} sidebarWidth={160} style={{ flex: 1, minHeight: 0, minWidth: 0 }} />
             </div>
           </div>

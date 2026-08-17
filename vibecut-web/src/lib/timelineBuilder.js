@@ -75,6 +75,10 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
 
   // v0.13: narrDurations 支持外部注入（Drama 自动建轨）
   const NARR_DURATIONS = options.narrDurations || (isInterview ? {} : {})
+  // v1.4: segDurations 权威段总时长（含停顿），覆盖段偏移计算（音频为骨架）
+  const SEG_DURATIONS = options.segDurations || null
+  // v1.4: taskName 用于旁白音频 URL 带 task 参数（后端按 task 定位 work_dir）
+  const TASK_Q = options.taskName ? `?task=${encodeURIComponent(options.taskName)}` : ''
 
   const entries = Object.entries(picks).sort((a, b) => {
     const [sa] = a[0].split('_').map(Number)
@@ -117,7 +121,9 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
     const hl = segHighlight[sid] || 0
     const supp = segSupp[sid] || 0
     const narr = NARR_DURATIONS[sid] || 0
-    cursor += hl + Math.max(supp, narr)
+    // 权威段时长优先（音频为骨架）；否则退回 hl + max(supp, narr)
+    const segDur = SEG_DURATIONS ? (SEG_DURATIONS[sid] ?? 0) : 0
+    cursor += segDur > 0 ? segDur : (hl + Math.max(supp, narr))
   }
 
   // 第 2 遍: 放置 clip
@@ -209,10 +215,9 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
   for (let sid = 0; sid <= maxNarrSid; sid++) {
     const dur = NARR_DURATIONS[sid]
     if (!dur) continue
-    const segStart = secondsToFrames(segOffsets[sid] || 0, FPS)
-    const hlDur = secondsToFrames(segHighlight[sid] || 0, FPS)
-    const narrStart = segStart + hlDur
-    const src = `/tts_segments/narr_${String(sid).padStart(3, '0')}.wav`
+    // 旁白起点 = 段起点（解说画面在 supp 轨与旁白并行，不是 main 轨之后）
+    const narrStart = secondsToFrames(segOffsets[sid] || 0, FPS)
+    const src = `/tts_segments/narr_${String(sid).padStart(3, '0')}.wav${TASK_Q}`
     const durFrames = secondsToFrames(dur, FPS)
     const clipId = generateId(); const assetId = generateId()
     mediaList.push({ assetId, src, name: `解说 seg_${sid}`, kind: 'audio', durationSec: dur })

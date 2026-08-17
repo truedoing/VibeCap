@@ -45,7 +45,7 @@ const zoomToSlider = (z) => (Math.log(z) - Math.log(ZOOM_MIN)) / (Math.log(ZOOM_
 const sliderToZoom = (s) => Math.exp(Math.log(ZOOM_MIN) + s * (Math.log(ZOOM_MAX) - Math.log(ZOOM_MIN)))
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
-const TimelineControls = memo(function TimelineControls({ timelineRef, showRebuild = true, showTrackButtons = true }) {
+const TimelineControls = memo(function TimelineControls({ timelineRef, showRebuild = true, showTrackButtons = true, onRebuild }) {
   const engine = useTimelineEngine()
   const playback = usePlaybackEngine()
   const { invalidateTimeline } = useProject()
@@ -124,7 +124,9 @@ const TimelineControls = memo(function TimelineControls({ timelineRef, showRebui
           style={mainMuted ? { ...btnDisabled(false), background: 'rgba(225,29,72,0.12)', border: `1px solid ${theme.accent}`, color: theme.accentHover } : btnDisabled(false)}
           onClick={toggleMainMute}>{mainMuted ? '🔇 原声' : '🔊 原声'}</button>
         {showRebuild && (
-          <button type="button" className="elah-toolbar-btn" style={btnDisabled(false)} onClick={() => invalidateTimeline()} title="重建时间线">🔄 刷新</button>
+          <button type="button" className="elah-toolbar-btn" style={btnDisabled(false)}
+            onClick={() => (onRebuild ? onRebuild() : invalidateTimeline())}
+            title="重建时间线">🔄 刷新</button>
         )}
       </div>
 
