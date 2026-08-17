@@ -19,13 +19,7 @@ def run_pipeline(task_id: str, episodes: list, drama_name: str) -> None:
     steps = [
         {"id": "analyze", "label": f"分析 EP{all_eps_str}", "status": "pending",
          "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
-        {"id": "calibrate", "label": "交叉校准", "status": "pending",
-         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
-        {"id": "clean", "label": "数据清洗", "status": "pending",
-         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
         {"id": "build", "label": "重建索引", "status": "pending",
-         "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
-        {"id": "migrate", "label": "导入数据库", "status": "pending",
          "progress": 0, "detail": "", "elapsed": 0, "log_lines": []},
     ]
 
@@ -39,12 +33,9 @@ def run_pipeline(task_id: str, episodes: list, drama_name: str) -> None:
 
     def _run_all():
         try:
-            eps_args = ["--episodes"] + [str(e) for e in episodes]
+            eps_args = ["--ep", all_eps_str]
             _run(0, "analyze_episodes.py", eps_args, timeout=3600)
-            _run(1, "cross_calibrate.py", eps_args, timeout=600)
-            _run(2, "clean_data.py", eps_args, timeout=600)
-            _run(3, "build_index.py", ["--project", drama_name], timeout=300)
-            _run(4, "migrate_db.py", ["--project", drama_name], timeout=120)
+            _run(1, "build_index.py", ["--project", drama_name], timeout=300)
         except Exception as e:
             print(f"[pipeline] 流水线异常: {e}")
 

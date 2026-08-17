@@ -18,7 +18,7 @@ def api_data_quality(project: str = "都挺好"):
     for ep in range(1, 47):
         ep_dir = drama_dir / "sources" / f"ep{ep}"
         has_vlm = (ep_dir / "vlm_seg_cache_v3.json").exists()
-        has_asr = (ep_dir / "asr_result.json").exists()
+        has_asr = (ep_dir / "subtitle_result.json").exists()
         has_scene_map = (ep_dir / "scene_map.json").exists()
         has_synopsis = (ep_dir / "ep_synopsis.json").exists()
 
@@ -29,7 +29,7 @@ def api_data_quality(project: str = "都挺好"):
 
         asr_count = 0
         if has_asr:
-            try: asr_count = len(json.load(open(ep_dir / "asr_result.json")))
+            try: asr_count = len(json.load(open(ep_dir / "subtitle_result.json")))
             except: pass
 
         scene_map_count = 0

@@ -68,9 +68,9 @@ def startup(app, _args):
     if project_type == "drama":
         for ep in range(1, 47):
             ep_str = f"{ep:02d}"
-            asr_file = SOURCES_DIR / f"ep{ep}" / "asr_result.json"
+            asr_file = SOURCES_DIR / f"ep{ep}" / "subtitle_result.json"
             if not asr_file.exists():
-                asr_file = SOURCES_DIR / f"ep{ep_str}" / "asr_result.json"
+                asr_file = SOURCES_DIR / f"ep{ep_str}" / "subtitle_result.json"
             if not asr_file.exists():
                 asr_file = SOURCES_DIR / f"asr_ep{ep_str}.json"
             if not asr_file.exists():

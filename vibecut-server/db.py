@@ -512,7 +512,7 @@ class VibeCutDB:
 
         if drama_dir:
             # 读取原始 ASR 检测固定间隔
-            asr_file = Path(drama_dir) / "sources" / f"ep{ep}" / "asr_result.json"
+            asr_file = Path(drama_dir) / "sources" / f"ep{ep}" / "subtitle_result.json"
             if asr_file.exists():
                 try:
                     import json as _json
@@ -558,7 +558,7 @@ class VibeCutDB:
             # tiny: ~2s/段 3字, small: ~3s/段 6字, medium: ~3.5s/段 8字
             model_bonus = min(15, max(0, (avg_raw_dur - 2.2) * 5 + (avg_chars_per_seg - 3) * 1.5))
 
-            # 4. 字幕校准加分 (10%): cross_calibrate 效果
+            # 4. 字幕校准加分 (10%)
             sub_count = ep_data.get("subtitle_count", 0) or 0
             sub_bonus = min(10, sub_count / max(scene_count, 1) * 8)
 

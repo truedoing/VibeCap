@@ -149,7 +149,7 @@ cd vibecut-web && npm run dev
 ### VLM 分析 — 三层推理 + 情绪锚定
 
 ```
-ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情绪)
+字幕 (SRT下载) → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情绪)
          → VLM 画面分析 (scene_map mood 锚定, 1/3+2/3 位置采帧)
 ```
 
@@ -163,7 +163,7 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 
 三层:
 1. **DeepSeek 场记Agent** (`lib/scene_map.py`) → scene_map (人物+地点+事件+情绪+时间)
-2. **ASR 关键词锚定** → 精准时间边界
+2. **字幕关键词锚定** → 精准时间边界
 3. **VLM 画面理解** — mood 锚定 + 结构化JSON输出
 
 ### scene_map 数据质量
@@ -282,5 +282,5 @@ ASR 转写 → DeepSeek 场记Agent 生成 scene_map (人物+地点+事件+情�
 | `都挺好/sources/epN/scene_map.json` | ~3KB/集 | 场记Agent: 场景-人物-事件-情绪-时间映射 (46集1511场景, 100%完整) |
 | `都挺好/sources/epN/vlm_seg_cache_v3.json` | ~10KB/集 | VLM 画面分析 (25段/集, mood锚定) |
 | `都挺好/sources/epN/ep_synopsis.json` | ~500B/集 | DeepSeek 剧情概要 |
-| `都挺好/sources/epN/asr_result.json` | ~70KB/集 | faster-whisper ASR 转写 |
+| `都挺好/sources/epN/subtitle_result.json` | ~64KB/集 | 网上下载 SRT 字幕 |
 | `都挺好/tasks/文案脚本.json` | ~5KB | AI编剧生成的脚本 (兼容VibeEdit/ScriptPanel) |

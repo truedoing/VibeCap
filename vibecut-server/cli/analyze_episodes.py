@@ -34,85 +34,7 @@ def run_ffmpeg(cmd, timeout=180):
     return result
 
 
-# ═══════════════════════════════════ Step 1: 场景切分 ═══════════════════════════════════
-
-def detect_scenes(video_path, work_dir, segment_duration=10, max_duration=None):
-    scenes_file = work_dir / "scenes.json"
-    if scenes_file.exists() and not max_duration:
-        print(f"  scenes.json 已存在, 跳过")
-        return json.load(open(scenes_file))
-
-    result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-         "-of", "csv=p=0", str(video_path)],
-        capture_output=True, text=True
-    )
-    total_dur = float(result.stdout.strip())
-    if max_duration:
-        total_dur = min(total_dur, max_duration)
-
-    print(f"  按 {segment_duration}s 切分 (总长 {total_dur:.0f}s)...")
-    scenes = []
-    cursor = 0.0
-    while cursor < total_dur:
-        end = min(cursor + segment_duration, total_dur)
-        scenes.append({"start": round(cursor, 2), "end": round(end, 2)})
-        cursor = end
-
-    print(f"  → {len(scenes)} 个场景")
-    json.dump(scenes, open(scenes_file, 'w'), ensure_ascii=False, indent=2)
-    return scenes
-
-
-# ═══════════════════════════════════ Step 2: ASR ═══════════════════════════════════
-
-def extract_audio(video_path, work_dir):
-    audio_path = work_dir / "audio.wav"
-    if audio_path.exists():
-        return audio_path
-    print("  提取音频...")
-    run_ffmpeg(["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ar", "16000", "-ac", "1", str(audio_path)])
-    return audio_path
-
-def transcribe_asr(audio_path, work_dir, model_size="small"):
-    asr_file = work_dir / "asr_result.json"
-    if asr_file.exists():
-        return json.load(open(asr_file))
-    print(f"  ASR (faster-whisper {model_size})...")
-    from faster_whisper import WhisperModel
-    model = WhisperModel(model_size, device="cpu", compute_type="int8")
-    segments_out, _ = model.transcribe(str(audio_path), language="zh", beam_size=5,
-                                        vad_filter=True,
-                                        vad_parameters=dict(min_silence_duration_ms=500))
-    segments = []
-    for seg in segments_out:
-        segments.append({
-            "start": round(seg.start, 1), "end": round(seg.end, 1),
-            "text": seg.text.strip(), "confidence": round(seg.avg_logprob, 3),
-            "words": [{"word": w.word, "start": round(w.start, 2), "end": round(w.end, 2),
-                       "confidence": round(w.probability, 3)} for w in (seg.words or [])] if seg.words else []
-        })
-    json.dump(segments, open(asr_file, 'w'), ensure_ascii=False, indent=2)
-    print(f"  → {len(segments)} 段")
-    return segments
-
-
-# ═══════════════════════════════════ Step 3: 提帧 ═══════════════════════════════════
-
-def extract_frames(video_path, work_dir, fps=1):
-    frames_dir = work_dir / "frames"
-    if frames_dir.exists() and len(list(frames_dir.glob("*.jpg"))) > 10:
-        return sorted(frames_dir.glob("*.jpg"))
-    frames_dir.mkdir(exist_ok=True)
-    print(f"  提取帧 (fps={fps})...")
-    run_ffmpeg(["ffmpeg", "-y", "-i", str(video_path), "-vf", f"fps={fps}",
-                 str(frames_dir / "frame_%05d.jpg")])
-    frames = sorted(frames_dir.glob("*.jpg"))
-    print(f"  → {len(frames)} 帧")
-    return frames
-
-
-# ═══════════════════════════════════ Step 3: 提帧 ═══════════════════════════════════
+# ═══════════════════════════════════ Step 1: 提帧 ═══════════════════════════════════
 
 def extract_frames(video_path, work_dir, fps=1):
     frames_dir = work_dir / "frames"
@@ -426,8 +348,7 @@ def _skip_opening_result(idx: int, sm: dict) -> dict:
 
 # ═══════════════════════════════════ 主流程 ═══════════════════════════════════
 
-def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
-                    skip_vlm=False, skip_asr=False, proxy_res=None):
+def analyze_episode(ep, video_path, skip_vlm=False, proxy_res=None):
     work_dir = DRAMA_DIR / "sources" / f"ep{ep}"
     work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -440,35 +361,16 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
     print(f"输出: {work_dir}")
     print(f"{'='*60}")
 
-    # [1/5]
-    print("\n[1/5] 场景切分")
-    scenes = detect_scenes(video_path, work_dir, segment_duration)
+    # [1/4] 字幕 (网上下载 SRT，不再本地 whisper ASR)
+    sub_file = work_dir / "subtitle_result.json"
+    if not sub_file.exists():
+        print(f"\n[1/4] 字幕: 缺失 {sub_file.name}，跳过")
+        return None
+    asr_segments = json.load(open(sub_file))
+    print(f"\n[1/4] 字幕 (SRT): {len(asr_segments)} 条")
 
-    # [2/5]
-    if skip_asr:
-        asr_segments = json.load(open(work_dir / "asr_result.json"))
-        print(f"\n[2/5] ASR (已有): {len(asr_segments)} 段")
-    else:
-        print("\n[2/5] ASR")
-        asr_segments = transcribe_asr(extract_audio(video_path, work_dir), work_dir, asr_model)
-
-    # ── ASR 快速合并 (相邻<2s 合并为完整句) ──
-    merged_asr = []
-    cur = None
-    for seg in asr_segments:
-        if cur and seg['start'] - cur['end'] < 2:
-            cur['text'] += ' ' + seg['text']
-            cur['end'] = seg['end']
-        else:
-            if cur: merged_asr.append(cur)
-            cur = dict(seg)
-    if cur: merged_asr.append(cur)
-    asr_merged_file = work_dir / "asr_merged.json"
-    json.dump(merged_asr, open(asr_merged_file, 'w'), ensure_ascii=False, indent=2)
-    print(f"  ASR合并: {len(asr_segments)} → {len(merged_asr)} 句")
-
-    # [3/5]
-    print("\n[3/5] Scene Map")
+    # [2/4]
+    print("\n[2/4] Scene Map")
     from lib.scene_map import SceneMapAgent
     from lib.synopsis import to_text
     agent = SceneMapAgent()
@@ -497,8 +399,8 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
         for sm in scene_map:
             print(f"    [{sm['time_range'][0]}s-{sm['time_range'][1]}s] {sm['location']}: {', '.join(sm['characters'])}")
 
-    # [4/5]
-    print("\n[4/5] 提取帧")
+    # [3/4]
+    print("\n[3/4] 提取帧")
     frames = extract_frames(video_path, work_dir)
     frame_times = {}
     for f in frames:
@@ -506,9 +408,9 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
         if len(parts) == 2 and parts[1].isdigit():
             frame_times[f] = int(parts[1])
 
-    # [5/5] VLM
+    # [4/4] VLM
     # v3: 使用 scene_map 全集（不再跳过前60s），VLM 结果按 scene_map 原始下标存储
-    print(f"\n[5/5] VLM ({len(scene_map)} 段)")
+    print(f"\n[4/4] VLM ({len(scene_map)} 段)")
 
     cache_file = work_dir / "vlm_seg_cache_v3.json"
     cache = json.load(open(cache_file)) if cache_file.exists() else {}
@@ -563,7 +465,7 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
                   if set(r.get("_chars", [])) & set(scene_map[r["scene_map_index"]].get("characters", []))
                   or not scene_map[r["scene_map_index"]].get("characters"))
 
-    print(f"\n✅ EP{ep}: {len(scene_map)}段 → VLM {len(valid)}段有效, {len(asr_segments)} ASR")
+    print(f"\n✅ EP{ep}: {len(scene_map)}段 → VLM {len(valid)}段有效, {len(asr_segments)} 字幕")
     print(f"   Token: {total_prompt+total_completion:,} ({elapsed:.0f}s)")
     print(f"   人物: {char_ok}/{len(valid)} ({char_ok/len(valid)*100:.0f}%)" if valid else "")
     return seg_results
@@ -572,10 +474,7 @@ def analyze_episode(ep, video_path, segment_duration=10, asr_model="small",
 def main():
     p = argparse.ArgumentParser(description="EP VLM 分析 v2.3")
     p.add_argument("--ep", default="41")
-    p.add_argument("--segment", type=int, default=10)
-    p.add_argument("--skip-asr", action="store_true")
     p.add_argument("--skip-vlm", action="store_true")
-    p.add_argument("--asr-model", default="small")
     p.add_argument("--proxy", type=int, default=540, choices=[360, 540])
     p.add_argument("--no-proxy", action="store_true")
     args = p.parse_args()
@@ -591,8 +490,7 @@ def main():
         if not video_path.exists():
             print(f"❌ {video_path}")
             continue
-        analyze_episode(ep, video_path, args.segment, args.asr_model,
-                        args.skip_vlm, args.skip_asr, proxy_res)
+        analyze_episode(ep, video_path, args.skip_vlm, proxy_res)
 
 
 if __name__ == "__main__":

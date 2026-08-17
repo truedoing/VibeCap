@@ -41,11 +41,8 @@ vibecut-server/
 │       └── script_drama.py     ← SCRIPT_V2_PROMPT 模板
 │
 ├── cli/                        ← CLI 脚本 (数据管线 + 任务工具)
-│   ├── analyze_episodes.py     ← VLM 三层推理 (DeepSeek→ASR→VLM)
+│   ├── analyze_episodes.py     ← VLM 三层推理 (字幕→scene_map→VLM)
 │   ├── build_index.py          ← BGE索引统一入口
-│   ├── migrate_db.py           ← 导入数据库
-│   ├── cross_calibrate.py      ← 交叉校准
-│   ├── clean_data.py           ← 数据清洗
 │   ├── classify_transcript.py  ← 口播 ASR 分类
 │   ├── clean_interview_data.py ← 口播清洗
 │   ├── segment_transcript.py   ← 口播主题分段
@@ -103,7 +100,7 @@ cd vibecut-server
 | /asr/classified?project= | GET | LLM分类后的ASR |
 | /data/process | POST | 启动后台加工流水线 |
 | /data/process_status?task_id= | GET | 流水线进度 |
-| /data/quality?project= | GET | 每集数据质量 (ASR+VLM+scene_map+概要) |
+| /data/quality?project= | GET | 每集数据质量 (字幕+VLM+scene_map+概要) |
 | /export/extract_clips | POST | 批量提取高清片段 |
 | /picks | POST | 同步picks到SQLite |
 | /{filename}?task= | GET | 任务目录文件 (SPA兜底) |
@@ -135,7 +132,7 @@ cd vibecut-server
 
 ```
 源视频 → analyze_episodes → VLM 场景分析 (vlm_seg_cache_v3.json)
-    │         (场景+ASR+VLM)         │
+    │        (字幕+scene_map+VLM)       │
     │                                ▼
     │                         scene_map.json (46集1511场景, 100%完整)
     │                                │
