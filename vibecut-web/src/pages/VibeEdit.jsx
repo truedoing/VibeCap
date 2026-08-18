@@ -11,7 +11,7 @@ import {
   EditorProvider, Preview, Timeline,
   createDefaultDemuxerFactory,
   useTimelineEngine,
-  useTracksStore, usePlaybackStore, useMediaLibraryStore,
+  useTracksStore, usePlaybackStore, useMediaLibraryStore, useSelectionStore,
   secondsToFrames, generateId,
 } from '@elah/editor'
 
@@ -25,11 +25,14 @@ import TimelineControls from '../components/TimelineControls'
 import ClipLinker from '../hooks/useLinkedClips'
 import { buildProjectFromProxyPicks, linkClipPair, clearLinkedPairs } from '../lib/timelineBuilder'
 import { fetchProxyManifest, proxyUrlForEpisode, proxyInfoForEpisode } from '../lib/proxyEngine'
-import { buildPicksFromStoryboard, buildSourceFileToEp } from '../lib/storyboardUtils'
+import { buildPicksFromStoryboard, buildSourceFileToEp, resolveShotSource } from '../lib/storyboardUtils'
 import { migratePicks } from '../model/migrate'
 
 const FPS = 25
 const STAGE = { width: 1920, height: 1080 }
+const ZOOM_MIN = 0.02
+const ZOOM_MAX = 50
+const ZOOM_WHEEL_FACTOR = 1.2  // 滚轮缩放倍率（对数尺度，平滑）
 const programEngineRef = { current: null }
 const T = { border: colors.border, borderSubtle: colors.borderSubtle, bgPanel: colors.bg, bgSecondary: '#0D1017' }
 
@@ -76,6 +79,21 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId, sto
         console.log(`[prg] 缓存模式不匹配 (cached=${cachedTrackCount} expected=${expectedTrackCount}), 重新初始化`)
       } else {
         engine.loadProject(vibeTimeline)
+        // 缓存恢复时重建 clipRegistry（clipId → ep/秒），供「点 clip → 大纲定位」联动
+        const registry = {}
+        for (const clips of Object.values(vibeTimeline.clips || {})) {
+          for (const c of clips) {
+            if (c.type !== 'video') continue
+            const m = String(c.name || '').match(/EP(\d+)/)
+            if (!m) continue
+            registry[c.id] = {
+              ep: parseInt(m[1]),
+              sourceStartSec: (c.sourceStartFrame || 0) / FPS,
+              sourceEndSec: ((c.sourceStartFrame || 0) + (c.sourceDurationFrames || 0)) / FPS,
+            }
+          }
+        }
+        window.__vibe_clipRegistry = registry
         const store = useMediaLibraryStore.getState()
         for (const id of (vibeMediaCache.order || [])) {
           if (vibeMediaCache.assets[id] && !store.assets[id]) store.addAsset(vibeMediaCache.assets[id])
@@ -206,16 +224,18 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId, sto
       }
 
       const mode = isInterview ? 'interview' : 'drama'
-      const { project: elahProject, mediaList } = buildProjectFromProxyPicks(
+      const { project: elahProject, mediaList, clipRegistry } = buildProjectFromProxyPicks(
         picks, proxyManifest, [], { mode, narrDurations, segDurations, taskName: taskId }
       )
+      // clipRegistry: clipId → {ep, sourceStartSec, sourceEndSec}，供「点时间轴 clip → 大纲定位」反查
+      window.__vibe_clipRegistry = clipRegistry
 
       engine.loadProject(elahProject)
       const store = useMediaLibraryStore.getState()
       const order = []
       for (const m of mediaList) {
-        if (!store.assets[m.assetId]) store.addAsset(m)
-        order.push(m.assetId)
+        if (!store.assets[m.id]) store.addAsset(m)
+        order.push(m.id)
       }
       saveTimelineCache(elahProject, { assets: { ...store.assets }, order }, 'vibe')
       didAutoBuild.current = true
@@ -251,7 +271,9 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId, sto
       clearTimeout(saveTimer.current)
       saveTimer.current = setTimeout(() => {
         const prj = engine.getProject()
-        const hasContent = Object.values(prj.clips || {}).some(arr => arr.some(c => c.src && c.src.length > 5))
+        // 占位 clip(name='·') 不视为内容 —— 否则占位阶段就把空时间轴缓存下来，reload 恢复成只有占位、永不 auto-build
+        const hasContent = Object.values(prj.clips || {}).some(arr =>
+          arr.some(c => c.name !== '·' && c.src && c.src.length > 5))
         if (hasContent || !empty) {
           empty = false
           saveTimelineCache(prj, { assets: useMediaLibraryStore.getState().assets, order: useMediaLibraryStore.getState().order }, 'vibe')
@@ -456,10 +478,40 @@ export default function VibeEdit() {
     document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up)
   }
 
+  // 滚轮缩放：拦截 Elah 内部的线性 ±0.5（低端巨跳、高端微调），改用乘法缩放（对数尺度平滑）
+  const handleTimelineWheel = useCallback((e) => {
+    if (!e.ctrlKey && !e.metaKey) return  // 非缩放滚轮 → 交给默认横向滚动
+    e.preventDefault()
+    e.stopPropagation()  // 捕获阶段拦截，阻止 Elah 的线性缩放监听触发
+    const zoom = usePlaybackStore.getState().zoom
+    const factor = e.deltaY > 0 ? 1 / ZOOM_WHEEL_FACTOR : ZOOM_WHEEL_FACTOR
+    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * factor))
+    usePlaybackStore.getState().setZoom(next)
+  }, [])
+
   // v3: 分镜序列上下文 — 整段解说词
   const storyCtx = { sid: curSid, narration: curNarration, taskId, segments, cover, trigger: storyTrigger }
   // 分镜脚本 source_files 反查（文件名 → ep），属性面板解析镜头用
   const sourceFileToEp = useMemo(() => buildSourceFileToEp(storyboard?.source_files), [storyboard])
+
+  // 点时间轴 clip → 反查对应 shot，联动大纲选中（文案↔视频对应查看）
+  const selectedClipId = useSelectionStore((s) => (s.selectedClipIds.size === 1 ? [...s.selectedClipIds][0] : null))
+  useEffect(() => {
+    if (!selectedClipId || !storyboard) return
+    const ref = window.__vibe_clipRegistry?.[selectedClipId]
+    if (!ref) return
+    const { ep, sourceStartSec } = ref
+    for (const seg of storyboard.segments || []) {
+      for (const shot of seg.shot_sequence || []) {
+        const src = resolveShotSource(shot, sourceFileToEp)
+        if (src && src.ep === ep && Math.abs(src.startSec - sourceStartSec) < 1.5) {
+          setSelectedShot(shot)
+          return
+        }
+      }
+    }
+  }, [selectedClipId, storyboard, sourceFileToEp])
+
   const leftW = scriptCollapsed ? 0 : scriptW
   const rightPanelW = rightCollapsed ? 0 : rightW
 
@@ -499,7 +551,9 @@ export default function VibeEdit() {
             <div style={{ height: `${bottomPct}%`, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
               <TimelineControls timelineRef={prgTLRef} showTrackButtons={true} showRebuild={true}
                 onRebuild={() => { invalidateTimeline(); setRebuildKey(k => k + 1) }} />
-              <Timeline key={prgReady ? 'ready' : 'init'} ref={prgTLRef} fps={FPS} sidebarWidth={160} style={{ flex: 1, minHeight: 0, minWidth: 0 }} />
+              <div onWheelCapture={handleTimelineWheel} style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                <Timeline key={prgReady ? 'ready' : 'init'} ref={prgTLRef} fps={FPS} sidebarWidth={160} style={{ flex: 1, minHeight: 0, minWidth: 0 }} />
+              </div>
             </div>
           </div>
 

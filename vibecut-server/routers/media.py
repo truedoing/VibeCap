@@ -98,3 +98,45 @@ def api_serve_poster(file_path: str):
     return FileResponse(path, media_type=mime)
 
 
+@router.get("/thumbs/{ep}/{sec}.jpg")
+def api_thumb(ep: int, sec: int):
+    """代理视频缩略图 — 按剧集+秒数抽一帧（低分辨率，供时间轴显示）
+
+    缓存到 PROXY_DIR/thumbs/，首次请求用 ffmpeg 抽帧，后续直接返回文件。
+    """
+    import subprocess
+    from config import PROXY_DIR
+
+    # 定位代理视频（优先 manifest，fallback 命名规则）
+    proxy_file = None
+    try:
+        from handlers.media import get_proxy_manifest
+        m = get_proxy_manifest()
+        hit = next((x for x in m.get("proxies", []) if x.get("ep") == ep), None)
+        if hit:
+            proxy_file = PROXY_DIR / hit["file"]
+    except Exception:
+        proxy_file = None
+    if not proxy_file or not proxy_file.exists():
+        proxy_file = PROXY_DIR / f"都挺好_{ep:02d}_540p.mp4"
+    if not proxy_file.exists():
+        raise HTTPException(404)
+
+    sec = max(0, int(sec))
+    thumb_dir = PROXY_DIR / "thumbs"
+    thumb_dir.mkdir(exist_ok=True)
+    thumb_path = thumb_dir / f"ep{ep:02d}_{sec}.jpg"
+
+    if not thumb_path.exists():
+        # 快速 seek 抽帧 + 缩放到 320x180
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-ss", str(sec), "-i", str(proxy_file),
+               "-frames:v", "1", "-vf", "scale=320:180", "-q:v", "4", str(thumb_path)]
+        subprocess.run(cmd, capture_output=True, text=True)
+        if not thumb_path.exists():
+            raise HTTPException(404)
+
+    return FileResponse(thumb_path, media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+

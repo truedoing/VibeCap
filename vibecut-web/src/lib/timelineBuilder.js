@@ -10,9 +10,10 @@ import { resolveClipSource, proxyUrlForEpisode } from './proxyEngine'
 const FPS = 25
 const STAGE = { width: 1920, height: 1080 }
 
-function thumbnailUrl(filePath) {
-  if (!filePath) return undefined
-  return undefined
+function thumbnailUrl(ep, sec) {
+  if (ep == null || sec == null) return undefined
+  // 时间轴缩略图：后端按 ep+秒 从代理视频抽一帧（低分辨率 jpg）
+  return `/thumbs/${ep}/${Math.floor(sec)}.jpg`
 }
 
 /** 从 manifest 查找 proxy 文件名 (v0.11: 替代硬编码 proxyFileName) */
@@ -150,8 +151,9 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
 
         const vClipId = generateId(); const vAssetId = generateId()
         mediaList.push({
-          assetId: vAssetId, src, name: `S${sid} EP${m.ep} 主`,
-          kind: 'video', durationSec: resolved.durationSec, thumbnailUrl: thumbnailUrl()
+          id: vAssetId, src, name: `S${sid} EP${m.ep} 主`,
+          kind: 'video', durationSec: resolved.durationSec,
+          thumbnailUrl: thumbnailUrl(m.ep, resolved.sourceStartSec),
         })
         mainVideoClips.push({
           id: vClipId, trackId: mainVideoId, type: 'video', assetId: vAssetId,
@@ -165,7 +167,7 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
 
         const aClipId = generateId(); const aAssetId = generateId()
         mediaList.push({
-          assetId: aAssetId, src, name: `S${sid} EP${m.ep} 原声`,
+          id: aAssetId, src, name: `S${sid} EP${m.ep} 原声`,
           kind: 'audio', durationSec: resolved.durationSec,
         })
         mainAudioClips.push({
@@ -192,8 +194,9 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
 
         const clipId = generateId(); const assetId = generateId()
         mediaList.push({
-          assetId, src, name: `S${sid} EP${s.ep} 补`,
-          kind: 'video', durationSec: resolved.durationSec, thumbnailUrl: thumbnailUrl()
+          id: assetId, src, name: `S${sid} EP${s.ep} 补`,
+          kind: 'video', durationSec: resolved.durationSec,
+          thumbnailUrl: thumbnailUrl(s.ep, resolved.sourceStartSec),
         })
         suppClips.push({
           id: clipId, trackId: suppId, type: 'video', assetId,
@@ -220,7 +223,7 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
     const src = `/tts_segments/narr_${String(sid).padStart(3, '0')}.wav${TASK_Q}`
     const durFrames = secondsToFrames(dur, FPS)
     const clipId = generateId(); const assetId = generateId()
-    mediaList.push({ assetId, src, name: `解说 seg_${sid}`, kind: 'audio', durationSec: dur })
+    mediaList.push({ id: assetId, src, name: `解说 seg_${sid}`, kind: 'audio', durationSec: dur })
     narrClips.push({
       id: clipId, trackId: narrId, type: 'audio', assetId,
       name: `解说 seg_${sid}`, src,

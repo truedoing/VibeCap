@@ -21,6 +21,7 @@ export default defineConfig({
       '/clips': 'http://localhost:8765',
       '/copy': 'http://localhost:8765',
       '/tts_segments': 'http://localhost:8765',
+      '/thumbs': 'http://localhost:8765',
       '/storyboard_suggest': 'http://localhost:8765',
       '/chat': 'http://localhost:8765',
       '/dialogue_match': 'http://localhost:8765',

@@ -6,7 +6,7 @@
  * - 展开看该段 shot_sequence，shot_type 6 类分色
  * - 点击镜头 → 用 source_file(EP) + in_point(timecode) + duration_sec 定位源检视器预览真实画面
  */
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { ChevronDown, ChevronRight, Play } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { colors } from '../styles/theme'
@@ -36,6 +36,7 @@ function ShotRow({ shot, onPreview, onSelect, selected }) {
   return (
     <button
       onClick={() => { onSelect?.(shot); if (hasSource) onPreview(shot) }}
+      data-shot-id={shot.shot_id}
       className={cn(
         'w-full text-left px-2 py-1.5 rounded flex items-start gap-1.5 transition-colors border-l-2 cursor-pointer',
         hasSource ? 'hover:bg-accent/50' : 'opacity-45 hover:opacity-75',
@@ -105,6 +106,7 @@ function SegmentBlock({ seg, expanded, onToggle, onPreview, onSelect, selectedSh
 /* ── 主组件 ── */
 export default function StoryboardOutline({ storyboard, loading, error, notice, onReload, onSelectShot, selectedShotId }) {
   const [openSeg, setOpenSeg] = useState(null)
+  const listRef = useRef(null)
 
   // 默认展开第一段
   useMemo(() => {
@@ -112,6 +114,25 @@ export default function StoryboardOutline({ storyboard, loading, error, notice, 
       setOpenSeg(storyboard.segments[0].seq)
     }
   }, [storyboard])
+
+  // 外部定位（点时间轴 clip 联动）：自动展开对应段 + 滚动到该镜头
+  useEffect(() => {
+    if (!selectedShotId || !storyboard) return
+    let targetSeq = null
+    for (const seg of storyboard.segments || []) {
+      if ((seg.shot_sequence || []).some(s => s.shot_id === selectedShotId)) {
+        targetSeq = seg.seq
+        break
+      }
+    }
+    if (targetSeq == null) return
+    setOpenSeg(targetSeq)
+    // 等段展开渲染后再滚动定位
+    setTimeout(() => {
+      const el = listRef.current?.querySelector(`[data-shot-id="${selectedShotId}"]`)
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 60)
+  }, [selectedShotId, storyboard])
 
   const sourceFileToEp = useMemo(() => buildSourceFileToEp(storyboard?.source_files), [storyboard])
 
@@ -160,7 +181,7 @@ export default function StoryboardOutline({ storyboard, loading, error, notice, 
       )}
 
       {/* 段列表 */}
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-1.5 space-y-1">
+      <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-1.5 space-y-1">
         {(storyboard.segments || []).map((seg) => (
           <SegmentBlock
             key={seg.seq}
