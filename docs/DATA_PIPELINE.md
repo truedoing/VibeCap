@@ -1,6 +1,10 @@
-# VibeCut 数据加工流程 v2
+# ⚠️ 已废弃 (DEPRECATED) — VibeCut 数据加工流程 v2
 
-## 概述
+> **本文件已废弃，勿再参照。** 描述的是 v2 旧架构（whisper ASR + `cross_calibrate.py` + `clean_data.py`），
+> 其中 `cross_calibrate.py`、`clean_data.py`、`migrate_db.py` 等脚本**已不存在**。
+> 当前生效的管线（字幕 → scene_map → VLM 三层推理）请见 **[DATA_PIPELINE_V3.md](./DATA_PIPELINE_V3.md)**。
+
+## 概述（历史存档）
 
 ```
 原剧视频 (.mp4)

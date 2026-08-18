@@ -1,5 +1,34 @@
 # VibeCut 变更日志
 
+## v1.4.1 (2026-08-18) — ep_synopsis 结构化升级 + 数据管线文档 (PATCH)
+
+### 数据架构
+
+- **ep_synopsis.json 结构化升级**：从纯文本简介升级为「宏观叙事索引」，与 scene_map 明确分工
+  - 新结构：`theme / plot_arc / character_arcs / key_conflicts / emotional_curve / key_events`
+  - 不再越界塞 location/characters 逐场景字段（那是 scene_map 的职责）
+  - `key_events.time_range` 作为 synopsis↔scene_map 的锚点，供下游从关键事件跳转镜头
+  - 46 集全量重生成：255 关键事件全部映射 scene_map，0 人名污染
+
+### 新增
+
+- `lib/names.py` — 人名归一化映射单一真相（`NAME_MAP` + `normalize_names`），被 scene_map 与 normalize_asr_names 共用
+- `lib/synopsis.py` — 双格式 synopsis 加载器 + `to_text`（统一消费方接入点）
+- `cli/regenerate_synopsis.py` — ep_synopsis 结构化迁移工具（`--ep`/`--force`/`--dry-run`）
+- `docs/DATA_PIPELINE_V3.md` — 当前生效的数据管线文档（三层推理全景）
+
+### 修改
+
+- `lib/scene_map.py` — `build_synopsis` 返回结构化 dict + 人名/字段兜底
+- 消费方改造：`agents/drama_script_agents.py` + `handlers/storyboard.py` 改读结构化字段
+- `cli/analyze_episodes.py` 写入侧适配新结构
+
+### 废弃
+
+- `docs/DATA_PIPELINE.md`（v2：whisper ASR + cross_calibrate + clean_data）标记废弃，其脚本已不存在，参见 DATA_PIPELINE_V3.md
+
+---
+
 ## v1.4.0 (2026-08-16) — 编剧台 V2: 单 LLM + 方法论 (MAJOR)
 
 ### 范式重构
