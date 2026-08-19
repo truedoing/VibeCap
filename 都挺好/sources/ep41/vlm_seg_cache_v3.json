@@ -53,7 +53,7 @@
     "scene_map_index": 2,
     "start": 180,
     "end": 240,
-    "visual_summary": "吴非坐在沙发上，身体转向身旁的苏明哲，脸上带着难以置信的表情，一手做出质问的手势。苏明哲格子衬衫，坐在吴非旁边，低头避开她的目光，双手交握，神情窘迫。背景字幕点明关键：房产证上‘只有咱爸一个人的名字’。",
+    "visual_summary": "苏明玉办公室内，吴非坐在沙发上，身体转向身旁的苏明哲，脸上带着难以置信的表情，一手做出质问的手势。苏明哲格子衬衫，坐在吴非旁边，低头避开她的目光，双手交握，神情窘迫。背景字幕点明关键：房产证上‘只有咱爸一个人的名字’。",
     "shot_size": "近景",
     "composition": "双人",
     "angle": "平视",
@@ -126,32 +126,7 @@
       "吴非"
     ]
   },
-  "5": {
-    "scene_map_index": 5,
-    "start": 360,
-    "end": 420,
-    "visual_summary": "苏明玉在办公室打电话神情严肃，苏明成在家中接听电话表情不耐",
-    "shot_size": "近景",
-    "composition": "双人",
-    "angle": "平视",
-    "emotional_tone": "紧张对立",
-    "intensity": 5,
-    "lighting": "自然光",
-    "actions": [
-      "苏明玉握着电话说话",
-      "苏明成皱眉接听电话"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1540,
-      "completion_tokens": 462,
-      "total_tokens": 2002
-    },
-    "_chars": [
-      "苏明玉",
-      "苏明成"
-    ]
-  },
-  "6": {
+  "7": {
     "scene_map_index": 6,
     "start": 420,
     "end": 480,
@@ -176,11 +151,11 @@
       "小蔡"
     ]
   },
-  "7": {
+  "8": {
     "scene_map_index": 7,
     "start": 480,
     "end": 540,
-    "visual_summary": "苏明成攥拳怒斥，小蔡与苏大强神情凝重，双方对峙，氛围剑拔弩张",
+    "visual_summary": "苏明成持刀怒斥，小蔡与苏大强神情凝重，双方对峙，氛围剑拔弩张。",
     "shot_size": "近景",
     "composition": "三人",
     "angle": "平视",
@@ -204,11 +179,11 @@
       "朱丽"
     ]
   },
-  "8": {
+  "9": {
     "scene_map_index": 8,
     "start": 540,
     "end": 600,
-    "visual_summary": "电梯内苏大强神情凝重，室内小蔡持玻璃杯与苏大强对峙，氛围紧张。",
+    "visual_summary": "苏大强家室内，苏明玉与苏大强面对面站立，苏明玉神情严肃，苏大强神情凝重，氛围紧张。",
     "shot_size": "中景",
     "composition": "单人",
     "angle": "平视",
@@ -229,7 +204,7 @@
       "苏明玉"
     ]
   },
-  "9": {
+  "10": {
     "scene_map_index": 9,
     "start": 600,
     "end": 660,
@@ -254,7 +229,7 @@
       "苏明玉"
     ]
   },
-  "10": {
+  "11": {
     "scene_map_index": 10,
     "start": 660,
     "end": 720,
@@ -279,7 +254,7 @@
       "小蔡"
     ]
   },
-  "11": {
+  "12": {
     "scene_map_index": 11,
     "start": 720,
     "end": 780,
@@ -304,7 +279,7 @@
       "小蔡"
     ]
   },
-  "12": {
+  "13": {
     "scene_map_index": 12,
     "start": 780,
     "end": 840,
@@ -329,7 +304,7 @@
       "小蔡"
     ]
   },
-  "13": {
+  "14": {
     "scene_map_index": 13,
     "start": 840,
     "end": 900,
@@ -354,7 +329,7 @@
       "苏明玉"
     ]
   },
-  "14": {
+  "15": {
     "scene_map_index": 14,
     "start": 900,
     "end": 990,
@@ -379,7 +354,7 @@
       "苏明玉"
     ]
   },
-  "15": {
+  "16": {
     "scene_map_index": 15,
     "start": 990,
     "end": 1050,
@@ -404,7 +379,7 @@
       "吴非"
     ]
   },
-  "16": {
+  "17": {
     "scene_map_index": 16,
     "start": 1050,
     "end": 1110,
@@ -429,11 +404,11 @@
       "吴非"
     ]
   },
-  "17": {
+  "18": {
     "scene_map_index": 17,
     "start": 1110,
     "end": 1170,
-    "visual_summary": "吴非（黑衣）、苏明哲（灰绿衣）、老苏（棕衣戴眼镜）围坐中式餐桌，老苏开口诉说，苏明哲手撑脸颊，吴非交握双手倾听",
+    "visual_summary": "吴非（黑衣）在厨房照顾孩子，苏明哲（灰绿衣）在旁反思父亲问题，两人神情凝重。",
     "shot_size": "中景",
     "composition": "单人",
     "angle": "平视",
@@ -456,7 +431,7 @@
       "小小苏"
     ]
   },
-  "18": {
+  "19": {
     "scene_map_index": 18,
     "start": 1170,
     "end": 1230,
@@ -482,7 +457,7 @@
       "老聂"
     ]
   },
-  "19": {
+  "20": {
     "scene_map_index": 19,
     "start": 1230,
     "end": 1290,
@@ -508,7 +483,7 @@
       "老聂"
     ]
   },
-  "20": {
+  "21": {
     "scene_map_index": 20,
     "start": 1290,
     "end": 1350,
@@ -533,7 +508,7 @@
       "苏大强"
     ]
   },
-  "21": {
+  "22": {
     "scene_map_index": 21,
     "start": 1350,
     "end": 1410,
@@ -558,7 +533,7 @@
       "苏大强"
     ]
   },
-  "22": {
+  "23": {
     "scene_map_index": 22,
     "start": 1410,
     "end": 1470,
@@ -584,7 +559,7 @@
       "苏大强"
     ]
   },
-  "23": {
+  "24": {
     "scene_map_index": 23,
     "start": 1470,
     "end": 1530,
@@ -609,7 +584,7 @@
       "苏大强"
     ]
   },
-  "24": {
+  "25": {
     "scene_map_index": 24,
     "start": 1530,
     "end": 1590,
@@ -634,7 +609,7 @@
       "苏大强"
     ]
   },
-  "25": {
+  "26": {
     "scene_map_index": 25,
     "start": 1590,
     "end": 1650,
@@ -659,7 +634,7 @@
       "苏大强"
     ]
   },
-  "26": {
+  "27": {
     "scene_map_index": 26,
     "start": 1650,
     "end": 1710,
@@ -684,7 +659,7 @@
       "苏大强"
     ]
   },
-  "27": {
+  "28": {
     "scene_map_index": 27,
     "start": 1710,
     "end": 1770,
@@ -709,7 +684,7 @@
       "苏大强"
     ]
   },
-  "28": {
+  "29": {
     "scene_map_index": 28,
     "start": 1770,
     "end": 1800,
@@ -734,11 +709,11 @@
       "苏大强"
     ]
   },
-  "29": {
+  "30": {
     "scene_map_index": 29,
     "start": 1800,
     "end": 1980,
-    "visual_summary": "穿深绿色羽绒服的人背对镜头，双手背在身后，在厨房与卧室间的过道中缓步走向远处房门，身形在昏暗光线下显得格外孤单。",
+    "visual_summary": "苏大强在昏暗光线下收拾行李，决定卖房离开，神情落寞。",
     "shot_size": "全景",
     "composition": "单人",
     "angle": "平视",
@@ -758,7 +733,7 @@
       "苏大强"
     ]
   },
-  "30": {
+  "31": {
     "scene_map_index": 30,
     "start": 1980,
     "end": 2040,
@@ -783,7 +758,7 @@
       "苏明成"
     ]
   },
-  "31": {
+  "32": {
     "scene_map_index": 31,
     "start": 2040,
     "end": 2100,
@@ -810,7 +785,7 @@
       "朱丽"
     ]
   },
-  "32": {
+  "33": {
     "scene_map_index": 32,
     "start": 2100,
     "end": 2160,
@@ -834,7 +809,7 @@
       "苏明玉"
     ]
   },
-  "33": {
+  "34": {
     "scene_map_index": 33,
     "start": 2160,
     "end": 2220,
@@ -859,7 +834,7 @@
       "小蔡"
     ]
   },
-  "34": {
+  "35": {
     "scene_map_index": 34,
     "start": 2220,
     "end": 2280,
@@ -884,7 +859,7 @@
       "小蔡"
     ]
   },
-  "35": {
+  "36": {
     "scene_map_index": 35,
     "start": 2280,
     "end": 2340,
@@ -909,7 +884,7 @@
       "小蔡"
     ]
   },
-  "36": {
+  "37": {
     "scene_map_index": 36,
     "start": 2340,
     "end": 2400,
@@ -934,7 +909,7 @@
       "小蔡"
     ]
   },
-  "37": {
+  "38": {
     "scene_map_index": 37,
     "start": 2400,
     "end": 2460,
@@ -958,33 +933,7 @@
       "苏明玉"
     ]
   },
-  "38": {
-    "scene_map_index": 38,
-    "start": 2460,
-    "end": 2520,
-    "visual_summary": "苏明成（赤上身，戴吊坠）在卧室床头紧盯手机，朱丽裹格子被面露惊惶；苏明玉（米色风衣）在柜台急按手机，三人因老父发遗言焦灼寻人。",
-    "shot_size": "中景",
-    "composition": "群像",
-    "angle": "平视",
-    "emotional_tone": "紧张焦灼",
-    "intensity": 4,
-    "lighting": "冷调",
-    "actions": [
-      "紧盯手机查看消息",
-      "操作手机联系"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1534,
-      "completion_tokens": 1674,
-      "total_tokens": 3208
-    },
-    "_chars": [
-      "苏明玉",
-      "苏明成",
-      "朱丽"
-    ]
-  },
-  "39": {
+  "41": {
     "scene_map_index": 39,
     "start": 2520,
     "end": 2610,
@@ -1007,5 +956,62 @@
     "_chars": [
       "苏明玉"
     ]
+  },
+  "5": {
+    "visual_summary": "办公室男子紧张通话，客厅男女激烈争吵，情绪从焦虑到冲突",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "紧张、冲突",
+    "intensity": 5,
+    "lighting": "冷调、暖调",
+    "actions": [
+      "通话",
+      "争吵"
+    ],
+    "scene_map_index": 5,
+    "start": 360,
+    "end": 396
+  },
+  "6": {
+    "visual_summary": "格子衬衫中年男子坐沙发沉思，随后低头神情凝重，后切换至一男一女对话场景",
+    "shot_size": "近景",
+    "composition": "单人/双人",
+    "angle": "平视",
+    "emotional_tone": "沉重、无奈、纠结",
+    "intensity": 3,
+    "lighting": "暖调",
+    "actions": [
+      "坐沙发",
+      "低头沉思",
+      "双手交握",
+      "转身面对"
+    ],
+    "scene_map_index": 6,
+    "start": 396,
+    "end": 420
+  },
+  "39": {
+    "visual_summary": "深夜卧室里，男子举着手机通话，神情焦急，身旁女子被惊动坐起查看，氛围凝重。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "紧张焦急",
+    "intensity": 4,
+    "lighting": "暖调暗光",
+    "actions": [
+      "男子手持手机贴耳通话",
+      "女子从床上坐起探身查看"
+    ],
+    "scene_map_index": 39,
+    "start": 2460,
+    "end": 2490
+  },
+  "40": {
+    "visual_summary": "The user wants a JSON description of a scene based on the provided images and dialogue.\n\n**Scene Analysis:**\n1.  **Visuals**:\n*   Image 1 & 2: A man (shirtless) and a woman in bed. The man is on the p",
+    "error": "parse",
+    "scene_map_index": 40,
+    "start": 2490,
+    "end": 2520
   }
 }

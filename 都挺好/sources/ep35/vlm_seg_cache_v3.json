@@ -148,36 +148,7 @@
       "舅妈"
     ]
   },
-  "6": {
-    "scene_map_index": 6,
-    "start": 870,
-    "end": 990,
-    "visual_summary": "众诚公司会议室，小蒙总汇报迪斯项目，老任质疑成交价过低，苏明玉解释长期合作意向，小李反驳，气氛严肃对峙。",
-    "shot_size": "中景",
-    "composition": "群像",
-    "angle": "平视",
-    "emotional_tone": "严肃对峙",
-    "intensity": 4,
-    "lighting": "冷调",
-    "actions": [
-      "汇报迪斯项目",
-      "质疑成交价",
-      "解释长期合作意向",
-      "反驳观点"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1556,
-      "completion_tokens": 1144,
-      "total_tokens": 2700
-    },
-    "_chars": [
-      "苏明玉",
-      "小蒙总",
-      "老任",
-      "小李"
-    ]
-  },
-  "7": {
+  "8": {
     "scene_map_index": 7,
     "start": 990,
     "end": 1080,
@@ -202,7 +173,7 @@
       "小蔡"
     ]
   },
-  "8": {
+  "9": {
     "scene_map_index": 8,
     "start": 1080,
     "end": 1200,
@@ -229,7 +200,7 @@
       "苏明成"
     ]
   },
-  "9": {
+  "10": {
     "scene_map_index": 9,
     "start": 1200,
     "end": 1350,
@@ -254,7 +225,7 @@
       "苏明成"
     ]
   },
-  "10": {
+  "11": {
     "scene_map_index": 10,
     "start": 1350,
     "end": 1530,
@@ -279,36 +250,11 @@
       "苏明成"
     ]
   },
-  "11": {
-    "scene_map_index": 11,
-    "start": 1530,
-    "end": 1650,
-    "visual_summary": "舅舅手持文件夹指向苏明成，两人在办公室中央对峙，舅舅身体前倾，苏明成后退半步双手抬起辩解，背景是玻璃办公墙和沙发。",
-    "shot_size": "中景",
-    "composition": "双人",
-    "angle": "平视",
-    "emotional_tone": "激烈对峙",
-    "intensity": 4,
-    "lighting": "冷调",
-    "actions": [
-      "舅舅挥文件夹指责",
-      "苏明成后退抬手辩解"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1036,
-      "completion_tokens": 504,
-      "total_tokens": 1540
-    },
-    "_chars": [
-      "苏明成",
-      "舅舅"
-    ]
-  },
-  "12": {
+  "14": {
     "scene_map_index": 12,
     "start": 1650,
     "end": 1770,
-    "visual_summary": "黑衣女性手持文件夹站在办公室，表情严肃，字幕显示“果然是扶不起的阿斗”，暗示冲突与责备。",
+    "visual_summary": "苏明玉（黑衣女性）手持文件夹站在办公室，表情严肃，舅舅和舅妈与苏明成冲突升级，苏明玉介入，苏明成被开除。",
     "shot_size": "中景",
     "composition": "单人",
     "angle": "平视",
@@ -331,7 +277,7 @@
       "苏明玉"
     ]
   },
-  "13": {
+  "15": {
     "scene_map_index": 13,
     "start": 1770,
     "end": 1890,
@@ -357,7 +303,7 @@
       "苏明玉"
     ]
   },
-  "14": {
+  "16": {
     "scene_map_index": 14,
     "start": 1890,
     "end": 2010,
@@ -382,7 +328,7 @@
       "小蒙总"
     ]
   },
-  "15": {
+  "17": {
     "scene_map_index": 15,
     "start": 2010,
     "end": 2130,
@@ -409,7 +355,7 @@
       "医生"
     ]
   },
-  "16": {
+  "18": {
     "scene_map_index": 16,
     "start": 2130,
     "end": 2250,
@@ -438,7 +384,7 @@
       "苏大强"
     ]
   },
-  "17": {
+  "19": {
     "scene_map_index": 17,
     "start": 2250,
     "end": 2400,
@@ -465,7 +411,7 @@
       "小蒙总"
     ]
   },
-  "18": {
+  "20": {
     "scene_map_index": 18,
     "start": 2400,
     "end": 2490,
@@ -490,7 +436,7 @@
       "小蒙总"
     ]
   },
-  "19": {
+  "21": {
     "scene_map_index": 19,
     "start": 2490,
     "end": 2610,
@@ -515,5 +461,61 @@
       "舅舅",
       "舅妈"
     ]
+  },
+  "6": {
+    "visual_summary": "中年男女在客厅沙发区，男人严肃质问女人还钱，女人回应，气氛紧张。",
+    "error": "parse",
+    "scene_map_index": 6,
+    "start": 870,
+    "end": 920
+  },
+  "7": {
+    "visual_summary": "商务会议室内，参会人员围绕项目验收与工作移交展开沟通，氛围严肃专注。",
+    "shot_size": "近景",
+    "composition": "群像",
+    "angle": "平视",
+    "emotional_tone": "严肃",
+    "intensity": 3,
+    "lighting": "冷调自然光",
+    "actions": [
+      "男士手持笔专注聆听",
+      "老袁站立发言汇报项目情况"
+    ],
+    "scene_map_index": 7,
+    "start": 920,
+    "end": 990
+  },
+  "12": {
+    "visual_summary": "女性端着大闸蟹餐盘，中年男性在餐桌旁，办公室里人员各有动作，是日常闲聊用餐的生活场景",
+    "shot_size": "近景、中景",
+    "composition": "单人、群像",
+    "angle": "平视",
+    "emotional_tone": "平淡日常",
+    "intensity": 2,
+    "lighting": "暖调、自然光",
+    "actions": [
+      "端着餐盘站立",
+      "坐于餐桌前",
+      "办公室办公"
+    ],
+    "scene_map_index": 12,
+    "start": 1530,
+    "end": 1590
+  },
+  "13": {
+    "visual_summary": "办公室内，红衣女、绿夹克男与黑夹克男对峙，字幕含争吵语，氛围紧张。",
+    "shot_size": "中景",
+    "composition": "三人",
+    "angle": "平视",
+    "emotional_tone": "紧张冲突",
+    "intensity": 4,
+    "lighting": "自然光",
+    "actions": [
+      "对峙",
+      "争吵"
+    ],
+    "scene_map_index": 13,
+    "start": 1590,
+    "end": 1650
   }
 }

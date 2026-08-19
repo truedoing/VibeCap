@@ -31,7 +31,7 @@
     "scene_map_index": 1,
     "start": 120,
     "end": 180,
-    "visual_summary": "苏明玉与苏明哲在餐厅相对而坐，神情悲伤，氛围压抑沉闷。",
+    "visual_summary": "餐厅内，苏明成、苏明玉与苏明哲相对而坐，苏明成回忆送行往事，明哲神情自责，氛围压抑沉闷。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
@@ -209,36 +209,11 @@
       "苏明玉"
     ]
   },
-  "8": {
-    "scene_map_index": 8,
-    "start": 570,
-    "end": 630,
-    "visual_summary": "工厂内部走廊，穿灰色夹克的苏明玉与穿西装的黄叔叔并肩行走，严肃对话，背景有工业设备。",
-    "shot_size": "中景",
-    "composition": "双人",
-    "angle": "平视",
-    "emotional_tone": "严肃对话",
-    "intensity": 4,
-    "lighting": "冷调",
-    "actions": [
-      "行走",
-      "交谈"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1520,
-      "completion_tokens": 1388,
-      "total_tokens": 2908
-    },
-    "_chars": [
-      "苏明玉",
-      "黄叔叔"
-    ]
-  },
-  "9": {
+  "10": {
     "scene_map_index": 9,
     "start": 630,
     "end": 690,
-    "visual_summary": "施总（深蓝西装黑内搭）在工厂办公室，神情严肃地低头开口，随后与仅露背影的老毛对话，严肃谈及小萌下基层的安排",
+    "visual_summary": "工厂办公室内，施总（深蓝西装黑内搭）神情严肃地低头开口，与老毛对话，严肃谈及小萌下基层的安排。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
@@ -260,7 +235,7 @@
       "施总"
     ]
   },
-  "10": {
+  "11": {
     "scene_map_index": 10,
     "start": 690,
     "end": 750,
@@ -285,7 +260,7 @@
       "施总"
     ]
   },
-  "11": {
+  "12": {
     "scene_map_index": 11,
     "start": 750,
     "end": 810,
@@ -311,11 +286,11 @@
       "同事"
     ]
   },
-  "12": {
+  "13": {
     "scene_map_index": 12,
     "start": 810,
     "end": 870,
-    "visual_summary": "身着黄色花边上衣、外搭米白开衫的苏明玉，在厨房台前，正将容器内食材倒入面粉堆，动作从容。",
+    "visual_summary": "身着黄色花边上衣、外搭米白开衫的苏明玉，在工厂与同事一起下班离开，动作从容。",
     "shot_size": "中景",
     "composition": "单人",
     "angle": "平视",
@@ -336,7 +311,7 @@
       "同事"
     ]
   },
-  "13": {
+  "14": {
     "scene_map_index": 13,
     "start": 870,
     "end": 930,
@@ -361,7 +336,7 @@
       "同事"
     ]
   },
-  "14": {
+  "15": {
     "scene_map_index": 14,
     "start": 930,
     "end": 990,
@@ -387,7 +362,7 @@
       "警察"
     ]
   },
-  "15": {
+  "16": {
     "scene_map_index": 15,
     "start": 990,
     "end": 1050,
@@ -414,7 +389,7 @@
       "警察"
     ]
   },
-  "16": {
+  "17": {
     "scene_map_index": 16,
     "start": 1050,
     "end": 1110,
@@ -439,7 +414,7 @@
       "苏明玉"
     ]
   },
-  "17": {
+  "18": {
     "scene_map_index": 17,
     "start": 1110,
     "end": 1170,
@@ -464,7 +439,7 @@
       "苏明玉"
     ]
   },
-  "18": {
+  "19": {
     "scene_map_index": 18,
     "start": 1170,
     "end": 1230,
@@ -489,7 +464,7 @@
       "同事"
     ]
   },
-  "19": {
+  "20": {
     "scene_map_index": 19,
     "start": 1230,
     "end": 1260,
@@ -514,7 +489,7 @@
       "同事"
     ]
   },
-  "20": {
+  "21": {
     "scene_map_index": 20,
     "start": 1260,
     "end": 1380,
@@ -539,7 +514,7 @@
       "朱丽"
     ]
   },
-  "21": {
+  "22": {
     "scene_map_index": 21,
     "start": 1380,
     "end": 1440,
@@ -565,7 +540,7 @@
       "女儿"
     ]
   },
-  "22": {
+  "23": {
     "scene_map_index": 22,
     "start": 1440,
     "end": 1530,
@@ -591,7 +566,7 @@
       "朱丽"
     ]
   },
-  "23": {
+  "24": {
     "scene_map_index": 23,
     "start": 1530,
     "end": 1590,
@@ -616,11 +591,11 @@
       "同事"
     ]
   },
-  "24": {
+  "25": {
     "scene_map_index": 24,
     "start": 1590,
     "end": 1650,
-    "visual_summary": "开放式办公区，一位穿黑色西装的男同事正走向一位坐在工位的男同事，两人目光交汇似乎在交谈。",
+    "visual_summary": "开放式办公区，一位穿黑色西装的男同事正走向苏明玉，两人目光交汇似乎在交谈。",
     "shot_size": "中景",
     "composition": "双人",
     "angle": "平视",
@@ -641,7 +616,7 @@
       "同事"
     ]
   },
-  "25": {
+  "26": {
     "scene_map_index": 25,
     "start": 1650,
     "end": 1710,
@@ -666,7 +641,7 @@
       "主任"
     ]
   },
-  "26": {
+  "27": {
     "scene_map_index": 26,
     "start": 1710,
     "end": 1800,
@@ -691,32 +666,7 @@
       "朱丽"
     ]
   },
-  "27": {
-    "scene_map_index": 27,
-    "start": 1800,
-    "end": 1890,
-    "visual_summary": "餐厅内，朱丽将包递给苏明玉，两人微笑回忆往事，桌上蛋糕蜡烛点燃，气氛温馨亲切。",
-    "shot_size": "近景",
-    "composition": "双人",
-    "angle": "平视",
-    "emotional_tone": "温馨愉悦",
-    "intensity": 4,
-    "lighting": "暖调",
-    "actions": [
-      "朱丽递送包",
-      "苏明玉微笑接过"
-    ],
-    "_tokens": {
-      "prompt_tokens": 1535,
-      "completion_tokens": 1087,
-      "total_tokens": 2622
-    },
-    "_chars": [
-      "苏明玉",
-      "朱丽"
-    ]
-  },
-  "28": {
+  "30": {
     "scene_map_index": 28,
     "start": 1890,
     "end": 1950,
@@ -742,7 +692,7 @@
       "朱丽"
     ]
   },
-  "29": {
+  "31": {
     "scene_map_index": 29,
     "start": 1950,
     "end": 2010,
@@ -768,7 +718,7 @@
       "朱丽"
     ]
   },
-  "30": {
+  "32": {
     "scene_map_index": 30,
     "start": 2010,
     "end": 2070,
@@ -793,7 +743,7 @@
       "朱丽"
     ]
   },
-  "31": {
+  "33": {
     "scene_map_index": 31,
     "start": 2070,
     "end": 2130,
@@ -818,7 +768,7 @@
       "朱丽母亲"
     ]
   },
-  "32": {
+  "34": {
     "scene_map_index": 32,
     "start": 2130,
     "end": 2250,
@@ -843,7 +793,7 @@
       "朱丽"
     ]
   },
-  "33": {
+  "35": {
     "scene_map_index": 33,
     "start": 2250,
     "end": 2310,
@@ -868,7 +818,7 @@
       "朱丽"
     ]
   },
-  "34": {
+  "36": {
     "scene_map_index": 34,
     "start": 2310,
     "end": 2400,
@@ -893,7 +843,7 @@
       "小蔡"
     ]
   },
-  "35": {
+  "37": {
     "scene_map_index": 35,
     "start": 2400,
     "end": 2430,
@@ -917,5 +867,60 @@
       "苏大强",
       "老聂"
     ]
+  },
+  "8": {
+    "visual_summary": "两位男性在工厂走道边走边交流，谈论自愿来工厂接班相关话题",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "平和认真",
+    "intensity": 2,
+    "lighting": "冷调",
+    "actions": [
+      "并肩行走交谈"
+    ],
+    "scene_map_index": 8,
+    "start": 570,
+    "end": 600
+  },
+  "9": {
+    "visual_summary": "办公室内，年轻男子（身着工装）与西装中年男子（蒙总）交谈，表情恳切，背景为现代办公环境。",
+    "shot_size": "中景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "严肃、恳切",
+    "intensity": 3,
+    "lighting": "自然光",
+    "actions": [
+      "交谈",
+      "聆听"
+    ],
+    "scene_map_index": 9,
+    "start": 600,
+    "end": 630
+  },
+  "28": {
+    "visual_summary": "男士看手机（显示“下班有空么？我”），闭眼；女士办公托腮，职场玻璃建筑环境。",
+    "shot_size": "近景",
+    "composition": "双人",
+    "angle": "平视",
+    "emotional_tone": "微妙",
+    "intensity": 3,
+    "lighting": "自然光",
+    "actions": [
+      "看手机",
+      "闭眼（思考）",
+      "托腮"
+    ],
+    "scene_map_index": 28,
+    "start": 1800,
+    "end": 1830
+  },
+  "29": {
+    "visual_summary": "The user wants a description of the scene from the provided video frames.\n\n1.  **Analyze the images:**\n*   Image 1: A man in a grey suit is sitting at a table. There's a birthday cake with fruit in fr",
+    "error": "parse",
+    "scene_map_index": 29,
+    "start": 1830,
+    "end": 1890
   }
 }
