@@ -23,7 +23,7 @@ import { divider as dividerStyle } from '../styles/mixins'
 import SourceInspector from '../components/SourceInspector'
 import TimelineControls from '../components/TimelineControls'
 import ClipLinker from '../hooks/useLinkedClips'
-import { buildProjectFromProxyPicks, linkClipPair, clearLinkedPairs } from '../lib/timelineBuilder'
+import { buildProjectFromProxyPicks, linkClipPair, clearLinkedPairs, getLinkedPairs } from '../lib/timelineBuilder'
 import { fetchProxyManifest, proxyUrlForEpisode, proxyInfoForEpisode } from '../lib/proxyEngine'
 import { buildPicksFromStoryboard, buildSourceFileToEp, resolveShotSource } from '../lib/storyboardUtils'
 import { migratePicks } from '../model/migrate'
@@ -35,6 +35,81 @@ const ZOOM_MAX = 50
 const ZOOM_WHEEL_FACTOR = 1.2  // 滚轮缩放倍率（对数尺度，平滑）
 const programEngineRef = { current: null }
 const T = { border: colors.border, borderSubtle: colors.borderSubtle, bgPanel: colors.bg, bgSecondary: '#0D1017' }
+
+// 多选修饰键（shift/ctrl）标志：pointerdown 捕获阶段记录，供 selectClip 包装判断
+let _multiSelectKey = false
+
+// 时间轴删除 clip 的复盘标记（localStorage 持久化，任务维度，不动 storyboard.json）
+const deletedShotsKey = (taskId) => `vibecut-deleted-shots-${taskId}`
+function loadDeletedShots(taskId) {
+  try {
+    const raw = localStorage.getItem(deletedShotsKey(taskId))
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return []
+}
+
+/**
+ * 时间轴增强（分镜台）：
+ * 1. 批量拖拽 —— 选中多个 clip 后拖其中一个，其余按同 delta 平移
+ * 2. 删除标记 —— clip 被删时通知外部（大纲标删除，复盘）
+ * Elah 原生时间轴拖拽是单选，这里在 engine 层包装补齐。
+ * 注意：trim（拉长/缩短）不做 ripple，只调整当前 clip —— 右侧有相邻时拉长到接触即停（Elah 原样）。
+ */
+function installTimelineEnhancements(engine) {
+  if (engine.__tlEnhInstalled) return
+
+  // ── 批量拖拽 + 配对对齐：拖一个选中 clip 时，其余选中的一起平移同 delta；
+  //    配对的 audio/video（linkClipPair 维护）也同步平移，避免声画错位。
+  const origMove = engine.moveClip.bind(engine)
+  const linkedPairs = getLinkedPairs()
+  const moveLinkAndSelected = (clipId, fromTrackId, toTrackId, startFrame, delta, selected) => {
+    // 移动当前 clip
+    origMove(clipId, fromTrackId, toTrackId, startFrame)
+    // 配对的 audio/video 同步到同一 startFrame
+    const partnerId = linkedPairs.get(clipId)
+    if (partnerId) {
+      const partner = engine.findClip(partnerId)?.clip
+      if (partner) origMove(partnerId, partner.trackId, partner.trackId, startFrame)
+    }
+    // 批量：其余选中的一起平移（含各自配对）
+    if (selected && selected.size > 1 && selected.has(clipId)) {
+      for (const sid of selected) {
+        if (sid === clipId) continue
+        const other = engine.findClip(sid)?.clip
+        if (!other) continue
+        const newStart = other.startFrame + delta
+        origMove(sid, other.trackId, other.trackId, newStart)
+        const opId = linkedPairs.get(sid)
+        if (opId) {
+          const op = engine.findClip(opId)?.clip
+          if (op) origMove(opId, op.trackId, op.trackId, newStart)
+        }
+      }
+    }
+  }
+  engine.moveClip = (clipId, fromTrackId, toTrackId, startFrame) => {
+    const before = engine.findClip(clipId)?.clip
+    const res = origMove(clipId, fromTrackId, toTrackId, startFrame)
+    const after = engine.findClip(clipId)?.clip
+    if (before && after && after.startFrame !== before.startFrame) {
+      const delta = after.startFrame - before.startFrame
+      const selected = useSelectionStore.getState().selectedClipIds
+      moveLinkAndSelected(clipId, after.trackId, after.trackId, after.startFrame, delta, selected)
+    }
+    return res
+  }
+
+  // ── 删除标记：clip 被删时把源信息交给外部（VibeEdit 匹配到 storyboard shot 标删除）
+  const origRemove = engine.removeClip.bind(engine)
+  engine.removeClip = (clipId, trackId) => {
+    const ref = window.__vibe_clipRegistry?.[clipId]
+    origRemove(clipId, trackId)
+    if (ref) window.__vibeOnClipRemoved?.(ref)
+  }
+
+  engine.__tlEnhInstalled = true
+}
 
 // ═══════════════════════════════════
 // 可拖拽分隔条
@@ -67,6 +142,7 @@ function ProgramLoader({ prgTLRef, proxyManifest, onReady, segments, taskId, sto
     try {
     programEngineRef.current = engine
     window.__vibe_prg_engine = engine
+    installTimelineEnhancements(engine)  // ripple trim + 批量拖拽
 
     const vibeTimeline = project?.vibe_timeline
     const vibeMediaCache = project?.vibe_mediaCache
@@ -392,6 +468,30 @@ export default function VibeEdit() {
     setRebuildKey(k => k + 1)
   }, [loadStoryboard, invalidateTimeline])
 
+  // 多选交互：shift/ctrl + 点击 clip → 切换选中（配合 installTimelineEnhancements 的批量拖拽）
+  useEffect(() => {
+    const onDown = (e) => { _multiSelectKey = e.shiftKey || e.metaKey }
+    document.addEventListener('pointerdown', onDown, true)  // 捕获阶段，先于 React 的 selectClip
+    const st = useSelectionStore.getState()
+    const origSelect = st.selectClip
+    useSelectionStore.setState({
+      selectClip: (clipId) => {
+        const cur = useSelectionStore.getState().selectedClipIds
+        if (_multiSelectKey) {
+          st.toggleClipSelection(clipId)  // shift/ctrl → 多选切换
+        } else if (cur.size > 1 && cur.has(clipId)) {
+          // 已多选，点击/拖拽已在选中的 clip → 保持多选（否则拖拽开始会清空，批量移动失效）
+        } else {
+          origSelect(clipId)  // 普通点击 → 单选
+        }
+      },
+    })
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      useSelectionStore.setState({ selectClip: origSelect })
+    }
+  }, [])
+
   // v3: 台词点击 → ASR 精确定位 (直接 seek 源素材)
   const handleDialogueClick = useCallback((sid) => {
     setCurSid(sid)
@@ -462,6 +562,50 @@ export default function VibeEdit() {
     }
   }, [proxyManifest, curSid, addPick])
 
+  // 替换选中 clip：用源检视器当前 I/O 区域换掉它的源区间；变长则后续 clip 后移（ripple），配对 audio 同步
+  const handleReplaceClip = useCallback((ep, inSec, outSec) => {
+    const engine = programEngineRef.current
+    if (!engine) return
+    const sel = useSelectionStore.getState().selectedClipIds
+    if (sel.size !== 1) return
+    const clipId = [...sel][0]
+    const clip = engine.findClip(clipId)?.clip
+    if (!clip) return
+    const prj = engine.getProject()
+
+    const newDur = Math.max(1, Math.round((outSec - inSec) * FPS))
+    const oldDur = clip.durationFrames
+    const newSrcStart = Math.round(inSec * FPS)
+    const src = proxyUrlForEpisode(ep, proxyManifest) || clip.src
+    // 源素材余量（替换后右侧空仍可拉长）
+    const epInfo = proxyManifest?.proxies?.find(p => p.ep === ep)
+    const tail = epInfo?.duration_sec ? Math.round(Math.max(0, epInfo.duration_sec - inSec) * FPS) : newDur
+    const srcTail = Math.max(newDur, tail)
+
+    // 变长 → 先把同轨右侧 clip 后移（否则 updateClip 改长会被重叠检测拒绝），再从右往左移
+    if (newDur > oldDur) {
+      const delta = newDur - oldDur
+      const rightClips = (prj.clips[clip.trackId] || [])
+        .filter(c => c.id !== clip.id && c.startFrame >= clip.startFrame + oldDur)
+        .sort((a, b) => b.startFrame - a.startFrame)
+      for (const c of rightClips) engine.moveClip(c.id, clip.trackId, clip.trackId, c.startFrame + delta)
+    }
+
+    // 替换源区间（此时右侧已让开，不会重叠）
+    engine.updateClip(clip.id, clip.trackId, {
+      src, sourceStartFrame: newSrcStart, sourceDurationFrames: srcTail, durationFrames: newDur,
+    })
+
+    // 配对 audio 同步源区间与时长（同 startFrame，声画对齐）
+    const partnerId = getLinkedPairs().get(clip.id)
+    if (partnerId) {
+      const p = engine.findClip(partnerId)?.clip
+      if (p) engine.updateClip(p.id, p.trackId, {
+        sourceStartFrame: newSrcStart, sourceDurationFrames: srcTail, durationFrames: newDur,
+      })
+    }
+  }, [proxyManifest])
+
   // 拖拽
   const dragX = (get, set, min, maxPct) => (e) => {
     e.preventDefault(); const start = get(); const sx = e.clientX
@@ -493,6 +637,33 @@ export default function VibeEdit() {
   const storyCtx = { sid: curSid, narration: curNarration, taskId, segments, cover, trigger: storyTrigger }
   // 分镜脚本 source_files 反查（文件名 → ep），属性面板解析镜头用
   const sourceFileToEp = useMemo(() => buildSourceFileToEp(storyboard?.source_files), [storyboard])
+
+  // 时间轴删除 clip 的复盘标记：删了哪些镜头（localStorage 持久化）
+  const [deletedShotIds, setDeletedShotIds] = useState(() => loadDeletedShots(taskId))
+
+  // 时间轴删 clip → 匹配到 storyboard shot → 标删除（复盘）
+  const handleClipRemoved = useCallback((ref) => {
+    if (!storyboard || !ref) return
+    for (const seg of storyboard.segments || []) {
+      for (const shot of seg.shot_sequence || []) {
+        const src = resolveShotSource(shot, sourceFileToEp)
+        if (src && src.ep === ref.ep && Math.abs(src.startSec - ref.sourceStartSec) < 1.5) {
+          setDeletedShotIds(prev => {
+            if (prev.includes(shot.shot_id)) return prev
+            const next = [...prev, shot.shot_id]
+            try { localStorage.setItem(deletedShotsKey(taskId), JSON.stringify(next)) } catch {}
+            return next
+          })
+          return
+        }
+      }
+    }
+  }, [storyboard, sourceFileToEp, taskId])
+
+  useEffect(() => {
+    window.__vibeOnClipRemoved = handleClipRemoved
+    return () => { window.__vibeOnClipRemoved = undefined }
+  }, [handleClipRemoved])
 
   // 点时间轴 clip → 反查对应 shot，联动大纲选中（文案↔视频对应查看）
   const selectedClipId = useSelectionStore((s) => (s.selectedClipIds.size === 1 ? [...s.selectedClipIds][0] : null))
@@ -537,7 +708,8 @@ export default function VibeEdit() {
                       <button onClick={() => setScriptCollapsed(true)} className="text-muted-foreground hover:text-foreground shrink-0 ml-auto">◀</button>
                     </div>
                     <StoryboardOutline storyboard={storyboard} loading={sbLoading} error={sbError} notice={sbNewNotice}
-                      onReload={reloadStoryboard} onSelectShot={setSelectedShot} selectedShotId={selectedShot?.shot_id} />
+                      onReload={reloadStoryboard} onSelectShot={setSelectedShot} selectedShotId={selectedShot?.shot_id}
+                      deletedShotIds={deletedShotIds} />
                   </div>
                 )}
               </div>
@@ -582,7 +754,7 @@ export default function VibeEdit() {
             {/* 源检视器 — 下部，高度与时间线同步 */}
             <div style={{ height: `${bottomPct}%`, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               {proxyManifest && (
-                <SourceInspector proxyManifest={proxyManifest} onAddToProgram={handleAddToProgram} timelineFrame={prgCurrentFrame} taskId={taskId} />
+                <SourceInspector proxyManifest={proxyManifest} onAddToProgram={handleAddToProgram} timelineFrame={prgCurrentFrame} taskId={taskId} onReplace={handleReplaceClip} />
               )}
             </div>
           </div>

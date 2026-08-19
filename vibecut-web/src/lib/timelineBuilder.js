@@ -16,6 +16,19 @@ function thumbnailUrl(ep, sec) {
   return `/thumbs/${ep}/${Math.floor(sec)}.jpg`
 }
 
+/**
+ * 拉长余量：Elah 的 trim 拉长上限 = clip.sourceDurationFrames，
+ * 而播放取源只按 durationFrames 走（resolveTimeline 不看 sourceDurationFrames）。
+ * 所以把 sourceDurationFrames 给到「源素材从片段起点到尾」的长度，
+ * 时间轴 clip 就能向右拉长（看到后续画面），播放行为不变。
+ */
+function sourceTailFrames(ep, sourceStartSec, baseFrames, manifest) {
+  const p = (manifest?.proxies || []).find(x => x.ep === ep)
+  if (!p?.duration_sec) return baseFrames
+  const tail = Math.round(Math.max(0, p.duration_sec - sourceStartSec) * FPS)
+  return Math.max(baseFrames, tail)
+}
+
 /** 从 manifest 查找 proxy 文件名 (v0.11: 替代硬编码 proxyFileName) */
 function proxyFileForEp(ep, manifest) {
   if (!manifest?.proxies) return null
@@ -146,6 +159,7 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
       p.main.forEach((m, mi) => {
         const resolved = resolveClipSource(m)
         const durFrames = resolved.sourceDurationFrames
+        const srcTailFrames = sourceTailFrames(m.ep, resolved.sourceStartSec, durFrames, proxyManifest)
         const proxyFile = proxyFileForEp(m.ep, proxyManifest)
         const src = proxyFile ? `/proxies/${proxyFile}` : (m.src || '')
 
@@ -160,7 +174,7 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
           name: `S${sid} EP${m.ep}`, src,
           startFrame: cur.audioFrames, durationFrames: durFrames,
           sourceStartFrame: resolved.sourceStartFrame,
-          sourceDurationFrames: resolved.sourceDurationFrames,
+          sourceDurationFrames: srcTailFrames,
           volume: 1, opacity: 1, locked: false, disabled: false,
         })
         clipRegistry[vClipId] = { ep: m.ep, sourceStartSec: resolved.sourceStartSec, sourceEndSec: resolved.sourceEndSec }
@@ -175,7 +189,7 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
           name: `S${sid} EP${m.ep}`, src,
           startFrame: cur.audioFrames, durationFrames: durFrames,
           sourceStartFrame: resolved.sourceStartFrame,
-          sourceDurationFrames: resolved.sourceDurationFrames,
+          sourceDurationFrames: srcTailFrames,
           volume: 1, locked: false, disabled: false,
         })
         linkClipPair(vClipId, aClipId)
@@ -189,6 +203,7 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
       p.supp.forEach((s, si) => {
         const resolved = resolveClipSource(s)
         const durFrames = resolved.sourceDurationFrames
+        const srcTailFrames = sourceTailFrames(s.ep, resolved.sourceStartSec, durFrames, proxyManifest)
         const proxyFile = proxyFileForEp(s.ep, proxyManifest)
         const src = proxyFile ? `/proxies/${proxyFile}` : (s.src || '')
 
@@ -203,7 +218,7 @@ export function buildProjectFromProxyPicks(picks, proxyManifest, extraTracks = [
           name: `S${sid} EP${s.ep}`, src,
           startFrame: cur.suppFrames, durationFrames: durFrames,
           sourceStartFrame: resolved.sourceStartFrame,
-          sourceDurationFrames: resolved.sourceDurationFrames,
+          sourceDurationFrames: srcTailFrames,
           volume: 0, opacity: 1, locked: false, disabled: false,
         })
         clipRegistry[clipId] = { ep: s.ep, sourceStartSec: resolved.sourceStartSec, sourceEndSec: resolved.sourceEndSec }

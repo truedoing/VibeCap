@@ -14,7 +14,7 @@ function tc(s) {
   return h > 0 ? `${h}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${mm}:${String(ss).padStart(2, '0')}`
 }
 
-export default function SourceInspector({ proxyManifest, onAddToProgram, timelineFrame, taskId }) {
+export default function SourceInspector({ proxyManifest, onAddToProgram, timelineFrame, taskId, onReplace }) {
   const videoRef = useRef(null)
   const barRef = useRef(null)
   const tlFrameRef = useRef(timelineFrame)
@@ -145,6 +145,26 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
     }
     if (ep && o > s) onAddToProgram(ep, Math.round(s * FPS), Math.round(o * FPS), 'supp')
   }
+  // 替换：用当前 I/O 区域替换选中的 clip（变长时后移后续 clip，交给 onReplace 处理）
+  const replace = () => {
+    const io = window.__sourceIO
+    let s, o
+    if (io?.in != null && io?.out != null && io.out > io.in) { s = io.in; o = io.out }
+    else { const ct = videoRef.current?.currentTime || 0; s = Math.max(0, ct - 0.5); o = ct + 4.5 }
+    if (ep && o > s && onReplace) onReplace(ep, s, o)
+  }
+
+  // 拖动入点/出点标记（绿线=in，红线=out）
+  const dragMarker = useCallback((which) => (e) => {
+    e.preventDefault(); e.stopPropagation()
+    const mv = (ev) => {
+      const t = x2t(ev.clientX)
+      if (which === 'in') { setSelIn(t); window.__sourceIO = { in: t, out: window.__sourceIO?.out ?? selOut } }
+      else { setSelOut(t); window.__sourceIO = { in: window.__sourceIO?.in ?? selIn, out: t } }
+    }
+    const u = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', u) }
+    document.addEventListener('mousemove', mv); document.addEventListener('mouseup', u)
+  }, [x2t, selIn, selOut])
 
   const viewStart = offset
   const viewEnd = offset + dur / zoom
@@ -204,8 +224,10 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
             {selIn != null && selOut != null && selOut > selIn && (
               <div style={{ position:'absolute', top:0, bottom:0, left:`${((selIn-viewStart)/viewLen*100)}%`, width:`${((selOut-selIn)/viewLen*100)}%`, background:'rgba(34,197,94,0.15)', borderLeft:'2px solid #22c55e', borderRight:'2px solid #ef4444' }} />
             )}
-            {selIn != null && <div style={{ position:'absolute', top:0, bottom:0, width:2, background:'#22c55e', zIndex:6, left:`${((selIn-viewStart)/viewLen*100)}%` }} />}
-            {selOut != null && <div style={{ position:'absolute', top:0, bottom:0, width:2, background:'#ef4444', zIndex:6, left:`${((selOut-viewStart)/viewLen*100)}%` }} />}
+            {selIn != null && <div onMouseDown={dragMarker('in')} title="拖动入点"
+              style={{ position:'absolute', top:0, bottom:0, width:3, background:'#22c55e', zIndex:7, cursor:'ew-resize', left:`${((selIn-viewStart)/viewLen*100)}%` }} />}
+            {selOut != null && <div onMouseDown={dragMarker('out')} title="拖动出点"
+              style={{ position:'absolute', top:0, bottom:0, width:3, background:'#ef4444', zIndex:7, cursor:'ew-resize', left:`${((selOut-viewStart)/viewLen*100)}%` }} />}
             {markers.map(m => { const l=((m.startSec-viewStart)/viewLen*100); const w=Math.max(1,((m.endSec-m.startSec)/viewLen*100))
               return <div key={m.id} data-marker onClick={() => { const v=videoRef.current; if(v){v.currentTime=m.startSec;v.play().catch(()=>{})} }}
                 style={{ position:'absolute', top:2, bottom:2, borderRadius:2, left:`${l}%`, width:`${w}%`, background:`${m.color}44`, borderLeft:`1px solid ${m.color}`, cursor:'pointer' }}
@@ -253,6 +275,10 @@ export default function SourceInspector({ proxyManifest, onAddToProgram, timelin
           <button onClick={addSupp} title="插入片段到补充镜头轨道"
             style={{ padding:'0 10px', height:22, fontSize:12, borderRadius:3, background:'rgba(168,85,247,0.18)', color:'#a855f7', border:'none', cursor:'pointer', fontWeight:500 }}>
             ↓ 补
+          </button>
+          <button onClick={replace} title="用当前时间区域替换选中的 clip（变长则后续后移）"
+            style={{ padding:'0 10px', height:22, fontSize:12, borderRadius:3, background:'rgba(251,191,36,0.18)', color:'#fbbf24', border:'none', cursor:'pointer', fontWeight:500 }}>
+            ↓ 替换
           </button>
           <div style={{ flex:1 }} />
           <span style={{ fontFamily:'monospace', color:'#e5e7eb', fontSize:12 }}>{tc(pos)}{dur>0?` / ${tc(dur)}`:''}</span>

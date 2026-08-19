@@ -29,7 +29,7 @@ const SEG_TYPE_STYLE = {
 }
 
 /* ── 单个镜头卡片 ── */
-function ShotRow({ shot, onPreview, onSelect, selected }) {
+function ShotRow({ shot, onPreview, onSelect, selected, deleted }) {
   const st = SHOT_TYPE_STYLE[shot.shot_type] || SHOT_TYPE_STYLE.cutaway
   const hasSource = shot.source_file != null && shot.in_point != null
 
@@ -40,22 +40,24 @@ function ShotRow({ shot, onPreview, onSelect, selected }) {
       className={cn(
         'w-full text-left px-2 py-1.5 rounded flex items-start gap-1.5 transition-colors border-l-2 cursor-pointer',
         hasSource ? 'hover:bg-accent/50' : 'opacity-45 hover:opacity-75',
-        selected && 'bg-accent/60'
+        selected && 'bg-accent/60',
+        deleted && 'opacity-40'
       )}
-      style={{ borderLeftColor: st.color }}
+      style={{ borderLeftColor: deleted ? colors.textDisabled : st.color }}
     >
       <span className="text-[10px] font-mono font-bold shrink-0 mt-0.5"
-        style={{ color: st.color, background: st.bg, padding: '1px 4px', borderRadius: 2 }}>
+        style={{ color: deleted ? colors.textDisabled : st.color, background: deleted ? 'rgba(107,114,128,0.10)' : st.bg, padding: '1px 4px', borderRadius: 2 }}>
         {st.label}
       </span>
       <span className="text-[10px] font-mono text-textFaint shrink-0 mt-0.5">{shot.shot_id}</span>
       <span className="flex-1 min-w-0 leading-snug">
-        <span className="text-[12px] text-foreground/75 block">
+        <span className="text-[12px] text-foreground/75 block" style={{ textDecoration: deleted ? 'line-through' : 'none' }}>
           {shot.description || (hasSource ? '' : (shot.role || '无源画面'))}
         </span>
       </span>
       <span className="flex items-center gap-1 shrink-0 mt-0.5">
-        {hasSource && <Play size={9} className="text-purple/70" />}
+        {deleted && <span className="text-[9px] text-red font-mono">🗑 已删</span>}
+        {hasSource && !deleted && <Play size={9} className="text-purple/70" />}
         <span className="text-[10px] font-mono text-textFaint">
           {hasSource ? `${shot.duration_sec ?? 0}s` : '—'}
         </span>
@@ -65,7 +67,7 @@ function ShotRow({ shot, onPreview, onSelect, selected }) {
 }
 
 /* ── 单个段落 ── */
-function SegmentBlock({ seg, expanded, onToggle, onPreview, onSelect, selectedShotId }) {
+function SegmentBlock({ seg, expanded, onToggle, onPreview, onSelect, selectedShotId, deletedShotIds }) {
   const segSt = SEG_TYPE_STYLE[seg.type] || SEG_TYPE_STYLE.narration
   const shots = seg.shot_sequence || []
 
@@ -95,7 +97,8 @@ function SegmentBlock({ seg, expanded, onToggle, onPreview, onSelect, selectedSh
           )}
           {shots.map((shot) => (
             <ShotRow key={shot.shot_id || shot.description} shot={shot} onPreview={onPreview}
-              onSelect={onSelect} selected={selectedShotId === shot.shot_id} />
+              onSelect={onSelect} selected={selectedShotId === shot.shot_id}
+              deleted={deletedShotIds?.includes(shot.shot_id)} />
           ))}
         </div>
       )}
@@ -104,7 +107,7 @@ function SegmentBlock({ seg, expanded, onToggle, onPreview, onSelect, selectedSh
 }
 
 /* ── 主组件 ── */
-export default function StoryboardOutline({ storyboard, loading, error, notice, onReload, onSelectShot, selectedShotId }) {
+export default function StoryboardOutline({ storyboard, loading, error, notice, onReload, onSelectShot, selectedShotId, deletedShotIds }) {
   const [openSeg, setOpenSeg] = useState(null)
   const listRef = useRef(null)
 
@@ -191,6 +194,7 @@ export default function StoryboardOutline({ storyboard, loading, error, notice, 
             onPreview={handlePreview}
             onSelect={handleSelect}
             selectedShotId={selectedShotId}
+            deletedShotIds={deletedShotIds}
           />
         ))}
       </div>
