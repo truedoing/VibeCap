@@ -56,7 +56,9 @@
               "type": "file-explorer",
               "state": {
                 "sortOrder": "alphabetical",
-                "autoReveal": false
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
               },
               "icon": "lucide-folder-closed",
               "title": "文件列表"
@@ -200,6 +202,7 @@
   },
   "active": "15bf3cfd7b453a19",
   "lastOpenFiles": [
+    "Python基础.md",
     "Python-数据处理.md",
     "L1-语言与运行时.md",
     "Shell与ffmpeg工具链.md",

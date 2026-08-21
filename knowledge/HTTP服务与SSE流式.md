@@ -10,7 +10,7 @@ created: 2026-08-04
 
 # HTTP 服务与 SSE 流式
 
-> 用 Python 标准库搭建一个支持实时推送的 HTTP 服务器 —— 不装 Flask，不装 FastAPI。
+> HTTP 与 SSE 原理 + VibeCut 现状：早期用标准库 http.server 理解底层，v1.1 后 HTTP 层演进到 FastAPI，SSE 统一走 lib/sse.py。
 
 ## 是什么
 
@@ -27,7 +27,7 @@ created: 2026-08-04
                                  浏览器 ←──"done"── 服务器
 ```
 
-## 为什么 VibeCut 用 http.server 而不是 Flask/FastAPI
+## 为什么从 http.server 出发（原理课）
 
 几个关键原因：
 
@@ -37,7 +37,7 @@ created: 2026-08-04
 
 3. **控制力**：SSE 流式输出时，你需要精细控制什么时候 `flush()`、什么时候断开连接。标准库让你完全掌控，框架反而会多加一层抽象。
 
-4. **单文件部署**：整个后端 700+ 行在 `server.py` 一个文件里，启动就是 `python3 server.py`，生产级部署零配置。
+4. **历史演进**：VibeCut 早期确实用 http.server 单文件（`server.py`），v1.1 重构为 FastAPI（`main.py` + `routers/`），但「先懂底层再用框架」的原则不变——这一篇的 http.server 例子，就是 FastAPI 帮你做的事。
 
 ## 关键概念
 
@@ -55,7 +55,7 @@ class ThreadingServer(ThreadingMixIn, HTTPServer):
 
 ### 2. do_GET / do_POST 路由
 
-VibeCut 的路由是最原始也最透明的 if / elif 判断：
+这是早期 http.server 时代的写法（v1.1 前）。现在 FastAPI 用 `app.include_router()` 注册（`main.py` L30-46），一个请求进 router → handler 分发。理解 if/elif 版，才能看懂框架替你做了什么：
 
 ```python
 def do_GET(self):
@@ -78,7 +78,7 @@ def do_POST(self):
 
 没有装饰器、没有路由注册表、没有中间件。所有的逻辑在文件里一字排开，对于学习来说是极好的起点。
 
-### 3. SSE 在 server.py 中的实现
+### 3. SSE 原理（早期 http.server 的 wfile 实现）
 
 ```python
 # 发送 SSE 响应头
@@ -108,9 +108,11 @@ emit("done", {"ok": True})
 
 关键细节：**`self.wfile.flush()`**。没有这行，Python 会缓冲输出，浏览器收不到任何数据，直到缓冲区满或请求结束 —— 那就不叫"流式"了。
 
+**现在的实现见 `lib/sse.py` 的 `sse_stream()`**：后台线程跑任务、队列缓冲、生成器逐步 `yield`（见 [[Python-标准库与并发]]），`flush` 的原理不变。
+
 ### 4. 浏览器端接收 SSE
 
-在 React 前端（`ChatPanel.jsx`）中，用 `EventSource` 或 `fetch` + reader 消费：
+在 React 前端，用 `fetch` + reader 消费（VibeCut 的 SSE 全是 POST，`EventSource` 不支持 POST）：
 
 ```javascript
 // 使用 fetch + ReadableStream（比 EventSource 更灵活，支持 POST）
@@ -132,21 +134,21 @@ while (true) {
 }
 ```
 
-## 在 VibeCut 中的应用
+## 在 VibeCut 中的应用（当前）
 
-**文件位置**：`vibecut-server/server.py`
+**SSE 统一实现**：`lib/sse.py` — `sse_stream()`（后台线程 + 队列缓冲 + 生成器 yield），后端所有 SSE 端点复用；`make_emitter()` 提供 progress/complete/error 三回调。
 
-- **第343-344行**：`ThreadingServer` 定义（多线程 HTTP 服务）
-- **第413-701行**：`Handler` 类的 `do_GET` 和 `do_POST`（全部路由分发）
-- **第692-697行**：SSE 流式端点入口（`/script/generate_script_stream`、`/script/generate_story_first`、`/script/refine`）
+**HTTP 层**：`main.py` L30-46 注册 13 个 router；`routers/` 按功能域拆分。
 
 **流式端点清单**：
 
-| 端点 | 用途 | SSE 事件类型 |
-|------|------|------------|
-| `/script/generate_script_stream` | v3 搜索流水线 | progress, segment, done |
-| `/script/generate_story_first` | v4 故事优先（口播） | progress, segment, done |
-| `/script/refine` | 口播精切 | progress, sub_clip, done |
+| 端点 | 用途 |
+|------|------|
+| `/script/generate_drama_script_v2`（`routers/sse_script.py`） | drama 脚本生成 |
+| `/voiceover/generate_stream`（`routers/sse_voiceover.py`） | 一键全量配音 |
+| `/voiceover/regenerate_segment`（`routers/sse_voiceover.py`） | 单段配音 |
+
+> 早期 http.server 时代的端点（`/script/generate_script_stream`、`/script/generate_story_first`、`/script/refine`）已在 v1.1 重构中移除。
 
 ## 动手实验
 

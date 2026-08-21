@@ -20,13 +20,13 @@ created: 2026-08-04
 
 ```bash
 # 电视剧
-python3 build_index.py --project 都挺好
+python3 cli/build_index.py --project 都挺好
 
 # 口播
-python3 build_index.py --project 杨老师教育
+python3 cli/build_index.py --project 杨老师教育
 ```
 
-`build_index.py` 自动检测项目类型（`projects/xxx.json` 中的 `type` 字段），走不同的索引策略。
+`cli/build_index.py` 自动检测项目类型（`projects/xxx.json` 中的 `type` 字段），走不同的索引策略。
 
 ## 为什么需要专门的构建脚本
 
@@ -117,7 +117,7 @@ def save_index(project_dir, embeddings, metas, texts):
         json.dump(metas, f, ensure_ascii=False)
 ```
 
-加载时的优先级（`server.py`）：
+加载时的优先级（`routers/_lifespan.py` startup()）：
 ```python
 if INDEX_NPY.exists() and INDEX_META.exists():
     semantic_emb = np.load(str(INDEX_NPY), mmap_mode='r')  # 优先 mmap
@@ -145,15 +145,14 @@ model = SentenceTransformer("BAAI/bge-base-zh-v1.5",
 
 ## 在 VibeCut 中的应用
 
-**`build_index.py`**：
-- 第23-107行：电视剧索引构建（`build_drama_index` 旧版，合并 VLM + ASR + 字幕）
-- 第108-155行：新版电视剧索引（`build_drama_index` 重构版）
-- 第157-229行：口播索引构建（`build_interview_index` — 说话人边界分块）
-- 第231-245行：`save_index()` 统一保存
-- 第247-270行：`main()` 入口（自动检测类型、分发）
+**`cli/build_index.py`**：
+- `build_drama_index()`（L16）— 电视剧索引（VLM + ASR 字幕 → BGE）
+- `build_interview_index()`（L109）— 口播索引（说话人边界分块，guest-only）
+- `save_index()`（L183）— 统一保存（pickle + npy + json）
+- `main()`（L199）— 入口（自动检测类型、分发）
 
-**`server.py`**：
-- 第358-410行：索引加载（npy mmap 优先 → pickle 兜底，按类型）
+**`routers/_lifespan.py`**：
+- `startup()`（L49-65）：索引加载（npy mmap 优先 → pickle 兜底）
 
 
 ## 动手实验

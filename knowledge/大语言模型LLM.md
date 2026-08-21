@@ -70,7 +70,7 @@ VibeCut 的每个 Agent 都依赖 JSON Mode。这也是 [[LangGraph框架|LangGr
 
 LLM 一次能"看到"的最大文本量。DeepSeek-Chat 是 128K tokens（约 10 万字）。
 
-VibeCut 的 story_first_pipeline 正是利用了 128K 窗口——一次性把全部 ASR 内容喂给 LLM，让它通读后再输出脚本，而不是分段处理。
+VibeCut 利用这个窗口批量处理整段数据——`cli/clean_interview_data.py` 清洗整段口播转写、`lib/scene_map.py` 一次性为整集生成 scene_map（人物/地点/事件/情绪）。
 
 ### 5. API 调用模式
 
@@ -93,15 +93,13 @@ POST /v1/chat/completions
 
 ## 在 VibeCut 中的应用
 
-| 模块 | LLM 角色 | System Prompt 关键词 |
-|------|---------|---------------------|
-| `script_agents.py` planning_agent | 策划导演 | "设计5-8个叙事段落的叙事结构" |
-| `script_agents.py` writer_agent | 文案师 | "只能从ASR中逐字复制" |
-| `script_agents.py` editor_agent | 精编师 | "压缩脚本，保护Hook和收尾" |
-| `script_agents.py` reviewer_agent | 审核师 | "7维标准审核脚本质量" |
-| `classify_transcript.py` | 分类器 | "标注 layer (content/guide/meta/filler)" |
-| `clean_interview_data.py` | 清洗器 | "清洗口语废词 + 识别说话人" |
-| `server.py` _chat_intent | 搜索助手 | "理解用户意图，精炼搜索 query" |
+| 模块 | LLM 角色 | System Prompt |
+|------|---------|--------------|
+| `handlers/prompts/script_drama.py`（SCRIPT_V2_PROMPT） | 编剧 V2 单 LLM | 反常识论点 + 起承转合 + 名场面 function（v2 放弃多 Agent，一次产出） |
+| `lib/scene_map.py` | 场记 Agent | 生成 scene_map（人物/地点/事件/情绪）+ synopsis |
+| `handlers/prompts/director.py`（DIRECTOR_PROMPT） | 导演 Agent | 解说词 → 叙事节拍 beats + 镜头查询 |
+| `cli/classify_transcript.py` | 分类器 | 标注 layer (content/guide/meta/filler) |
+| `cli/clean_interview_data.py` | 清洗器 | 清洗口语废词 + 识别说话人 |
 
 ## 前置知识
 

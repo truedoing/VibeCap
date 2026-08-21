@@ -64,7 +64,7 @@ CTranslate2 的核心优化：
 | medium | 769M | ~5GB | 慢 | 很好 | 质量要求高的场景 |
 | large-v3 | 1.5B | ~10GB | 很慢 | 最好 | 未使用 (CPU 太慢) |
 
-选模型是在速度和准确率间权衡。VibeCut 的电视剧用 small（因为有 VLM 交叉校准来弥补 ASR 的不足），口播用 base（因为口播说话清晰，准确率够用）。
+选模型是在速度和准确率间权衡。VibeCut 的口播用 base（口播说话清晰，准确率够用）。**电视剧管线 v3.1 起改用网上下载 SRT 字幕，不再本地 whisper**（公网字幕质量 > 本地小模型），whisper 主要留给口播短片段。
 
 ### 3. int8 量化
 
@@ -98,9 +98,9 @@ diarized:  "主持人: 你凭什么管我们家的事"
 
 ### 电视剧管线
 
-**`analyze_episodes.py`**（第1-50行）：
-- 场景切分（固定时长窗口）→ 提取音频 → MiMo ASR API 转写 → `asr_result.json`
-- 模型选择：默认 `small`（`--asr-model small`）
+**`cli/analyze_episodes.py`**（v3.1）：
+- 电视剧管线改为**网上下载 SRT 字幕**（`subtitle_result.json`），不再本地 whisper ASR
+- 字幕 → DeepSeek 场记 Agent（scene_map）→ VLM 画面分析
 
 **`asr_narration.py`**：
 - 更轻量的 ASR 脚本，用 `whisper base` 处理短片段旁白
@@ -121,12 +121,12 @@ diarized:  "主持人: 你凭什么管我们家的事"
 
 ```
 电视剧:                                   口播:
-视频 → analyze_episodes.py (faster-whisper)   视频 → asr_narration.py (whisper base*)
-     → asr_result.json                              → asr_*.json
-     → build_index.py (进入 BGE 索引)               → classify_transcript.py (LLM 四层分类)
+网上下载 SRT 字幕 → subtitle_result.json    视频 → asr_narration.py (whisper base*)
+     → analyze_episodes.py (场记+VLM)              → asr_*.json
+     → cli/build_index.py (进入 BGE 索引)          → classify_transcript.py (LLM 四层分类)
                                                     → clean_interview_data.py (LLM 说话人+清洗)
                                                     → classified_enhanced.json
-                                                    → build_interview_index.py (BGE, guest-only)
+                                                    → cli/build_index.py (BGE, guest-only)
 ```
 
 > *注：`asr_narration.py` 中的模型选择为 "base"，但在实际项目中口播 ASR 使用 faster-whisper。

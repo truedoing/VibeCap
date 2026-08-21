@@ -45,7 +45,7 @@ ffmpeg -y -hide_banner -loglevel error \
   输出_540p.mp4
 ```
 
-参数详解（对应 `generate_proxies.py` 第 69-79 行）：
+参数详解（对应 `cli/generate_proxies.py` L70-83）：
 
 | 参数 | 值 | 作用 |
 |------|-----|------|
@@ -99,7 +99,7 @@ ffmpeg -y -hide_banner -loglevel error \
 | `-crf 18` | 高质量（成片要用，不能像代理那样压到 28） |
 | `-movflags +faststart` | moov atom 前置（浏览器可边下边播） |
 
-对应 `export_capcut.py` 的 `extract_clip()` 函数。
+对应 `handlers/media.py` 的 `export_extract_clips()`（`routers/export.py` `/extract_clips`）。
 
 ### 4. ffprobe 元数据读取
 
@@ -111,18 +111,18 @@ ffprobe -v quiet -print_format json -show_format -show_streams 视频.mp4
 
 ## 在 VibeCut 中的应用
 
-**`generate_proxies.py`**：
+**`cli/generate_proxies.py`**：
 - 扫描源视频目录 → ffprobe 读取元数据 → ffmpeg 转码为 540p → 生成 `.proxies_manifest.json`
 - 支持批量模式（`--all`）、选集模式（`--ep 1,3,5`）、区间模式（`--ep 1-10`）
 
-**`analyze_episodes.py`**（电视剧管线）：
-- ffmpeg 提取音频为 16kHz WAV → 喂给 faster-whisper 做 ASR
+**`cli/analyze_episodes.py`**（电视剧管线 v3.1）：
+- 网上下载 SRT 字幕（不再本地 whisper ASR），交给 DeepSeek 场记 Agent
 
-**`export_capcut.py`**：
-- `extract_clip()` 用 ffmpeg 切割精确的视频片段 → 作为剪映草稿的素材
+**`handlers/media.py`**：
+- `export_extract_clips()` 用 ffmpeg 切割精确的视频片段（`routers/export.py` `/extract_clips`）→ 作为剪映草稿的素材
 
-**`server.py`**：
-- `/preview_video` 端点：根据时间范围动态切割视频片段返回前端预览
+**`routers/media.py`**：
+- `/proxies/{filename}`、`/clips/{path}`：Range 支持，向预览器提供代理视频 / 任务片段
 
 ## 前置知识
 

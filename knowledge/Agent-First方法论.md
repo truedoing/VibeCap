@@ -49,7 +49,7 @@ VibeCut 策划 Agent:
 - 偏好: 情感张力优先于信息密度
 ```
 
-在 VibeCut 中的应用：`script_agents.py` 中的 `system_prompt` 定义了 Agent 的角色、能力和边界。
+在 VibeCut 中的应用：`handlers/prompts/director.py` 的 DIRECTOR_PROMPT、`handlers/prompts/script_drama.py` 的 SCRIPT_V2_PROMPT 定义了 Agent 的角色、能力和边界。
 
 ### 实践 2：Capability Boundary Map（能力边界图）
 
@@ -105,7 +105,7 @@ Agent 的每一步决策都要留下结构化日志。这些日志不仅是调�
 
 当前 VibeCut 处于 Agent-First 的 L1-L2 混合阶段：
 
-- **✅ Tool-First**：`_call_llm()` 可以调用 BGE 搜索、读取剧本、生成脚本
+- **✅ Tool-First**：`lib/llm.py` 统一 LLM 调用；`handlers/storyboard.py`（导演Agent）编排 beats + 镜头匹配，`handlers/search.py` 供搜索复用
 - **⚠️ Persona**：system prompt 有角色定义，但还不够系统
 - **⚠️ Capability Map**：能力边界在代码中隐式存在，但未文档化
 - **❌ Progressive Autonomy**：还没有 `interrupt()` 机制（规划中）

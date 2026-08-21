@@ -26,7 +26,7 @@ VibeCut 的 `vibecut.db` 文件包含所有项目数据：剧集元数据、索�
 | 运维 | 一个文件，备份就是 `cp vibecut.db backup.db` | 需要管理用户、权限、端口 |
 | 并发 | 读并发好（WAL），写串行 | 真正的读写并发 |
 | 性能 | 百万条以内无压力 | 百万条起步才显优势 |
-| 部署 | `python3 server.py` 就搞定 | 需要 docker-compose + 环境变量 |
+| 部署 | `python3 main.py` 就搞定 | 需要 docker-compose + 环境变量 |
 
 VibeCut 是个单人使用的桌面级项目，数据量最多几十万条，SQLite 完全够用。选择它的核心理由是：**少一个依赖就少一个问题**。
 
@@ -148,15 +148,16 @@ CREATE TABLE quality_reports (
 
 **文件位置**：`vibecut-server/db.py`
 
-- 第17-125行：完整 Schema 定义（`SCHEMA_SQL` 字符串）
-- 第128-133行：增量迁移（`MIGRATIONS` — 为旧表添加新列）
-- 第136-159行：`VibeCutDB.__init__` 和 `_get_conn()`（初始化 + 线程本地连接）
+- 第17行起：完整 Schema 定义（`SCHEMA_SQL` 字符串）
+- 第129行：增量迁移（`MIGRATIONS` — 为旧表添加新列）
+- 第142行：`VibeCutDB` 类（`__init__` L145、`_get_conn()` L158 — 初始化 + 线程本地连接）
 
-**在 server.py 中的使用**：
-- 第11-13行：全局 `db = VibeCutDB("vibecut.db")` 单例
-- `/segments.json` 端点：先查 DB → 文件兜底
-- `/picks` 端点：读写 picks 数据
-- `/data/quality` 端点：质量报告查询
+**在代码中的使用**：
+- `routers/_lifespan.py`（L29-30）：全局 `db = VibeCutDB(...)` 单例
+- `handlers/script_drama.py`：剧本生成落库（自己的 `db` 实例）
+- `/segments.json`（`routers/segments.py`）：先查 DB → 文件兜底
+- `/picks`（`routers/picks.py`）：读写 picks 数据
+- `/data/quality`（`routers/pipeline.py`）：质量报告查询
 
 **关键 API**：
 - `db.ensure_drama(name)` — 获取或创建项目

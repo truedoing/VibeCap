@@ -106,10 +106,10 @@ response2 = requests.post(API_URL, json={"messages": messages, ...})
 
 ### 3. 从纯文本调用到 Tool Use
 
-VibeCut 当前的 `_call_llm()` 用法（`script_agents.py` 第 69 行）是纯文本调用：
+VibeCut 当前的 LLM 调用（`lib/llm.py` 的 `_call()`）是纯文本调用：
 
 ```python
-def _call_llm(system_prompt, user_content, temp=0.4, max_tokens=3000):
+def _call(system_prompt, user_content, *, temperature=0.7, max_tokens=2000):
     payload = json.dumps({
         "model": "deepseek-chat",
         "messages": [
@@ -127,7 +127,7 @@ LLM 被当成一个"聪明一点的文本处理器"——输入 prompt，输出 
 - LLM 不能主动决定"我需要搜一下"
 - 所有编排逻辑在 Python 代码里，LLM 只是执行者
 
-**升级路径**：将 `_call_llm()` 从纯文本调用升级为支持 tools 参数的 Tool Use 调用。这样 LLM 在生成脚本时可以主动调用搜索工具来补充素材。
+**升级路径**：将 `lib/llm.py` 的 `_call()` 从纯文本调用升级为支持 tools 参数的 Tool Use 调用。这样 LLM 在生成脚本时可以主动调用搜索工具来补充素材。
 
 ### 4. @tool 装饰器模式（LangChain）
 
@@ -157,14 +157,14 @@ agent = create_react_agent(llm, [search_semantic, read_transcript])
 ## 在 VibeCut 中的应用（规划）
 
 当前状态：
-- `_call_llm()` 是纯文本调用，不支持 Tool Use
+- `lib/llm.py` 的 `_call()` 是纯文本调用，不支持 Tool Use
 - Agent 的"工具"（搜索、导出）是外部代码在 Agent 之前/之后手动调用的
-- ChatPanel 的搜索是前端直接调 `/search` API，LLM 不参与
+- 前端的搜索是直接调 `/search` API（`handlers/search.py`），LLM 不参与
 
 规划升级：
-- `_call_llm()` 升级为支持 `tools` 参数
+- `lib/llm.py` 的 `_call()` 升级为支持 `tools` 参数
 - Agent 可以自主决定何时搜索、搜索什么
-- 前端 ChatPanel 的搜索请求经过 Agent 决策层，而非直连搜索 API
+- 前端搜索请求经过 Agent 决策层，而非直连搜索 API
 
 ## 前置知识
 

@@ -46,7 +46,7 @@ VibeCut ChatPanel 的升级路径：
 
 ```
 当前（v0.12）:
-  ChatPanel 发 query → server.py BGE 搜索 → 返回结果
+  前端发 query → POST /search（`handlers/search.py` BGE 搜索）→ 返回结果
   问题: 一次性，无反馈循环
 
 升级后（Agentic RAG）:
@@ -117,7 +117,7 @@ Agent 不只"搜"，还会"判断搜得好不好"——这是 Agentic RAG 和 Na
 
 ## 在 VibeCut 中的应用（规划）
 
-当前 `ChatPanel.jsx` 搜索流程：
+当前搜索流程（`handlers/search.py` 的 `search()`）：
 
 ```
 用户输入 → POST /search → BGE 语义搜索 → 渲染结果
